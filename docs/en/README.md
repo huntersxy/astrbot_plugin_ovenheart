@@ -26,6 +26,16 @@ On upgrade, an old common jargon record moves intact to its source only when all
 ![Common profile using illustrative local data](../assets/shared-profile-v0.18.jpg)
 ![Jargon always stays isolated; illustrative local data](../assets/jargon-isolation-v0.18.1.jpg)
 
+## Workshop and native config synchronization (0.18.2)
+
+Learning settings and AstrBot's native plugin config now share the host configuration object and file. Saving in the workshop applies immediately and writes `data/config/astrbot_plugin_ovenheart_config.json`; reopen or refresh the native config editor to see it. Saving from the native editor triggers AstrBot's normal plugin reload, after which the workshop reads the new values. Manual file edits require a plugin reload.
+
+On upgrade, old SQLite Panel settings migrate into the host exactly once. Conflicts preserve the previously effective Panel values; the old overrides remain backed up in `config_sync.legacy_settings` inside the plugin database. Later starts and reloads trust native config instead of resurrecting old database overrides. Authored profiles, learned entries and records remain in their existing database and are separate from global config fields.
+
+The workshop polls about every five seconds and refreshes untouched settings forms when configuration changes. Unsaved drafts remain intact. Submission checks the rendered version and rejects drafts superseded by another page or a reload. Failed config writes do not report success.
+
+![Settings saved and synchronized; illustrative local acceptance](../assets/config-sync-v0.18.2.jpg)
+
 ## Install and open
 
 Requires AstrBot `>=4.29.1,<5` and a configured chat provider. Install the release ZIP through the local plugin installer, or copy the plugin directory to the host's `data/plugins/astrbot_plugin_ovenheart` and reload it. Open the native plugin View named **人格工坊** (Persona workshop).
@@ -65,7 +75,7 @@ The learning provider ID can be left blank to use the current conversation provi
 
 Version 0.14 requires a nonempty `term: definition` and the term's actual occurrence in at least one cited target message. Normalize paired quotes, case and compatibility forms for comparison, preserving stored wording. ASCII boundaries prevent fragments such as `AI` inside `rain`. Ungrounded terms abort the entire batch without a format retry or source consumption. Occurrence checks do not prove the definition correct; human review remains relevant.
 
-The source-user list accepts one user ID per line. The allowed-conversation list accepts complete `unified_msg_origin` values obtainable through `/sid`. Empty lists allow all otherwise permitted sources. The host's allowlist, plugin set, conversation switch and plugin switch still apply. Settings saved in this native view take precedence over the host plugin configuration.
+The source-user list accepts one user ID per line. The allowed-conversation list accepts complete `unified_msg_origin` values obtainable through `/sid`. Empty lists allow all otherwise permitted sources. The host's allowlist, plugin set, conversation switch and plugin switch still apply. This view and the host plugin editor share the same native configuration; refresh the other editor after saving.
 
 ## Learning self-check (0.15)
 
@@ -173,7 +183,7 @@ Raw messages expire after 14 days by default, with at most 300 retained per sess
 
 Learning, feedback, profile and trait changes retain up to 30 preceding snapshots. Restoring a snapshot restores its profile and earlier trait states, while disabling later entries. Restoration itself also creates a snapshot. This does not restore raw messages.
 
-Data is stored in the host's `data/plugin_data/astrbot_plugin_ovenheart/persona.sqlite3`. Disable the plugin before backing up the entire data directory so WAL files are not accidentally omitted.
+Profiles, learned entries and records are stored in `data/plugin_data/astrbot_plugin_ovenheart/persona.sqlite3`; global settings are stored in `data/config/astrbot_plugin_ovenheart_config.json`. Disable the plugin before backing up the plugin data directory and its host config file so WAL files and settings are not accidentally omitted.
 
 ## Autonomous participation
 
@@ -210,7 +220,7 @@ The test suite covers SQLite transactions, evidence validation and native AstrBo
 
 ## Debug mode (0.17)
 
-Enable **学习设置 → 调试日志 → 启用 Debug 模式** and save, or set `debug_enabled: true` in host plugin configuration. Default: off. Saved Panel overrides take precedence. Search AstrBot INFO logs for `OvenHeart debug`; the host must allow INFO logging. Disabling immediately stops subsequent debug events.
+Enable **学习设置 → 调试日志 → 启用 Debug 模式** and save, or set `debug_enabled: true` in host plugin configuration. Default: off. Panel and native plugin settings are synchronized. Search AstrBot INFO logs for `OvenHeart debug`; the host must allow INFO logging. Disabling immediately stops subsequent debug events.
 
 `persona_injection` and `participation_injection` contain the exact, untruncated system additions and temporary user context appended by this plugin, with scope, persona, delivery mode, included IDs or allowed tools. They do not dump unrelated host prompts or claim to represent later downstream mutations. `retrieval` includes the actual query, selected entries, scores, reasons and fallback messages; `application_skipped` identifies an invalidated or disabled application.
 

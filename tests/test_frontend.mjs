@@ -155,3 +155,19 @@ test('legacy common jargon is retained without a global approval action', () => 
   assert.ok(element('#content').innerHTML.includes('data-review="active"'));
   assert.ok(element('#content').innerHTML.includes('不受「启用会话隔离」开关影响'));
 });
+
+for (const editing of [false,true]) test(`settings polling refreshes changed configuration while preserving dirty draft ${editing}`, async () => {
+  const {context,element}=fixture();
+  runInContext(`tab='settings';dirty=${editing};data={settings:{debug_enabled:false,blocked_senders:[],target_senders:[],allowed_sessions:[],autonomous_tools:[]},settings_revision:'old',scopes:[],scope:null,memory:{},busy:[]};renderSettings();bridge.apiGet=async()=>({...data,settings:{...data.settings,debug_enabled:true},settings_revision:'new'});`,context);
+  const before=element('#content').innerHTML;
+  await runInContext('load(false)',context);
+  if (editing) assert.equal(element('#content').innerHTML,before);
+  else assert.ok(element('#content').innerHTML.includes('name="debug_enabled" checked'));
+});
+
+test('settings submission retains the revision from the rendered form', () => {
+  const {context,element}=fixture();
+  runInContext(`data={settings:{blocked_senders:[],target_senders:[],allowed_sessions:[],autonomous_tools:[]},settings_revision:'rendered',memory:{}};renderSettings();data.settings_revision='newer';globalThis.savedRevision=null;mutate=(action,payload,scope,revision)=>savedRevision=revision;`,context);
+  element('#settings-form').onsubmit({preventDefault(){},currentTarget:{elements:{namedItem:()=>null}}});
+  assert.equal(runInContext('savedRevision',context),'rendered');
+});

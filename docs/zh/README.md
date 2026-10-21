@@ -26,6 +26,16 @@
 ![默认共用底稿，本地演示数据](../assets/shared-profile-v0.18.jpg)
 ![词汇始终隔离，其他学习默认共用；本地演示数据](../assets/jargon-isolation-v0.18.1.jpg)
 
+## 工坊设置与插件 config 同步（0.18.2）
+
+「学习设置」与 AstrBot 原生插件配置使用同一份宿主 config。工坊保存立即生效，同时写入宿主 `data/config/astrbot_plugin_ovenheart_config.json`；原生配置页重新打开或刷新后可见。原生配置页保存会由 AstrBot 热重载插件，工坊随后读取新值；直接编辑配置文件则需手动重载插件。
+
+升级时，旧工坊保存在 SQLite 的设置只迁入宿主一次：如有冲突，保留此前实际生效的工坊保存值。原值保留在插件数据库 `config_sync.legacy_settings` 中。之后启动、重载均以宿主 config 为准，数据库不再用旧保存值覆盖宿主。人格底稿、学习条目和记录仍在原数据库中保留，不属于宿主的全局配置字段。
+
+工坊约每五秒刷新状态，配置发生变化时自动更新未编辑的设置表单。已有未保存编辑会保留；如果另一页面修改或插件已重载，提交旧表单会提示刷新，避免覆盖新配置。配置文件写入失败不会提示保存成功。
+
+![工坊保存并同步配置，本地模拟验收](../assets/config-sync-v0.18.2.jpg)
+
 ## 安装和入口
 
 需要 AstrBot `>=4.29.1,<5`。在 Panel 安装本地插件 ZIP 后启用，页面从插件 View 入口「人格工坊」打开。也可复制插件文件夹至宿主 `data/plugins/astrbot_plugin_ovenheart` 并重载。
@@ -233,7 +243,7 @@ QQ 能力增强可同时启用，无需特殊适配。自主参与默认禁用�
 
 学习合并、人格、条目编辑、评价和审核前自动保存快照，最多 30 份。恢复将还原该快照的底稿与旧条目状态，把之后新增的条目停用；恢复操作本身也留快照，可以再次恢复。素材清除不可撤销，恢复快照不能恢复原始消息。
 
-所有数据位于 AstrBot `data/plugin_data/astrbot_plugin_ovenheart/persona.sqlite3`，与其他插件数据分离。备份时建议先停用本插件，完整备份插件数据目录，避免漏掉 SQLite 的 WAL 文件。
+人格底稿、学习条目和记录位于 `data/plugin_data/astrbot_plugin_ovenheart/persona.sqlite3`，全局设置位于 `data/config/astrbot_plugin_ovenheart_config.json`。备份时建议先停用本插件，同时备份插件数据目录和这份宿主 config，避免漏掉 SQLite 的 WAL 文件或全局设置。
 
 ## 截图
 
@@ -250,7 +260,7 @@ QQ 能力增强可同时启用，无需特殊适配。自主参与默认禁用�
 
 ## Debug 模式（0.17）
 
-在「学习设置 → 调试日志」启用「启用 Debug 模式」并保存，或在宿主插件配置设置 `debug_enabled: true`。默认关闭；Panel 保存值优先于宿主配置。日志使用 INFO 级别，宿主需允许 INFO 日志；在 AstrBot 日志搜索 `OvenHeart debug`。关闭后立即停止后续调试输出。
+在「学习设置 → 调试日志」启用「启用 Debug 模式」并保存，或在宿主插件配置设置 `debug_enabled: true`。默认关闭；工坊与宿主插件配置使用同一份设置。日志使用 INFO 级别，宿主需允许 INFO 日志；在 AstrBot 日志搜索 `OvenHeart debug`。关闭后立即停止后续调试输出。
 
 - `persona_injection`：本插件实际追加的完整 system 内容与兼容模式临时用户上下文，包含会话、人格、实际纳入的条目 ID 和投递方式。不会把无关的宿主原始提示词一起转储。
 - `participation_injection`：自主参与实际追加的系统目标、临时群聊上下文与允许的工具名。

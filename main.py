@@ -113,8 +113,11 @@ class PersonaPlugin(Star):
     def __init__(self, context: Context, config: dict):
         super().__init__(context)
         self.context = context
+        self.config = config
         self.host_settings = validate_settings(dict(config))
         self.settings = DEFAULTS | self.host_settings
+        self.settings_lock = asyncio.Lock()
+        self.settings_revision = uuid4().hex
         self.store = Store(StarTools.get_data_dir(PLUGIN_NAME) / "persona.sqlite3")
         self.memory = MemoryBridge(context)
         self.retriever = HabitRetriever(context, self.store)
@@ -159,9 +162,10 @@ class PersonaPlugin(Star):
             / "astrbot_plugin_persona"
             / "persona.sqlite3",
         )
-        self.settings = (
-            DEFAULTS | self.host_settings | await self.store.call("settings")
+        self.settings = await self.store.call(
+            "sync_config", self.config, DEFAULTS | self.host_settings, True
         )
+        self.host_settings = validate_settings(dict(self.config))
         await self.store.call("prune", self.settings["retention_days"])
         self.page_api = PageAPI(self)
         self.page_api.register()
@@ -169,6 +173,52 @@ class PersonaPlugin(Star):
         _active = weakref.ref(self)
         self.worker = self.track(self.poll())
         logger.info("Persona learning plugin initialized")
+
+    async def update_settings(self, payload, expected_revision=None):
+        """Save Panel settings to the host and publish one consistent runtime state.
+
+        Args:
+            payload: Partial settings submitted by the operator.
+            expected_revision: Optional revision captured when the form was rendered.
+
+        Raises:
+            ValueError: If the form is stale, the plugin is closing or settings are invalid.
+            OSError: If persistence fails.
+        """
+        async with self.settings_lock:
+            if self.closing or not self.ready:
+                raise ValueError("插件正在重载，请稍后刷新设置。")
+            if (
+                expected_revision is not None
+                and expected_revision != self.settings_revision
+            ) or validate_settings(dict(self.config)) != self.host_settings:
+                raise ValueError(
+                    "配置已在另一页面修改，请刷新后重新编辑，旧表单未保存。"
+                )
+            patch = validate_settings(payload)
+            merged = self.settings | patch
+            if merged["min_messages"] > merged["batch_size"]:
+                raise ValueError("自动学习的素材门槛不能大于每批素材数量。")
+            if merged["min_evidence"] > merged["batch_size"]:
+                raise ValueError("最少证据数量不能大于每批素材数量。")
+            # Client cancellation must not leave persisted settings ahead of runtime.
+            commit = asyncio.create_task(
+                self.store.call("sync_config", self.config, merged, False, patch)
+            )
+            cancelled = False
+            try:
+                await asyncio.shield(commit)
+            except asyncio.CancelledError:
+                await commit
+                cancelled = True
+            self.settings = merged
+            self.host_settings = validate_settings(dict(self.config))
+            self.settings_revision = uuid4().hex
+            self.debug("settings_updated", fields=sorted(patch))
+            self.learning_context.clear()
+            self.participation.close()
+            if cancelled:
+                raise asyncio.CancelledError
 
     def track(self, coroutine) -> asyncio.Task:
         """Track a cancellable task and retrieve unexpected failures.
@@ -1510,6 +1560,8 @@ class PersonaPlugin(Star):
         self.closing = True
         self.participation.close()
         self.ready = False
+        async with self.settings_lock:
+            pass
         if _active and _active() is self:
             _active = None
         tasks = list(self.tasks)

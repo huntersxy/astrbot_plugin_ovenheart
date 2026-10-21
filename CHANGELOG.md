@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.18.2
+
+- Use native AstrBot config as the durable settings source. Workshop saves update the same config object/file exposed by the native editor; native saves and normal plugin reloads become visible in the workshop instead of being masked by old SQLite overrides.
+- Migrate legacy Panel settings into host config once, preserving the previously effective values and retaining a database backup. Keep only current-instance changes as transaction guards; preserve profiles, learned entries and histories.
+- Refresh untouched settings forms on configuration revision changes and reject superseded submissions, including forms from a previous plugin instance. Serialize saves, preserve runtime publication after client cancellation and reject native write failures without reporting success.
+- Verify both directions with real AstrBotConfig persistence and native dashboard services, plus write-failure, reload, stale-form, concurrent-save and cancellation regressions. Update bilingual instructions and Panel save guidance.
+
 ## 0.18.1
 
 - Always isolate jargon by its native session/persona, including shared-mode learning, known merge targets, refinement, previews, reply retrieval and delivery accounting. Keep personality, expression and behavior under the existing general isolation switch. Snapshot both affected spaces atomically and identify restore ownership in Panel.

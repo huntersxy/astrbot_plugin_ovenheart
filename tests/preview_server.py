@@ -23,6 +23,7 @@ os.environ["ASTRBOT_ROOT"] = str(
     Path(tempfile.gettempdir()) / "persona-preview-runtime"
 )
 
+from astrbot.api import AstrBotConfig  # noqa: E402
 from astrbot.api.star import StarTools  # noqa: E402
 from astrbot.api.web import PluginRequest, bind_request_context  # noqa: E402
 from fastapi import FastAPI, Request  # noqa: E402
@@ -33,7 +34,7 @@ from astrbot_plugin_ovenheart.main import (  # noqa: E402
     SessionPluginManager,
     SessionServiceManager,
 )
-from astrbot_plugin_ovenheart.settings import SHARED_SCOPE  # noqa: E402
+from astrbot_plugin_ovenheart.settings import DEFAULTS, SHARED_SCOPE  # noqa: E402
 
 
 @asynccontextmanager
@@ -89,7 +90,11 @@ async def lifespan(app):
         context.register_web_api = lambda *args: context.registered_web_apis.append(
             args
         )
-        plugin = PersonaPlugin(context, {"learning_enabled": False})
+        config = AstrBotConfig(
+            str(Path(directory) / "ovenheart_config.json"),
+            default_config=DEFAULTS | {"learning_enabled": False},
+        )
+        plugin = PersonaPlugin(context, config)
         await plugin.initialize()
         app.state.plugin = plugin
         scope = "a" * 24

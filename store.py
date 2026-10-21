@@ -9,7 +9,7 @@ import sqlite3
 import time
 from pathlib import Path
 
-from .settings import KINDS, PROFILE_DEFAULTS, SHARED_SCOPE
+from .settings import KINDS, PROFILE_DEFAULTS, SHARED_SCOPE, validate_settings
 
 
 class Store:
@@ -83,6 +83,9 @@ class Store:
         db.executescript("""
             PRAGMA journal_mode=WAL;
             CREATE TABLE IF NOT EXISTS settings (id INTEGER PRIMARY KEY CHECK(id=1), value TEXT NOT NULL);
+            CREATE TABLE IF NOT EXISTS config_sync (
+                id INTEGER PRIMARY KEY CHECK(id=1), legacy_settings TEXT NOT NULL
+            );
             CREATE TABLE IF NOT EXISTS scopes (
                 id TEXT PRIMARY KEY, umo TEXT NOT NULL, persona TEXT NOT NULL,
                 label TEXT NOT NULL, profile TEXT NOT NULL, updated REAL NOT NULL
@@ -252,6 +255,62 @@ class Store:
                 "INSERT OR REPLACE INTO settings VALUES (1, ?)", (json.dumps(settings),)
             )
         return settings
+
+    def sync_config(self, db, config, values, bootstrap=False, patch=None):
+        """Persist native configuration and its transaction-guard mirror together.
+
+        Args:
+            db: Open database connection.
+            config: Host configuration object, or a dictionary in isolated fixtures.
+            values: Complete validated host settings.
+            bootstrap: Migrate legacy Panel overrides once, then trust the host.
+            patch: Settings changed during this instance, for stale-batch guards.
+
+        Returns:
+            Complete effective settings after the optional one-time migration.
+
+        Raises:
+            ValueError: If legacy settings are invalid or internally inconsistent.
+            OSError: If the native configuration cannot be persisted.
+        """
+        if (
+            bootstrap
+            and not db.execute("SELECT 1 FROM config_sync WHERE id=1").fetchone()
+        ):
+            legacy = self.settings(db)
+            values = values | validate_settings(legacy)
+            db.execute(
+                "INSERT INTO config_sync VALUES (1, ?)",
+                (json.dumps(legacy, ensure_ascii=False),),
+            )
+        if values["min_messages"] > values["batch_size"]:
+            raise ValueError("自动学习的素材门槛不能大于每批素材数量。")
+        if values["min_evidence"] > values["batch_size"]:
+            raise ValueError("最少证据数量不能大于每批素材数量。")
+        # Only changes made during this instance can supersede an in-flight batch.
+        # A reload starts with the host values, never with old database overrides.
+        guards = (
+            {}
+            if bootstrap
+            else self.settings(db) | (values if patch is None else patch)
+        )
+        db.execute(
+            "INSERT OR REPLACE INTO settings VALUES (1, ?)",
+            (json.dumps(guards, ensure_ascii=False),),
+        )
+        previous = dict(config)
+        try:
+            snapshot = json.loads(json.dumps(values))
+            if callable(getattr(config, "save_config", None)):
+                config.save_config(snapshot)
+            else:
+                config.update(snapshot)
+        except Exception:
+            # AstrBot updates its dictionary before attempting its atomic file write.
+            config.clear()
+            config.update(previous)
+            raise
+        return values
 
     def prune(self, db, retention_days):
         """Expire raw observations even when no new messages arrive.

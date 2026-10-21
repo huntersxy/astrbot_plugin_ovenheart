@@ -8,7 +8,7 @@ from astrbot.api import logger
 from astrbot.api.web import request
 
 from .learning import build_guidance
-from .settings import PROFILE_DEFAULTS, SHARED_SCOPE, validate_settings
+from .settings import PROFILE_DEFAULTS, SHARED_SCOPE
 
 
 class PageAPI:
@@ -49,6 +49,7 @@ class PageAPI:
         )
         state.update(
             settings=self.plugin.settings,
+            settings_revision=self.plugin.settings_revision,
             memory=self.plugin.memory.status(),
             busy=list(self.plugin.busy),
             retrieval=self.plugin.retriever.status.get(
@@ -106,18 +107,13 @@ class PageAPI:
             if not isinstance(payload, dict):
                 raise ValueError("操作内容必须为对象。")
             if operation == "settings":
-                patch = validate_settings(payload)
-                merged = self.plugin.settings | patch
-                if merged["min_messages"] > merged["batch_size"]:
-                    raise ValueError("自动学习的素材门槛不能大于每批素材数量。")
-                if merged["min_evidence"] > merged["batch_size"]:
-                    raise ValueError("最少证据数量不能大于每批素材数量。")
-                await self.plugin.store.call("settings", patch)
-                self.plugin.settings = merged
-                self.plugin.debug("settings_updated", fields=sorted(patch))
-                self.plugin.learning_context.clear()
-                self.plugin.participation.close()
-                return {"status": "ok", "data": {"message": "学习设置已保存。"}}
+                await self.plugin.update_settings(
+                    payload, body.get("settings_revision")
+                )
+                return {
+                    "status": "ok",
+                    "data": {"message": "学习设置已保存，并同步到 AstrBot 插件配置。"},
+                }
             scope = (
                 SHARED_SCOPE
                 if operation == "profile"
@@ -208,7 +204,7 @@ class PageAPI:
             logger.error("Persona Panel action failed (%s)", type(exc).__name__)
             return {
                 "status": "error",
-                "message": "保存失败，请检查插件数据目录是否可写并重试。",
+                "message": "保存失败，请检查 AstrBot 配置与插件数据目录是否可写后重试。",
             }
 
     async def preview(self):

@@ -31,6 +31,7 @@ async function api(endpoint, body, query = {}) {
 }
 
 async function load(renderContent = true) {
+  const previousSettingsRevision = data?.settings_revision;
   const scopeAtStart = selectedScope;
   const viewAtStart = JSON.stringify([tab, libraryScope, category, status, libraryOffset]);
   const next = await api("state");
@@ -58,7 +59,7 @@ async function load(renderContent = true) {
   const busy = data.busy.includes(selectedScope);
   $("#learn").disabled = pending || !data.scope || !!data.busy.length || !data.settings.enabled || !data.settings.learning_enabled || !data.scope.profile.learning_enabled || data.scope.pending < data.settings.min_evidence;
   $("#learn").textContent = busy ? "正在学习…" : "开始学习";
-  if (renderContent && !dirty) render();
+  if (!dirty && (renderContent || (tab === "settings" && data.settings_revision !== previousSettingsRevision))) render();
 }
 
 function empty(title, description) {
@@ -166,6 +167,7 @@ function renderHistory() {
 
 function renderSettings() {
   const s = data.settings;
+  const settingsRevision = data.settings_revision;
   $("#content").innerHTML = `<form id="settings-form"><div class="settings-grid">
     <section class="settings-group debug-settings"><h2>调试日志</h2><p>在 AstrBot 日志中搜索「OvenHeart debug」查看本插件的处理过程。</p>${switchField("debug_enabled", "启用 Debug 模式", "完整输出实际注入内容、学习请求与响应、自检和检索筛选结果。包含聊天、人格和记忆摘录；仅在调试时开启。不会输出模型配置密钥或 HTTP 鉴权头。", s.debug_enabled)}</section>
     <section class="settings-group participation-settings"><h2>自主参与群聊</h2><p>根据最近聊天与已生效的习惯，决定参与、等待或旁观。直接唤醒、私聊和命令继续按宿主原有规则处理。自动回复使用 AstrBot 本地 Agent 运行器。</p><div class="two-col"><div>
@@ -201,7 +203,7 @@ function renderSettings() {
       <p class="muted">${escape(data.retrieval?.message || "真实回复后显示检索状态。")}</p>
       <p class="muted">LivingMemory 检索可能更新访问时间并触发其原有迁移机制。QQ 能力增强插件可并用，无需额外配置。</p>
     </section>
-</div><div class="form-end"><button class="primary" type="submit">保存学习设置</button><span class="muted">保存后立即生效；本页设置优先于插件配置文件。</span></div></form>
+</div><div class="form-end"><button class="primary" type="submit">保存学习设置</button><span class="muted">保存后立即生效，并同步到 AstrBot 插件配置。另一页面刷新后可见。</span></div></form>
     ${data.scope && data.scope.id !== data.shared_scope?.id ? '<div class="form-end"><button id="clear-messages" class="danger">清除当前会话的原始素材</button><span class="muted">保留人格与学习证据摘录；清除后无法恢复原始素材。</span></div>' : ""}`;
   $("#settings-form").onsubmit = event => {
     event.preventDefault();
@@ -212,7 +214,7 @@ function renderSettings() {
       if (!input) continue;
       patch[key] = typeof value === "boolean" ? input.checked : typeof value === "number" ? Number(input.value) : Array.isArray(value) ? input.value.split(key === "blocked_senders" ? /[\s,，;；]+/ : "\n").map(v => v.trim()).filter(Boolean) : input.value.trim();
     }
-    mutate("settings", patch);
+    mutate("settings", patch, selectedScope, settingsRevision);
   };
   if ($("#clear-messages")) $("#clear-messages").onclick = async () => { if (await confirmAction("永久清除当前会话所有原始聊天素材？学习条目及其证据摘录会保留。")) mutate("clear_messages"); };
 }
@@ -228,9 +230,9 @@ async function guarded(work, event) {
   finally { pending = false; controls.forEach(el => { if (el.isConnected) el.disabled = false; }); if (data) await load(false).catch(() => {}); }
 }
 
-async function mutate(action, payload = {}, scope = selectedScope) {
+async function mutate(action, payload = {}, scope = selectedScope, settingsRevision) {
   return guarded(async () => {
-    const result = await api("action", {action, scope, payload, ...(action === "profile" ? {effect_scope:scope} : {})});
+    const result = await api("action", {action, scope, payload, ...(action === "profile" ? {effect_scope:scope} : {}), ...(settingsRevision !== undefined ? {settings_revision:settingsRevision} : {})});
     notify(result.message || "已保存。");
     dirty = false;
     await load();
