@@ -39,6 +39,14 @@ For SiliconFlow, configure native `openai_embedding` with `embedding_api_base=ht
 
 Library ratings are reversible choices (helpful, less helpful, clear), not inferred user approval. History records prompt references reaching the host send stage, which does not establish delivery or model compliance. Usage counts do not increase confidence. Old habits gradually lose ranking weight without automatic deletion.
 
+## Coordination across isolated group sessions (0.6)
+
+AstrBot may assign each group member a separate native session. Learning, persona and model context remain scoped to that session. OvenHeart shares only cooldown, rolling quota and the latest event marker for the same platform instance, bot account and physical group. Other sessions’ message bodies and habits are not transferred.
+
+Permitted direct wakes, commands and new group inputs interrupt stale planning even with learning paused. Delayed captures and duplicate callbacks do not replace newer markers. Queued requests and pre-send results check the latest group event. A native send-stage reply also postpones other isolated sessions’ autonomous participation; already-sent streaming fragments cannot be retracted.
+
+Fresh-message thresholds still apply within each isolated session. Use a shared host group session when the desired conversation context spans all members. Migration retains old decisions and scoped limits; new shared-group counting begins with post-upgrade records because legacy group identity cannot be reconstructed reliably. See [native scheduling verification](../evaluation/participation.md).
+
 ## Provider prompt compatibility
 
 Settings → Memory and Expression offers `guidance_delivery=system` (default) or `dual`. Dual keeps the original system prompt and adds a temporary user-context part containing the current bound host persona and selected guidance. It does not copy the complete system prompt, modify user text or expand tool permissions. The extra context shares `prompt_budget`, with the host role text capped at one third of that budget. Application switches and scope isolation still apply, even when learning is paused.
@@ -69,7 +77,7 @@ Data is stored in the host's `data/plugin_data/astrbot_plugin_ovenheart/persona.
 
 Version 0.3 renames the internal 学习记录 tab to 学习与参与 without changing its View or URL. Participation settings appear first in Settings. The default is off; observe mode records decisions without replying, and auto mode may submit a native request after a reply decision. Direct wakes, private chats, matched commands, existing requests and sent results keep their existing behavior. Automatic replies require AstrBot's local Agent runner; external runners can use observation.
 
-Default gates are three fresh messages, two seconds of input debounce, a 90-second reply cooldown and 12 autonomous admissions per rolling hour per session/persona. Cooldown and quotas survive reload. A native send-stage reply also postpones autonomous participation. Planning starts at most every 30 seconds per scope (or the configured cooldown when shorter), with two global planning slots. Unmet gates wait for a new message rather than running an independent polling reply loop.
+Default gates are three fresh messages, two seconds of input debounce, a 90-second reply cooldown and 12 autonomous admissions per rolling hour, shared by isolated sessions in the same physical group. Cooldown and quotas survive reload. A native send-stage reply also postpones autonomous participation. Planning starts at most every 30 seconds per scope (or the configured cooldown when shorter), with two global planning slots. Unmet gates wait for a new message rather than running an independent polling reply loop.
 
 The planner chooses reply, observe or one bounded wait followed by one reassessment. New input cancels obsolete work. Provider failure, timeout or invalid plans preserve observation. Plans state reasons and conversational goals; they cannot execute tools. The resulting native request binds a conversation and reloads history through the host's session lock, preserving persona/history. Input, permission, profile and settings changes are checked again before generation.
 

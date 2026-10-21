@@ -125,13 +125,19 @@ class Store:
             CREATE TABLE IF NOT EXISTS decisions (
                 id INTEGER PRIMARY KEY, scope TEXT NOT NULL, action TEXT NOT NULL,
                 confidence REAL NOT NULL, reason TEXT NOT NULL, intent TEXT NOT NULL,
-                mode TEXT NOT NULL, outcome TEXT NOT NULL, created REAL NOT NULL
+                mode TEXT NOT NULL, outcome TEXT NOT NULL, created REAL NOT NULL,
+                room TEXT NOT NULL DEFAULT ''
             );
             CREATE INDEX IF NOT EXISTS decisions_scope ON decisions(scope,created);
             CREATE TABLE IF NOT EXISTS participation_state (
                 scope TEXT PRIMARY KEY, last_reply REAL NOT NULL DEFAULT 0
             );
         """)
+        if "room" not in {r[1] for r in db.execute("PRAGMA table_info(decisions)")}:
+            db.execute("ALTER TABLE decisions ADD COLUMN room TEXT NOT NULL DEFAULT ''")
+        db.execute(
+            "CREATE INDEX IF NOT EXISTS decisions_room_created ON decisions(room,created)"
+        )
         columns = {r[1] for r in db.execute("PRAGMA table_info(traits)")}
         for column, definition in {
             "support_count": "INTEGER NOT NULL DEFAULT 1",
@@ -321,26 +327,32 @@ class Store:
             (scope, umo, persona, label, json.dumps(PROFILE_DEFAULTS), time.time()),
         )
 
-    def participation_gate(self, db, scope, settings):
+    def participation_gate(self, db, scope, settings, room=""):
         """Check persistent cooldown and rolling autonomous admission limits.
 
         Args:
             db: Open database connection.
             scope: Session/persona key.
             settings: Effective timing and quota settings.
+            room: Physical group key, shared across isolated native sessions.
 
         Returns:
             An empty string when another autonomous reply may be admitted.
         """
         now = time.time()
         row = db.execute(
-            "SELECT last_reply FROM participation_state WHERE scope=?", (scope,)
+            "SELECT MAX(last_reply) FROM participation_state WHERE scope=? OR scope=?",
+            (scope, room),
         ).fetchone()
-        if row and now - row[0] < settings["participation_cooldown"]:
+        if (
+            row
+            and row[0] is not None
+            and now - row[0] < settings["participation_cooldown"]
+        ):
             return "距离上次回复或参与尝试过近，继续旁观。"
         count = db.execute(
-            "SELECT COUNT(*) FROM decisions WHERE scope=? AND outcome='admitted' AND created>?",
-            (scope, now - 3600),
+            "SELECT COUNT(*) FROM decisions WHERE (scope=? OR (room<>'' AND room=?)) AND outcome='admitted' AND created>?",
+            (scope, room, now - 3600),
         ).fetchone()[0]
         if count >= settings["participation_hourly_limit"]:
             return "已达到本小时自主参与上限，继续旁观。"
@@ -365,7 +377,7 @@ class Store:
             profile = db.execute(
                 "SELECT profile FROM scopes WHERE id=?", (scope,)
             ).fetchone()
-            reason = self.participation_gate(db, scope, settings)
+            reason = self.participation_gate(db, scope, settings, plan.get("room", ""))
             if (
                 not settings["enabled"]
                 or settings["participation_mode"] != "auto"
@@ -378,12 +390,9 @@ class Store:
                 outcome = "cancelled"
                 plan = plan | {"reason": reason}
             else:
-                db.execute(
-                    "INSERT INTO participation_state VALUES (?, ?) ON CONFLICT(scope) DO UPDATE SET last_reply=excluded.last_reply",
-                    (scope, time.time()),
-                )
+                self.note_reply(db, scope, plan.get("room", ""))
         cursor = db.execute(
-            "INSERT INTO decisions(scope,action,confidence,reason,intent,mode,outcome,created) VALUES (?,?,?,?,?,?,?,?)",
+            "INSERT INTO decisions(scope,action,confidence,reason,intent,mode,outcome,created,room) VALUES (?,?,?,?,?,?,?,?,?)",
             (
                 scope,
                 plan["action"],
@@ -393,6 +402,7 @@ class Store:
                 mode,
                 outcome,
                 time.time(),
+                plan.get("room", ""),
             ),
         )
         # Keep every admission inside the rolling hour even if many decisions arrive.
@@ -416,17 +426,19 @@ class Store:
             (reason, scope, identifier),
         )
 
-    def note_reply(self, db, scope):
+    def note_reply(self, db, scope, room=""):
         """Update autonomous cooldown after any native host send-stage reply.
 
         Args:
             db: Open database connection.
             scope: Session/persona key.
+            room: Optional physical-group cooldown shared across isolated sessions.
         """
-        db.execute(
-            "INSERT INTO participation_state VALUES (?, ?) ON CONFLICT(scope) DO UPDATE SET last_reply=excluded.last_reply",
-            (scope, time.time()),
-        )
+        for key in {scope, room} - {""}:
+            db.execute(
+                "INSERT INTO participation_state VALUES (?, ?) ON CONFLICT(scope) DO UPDATE SET last_reply=excluded.last_reply",
+                (key, time.time()),
+            )
 
     def batch(self, db, scope, size):
         """Read the oldest unconsumed messages for a learning batch.

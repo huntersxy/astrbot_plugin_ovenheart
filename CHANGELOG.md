@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.6.0
+
+- Coordinate autonomous admission, cooldown and rolling quota across per-member native sessions in the same physical group. Keep learning, persona and chat bodies isolated.
+- Interrupt stale planning and queued replies on permitted group activity, including direct wakes with learning disabled. Ignore delayed older capture and duplicate callbacks; separate groups and bot accounts.
+- Migrate decisions with an optional room key while retaining legacy records and scoped limits. Verify shared quota after reload and actual EventBus/PipelineScheduler/ProcessStage interleaving with controlled transport.
+
 ## 0.5.0
 
 - Add optional dual delivery for endpoints that fail to follow system-only role/style guidance. Preserve the system prompt and add bounded, temporary context from the current host persona and selected habits; keep system-only delivery as default.

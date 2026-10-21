@@ -261,9 +261,11 @@ class PersonaPlugin(Star):
             event: Real incoming event.
             cfg: Optional effective host configuration.
         """
-        if not self.settings["learning_enabled"] or not await self.permitted(
-            event, cfg
-        ):
+        if not await self.permitted(event, cfg):
+            return
+        if self.settings["participation_mode"] != "off":
+            self.participation.notice(event)
+        if not self.settings["learning_enabled"]:
             return
         text = event.get_message_str().strip()
         sender = event.get_sender_id()
@@ -397,7 +399,13 @@ class PersonaPlugin(Star):
             event.stop_event()
             return False
         window = self.participation.windows.get(scope)
-        if window is None or window["sequence"] != plan["sequence"]:
+        room = self.participation.rooms.get(plan["room"])
+        if (
+            window is None
+            or window["sequence"] != plan["sequence"]
+            or room is None
+            or room["source"] != plan["room_source"]
+        ):
             await self.store.call(
                 "cancel_decision",
                 scope,
@@ -604,7 +612,14 @@ class PersonaPlugin(Star):
         application = event.get_extra("ovenheart_application")
         if self.settings["participation_mode"] != "off" and await self.permitted(event):
             scope, _, _ = await self.resolve_scope(event)
-            await self.store.call("note_reply", scope)
+            room_key = self.participation.room_key(event)
+            await self.store.call("note_reply", scope, room_key)
+            room = self.participation.rooms.get(room_key)
+            if room:
+                room["changed"].set()
+                if not event.get_extra("ovenheart_decision"):
+                    room["source"] = "bot:" + uuid4().hex
+                    room["arrival"] = time.time()
             window = self.participation.windows.get(scope)
             result = event.get_result()
             if window is not None and result and result.get_plain_text():

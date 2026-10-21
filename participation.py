@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import math
 import time
 from collections import deque
 
 from astrbot.api import logger
+from astrbot.api.platform import MessageType
 from astrbot.core.star.session_llm_manager import SessionServiceManager
 
 from .learning import LearningFormatError, build_guidance, decode_model_object
@@ -101,7 +103,67 @@ class ParticipationController:
     def __init__(self, plugin):
         self.plugin = plugin
         self.windows: dict[str, dict] = {}
+        self.rooms: dict[str, dict] = {}
         self.inflight = 0
+
+    def room_key(self, event) -> str:
+        """Identify the physical group independently of native session isolation.
+
+        Args:
+            event: Native platform event.
+
+        Returns:
+            Non-secret coordination key, or an empty string for private events.
+        """
+        if event.get_message_type() != MessageType.GROUP_MESSAGE:
+            return ""
+        return (
+            "room:"
+            + hashlib.sha256(
+                json.dumps(
+                    [
+                        event.get_platform_name(),
+                        event.get_platform_id(),
+                        event.get_self_id(),
+                        event.get_group_id(),
+                    ],
+                    ensure_ascii=False,
+                ).encode()
+            ).hexdigest()[:24]
+        )
+
+    def notice(self, event):
+        """Interrupt older group work after the caller verified host permissions.
+
+        Args:
+            event: Real human event; its native arrival time orders delayed captures.
+
+        Returns:
+            Shared interruption state without retaining another scope's chat text.
+        """
+        key = self.room_key(event)
+        if not key or event.get_sender_id() == event.get_self_id():
+            return None
+        source = str(
+            event.message_obj.message_id
+            or f"{event.get_sender_id()}:{event.created_at}"
+        )
+        previous = self.rooms.get(key)
+        if previous and (
+            previous["source"] == source or previous["arrival"] > event.created_at
+        ):
+            return previous
+        if previous:
+            previous["changed"].set()
+        elif len(self.rooms) >= 128:
+            oldest = next(iter(self.rooms))
+            self.rooms.pop(oldest)["changed"].set()
+        self.rooms[key] = {
+            "source": source,
+            "arrival": event.created_at,
+            "changed": asyncio.Event(),
+        }
+        return self.rooms[key]
 
     async def consider(self, event) -> dict | None:
         """Plan for the latest live event, superseding obsolete in-flight events.
@@ -116,6 +178,10 @@ class ParticipationController:
         settings = plugin.settings.copy()
         if settings["participation_mode"] == "off" or not await plugin.permitted(event):
             return None
+        room = self.notice(event)
+        if room is None or room["arrival"] > event.created_at:
+            return None
+        room_key = self.room_key(event)
         if not plugin.context.get_config(event.unified_msg_origin).get(
             "provider_settings", {}
         ).get(
@@ -176,7 +242,7 @@ class ParticipationController:
         if any(m["source"] == source for m in window["messages"]):
             return None
         window["changed"].set()
-        window["changed"] = asyncio.Event()
+        window["changed"] = room["changed"]
         window["sequence"] += 1
         sequence, changed = window["sequence"], window["changed"]
         while window["messages"] and window["messages"][0]["time"] < time.time() - 600:
@@ -209,7 +275,9 @@ class ParticipationController:
                 30, settings["participation_cooldown"]
             ):
                 return None
-            gate = await plugin.store.call("participation_gate", scope, settings)
+            gate = await plugin.store.call(
+                "participation_gate", scope, settings, room_key
+            )
             if gate:
                 await plugin.store.call(
                     "decide",
@@ -251,6 +319,7 @@ class ParticipationController:
                         if not work.done():
                             work.cancel()
                     await asyncio.gather(task, interruption, return_exceptions=True)
+                plan = plan | {"room": room_key}
                 if (
                     changed.is_set()
                     or window["sequence"] != sequence
@@ -299,6 +368,7 @@ class ParticipationController:
                         "messages": messages[-12:],
                         "sequence": sequence,
                         "profile": state["scope"]["profile"],
+                        "room_source": room["source"],
                     }
                 return None
         except asyncio.CancelledError:
@@ -385,3 +455,6 @@ class ParticipationController:
         for window in self.windows.values():
             window["changed"].set()
         self.windows.clear()
+        for room in self.rooms.values():
+            room["changed"].set()
+        self.rooms.clear()
