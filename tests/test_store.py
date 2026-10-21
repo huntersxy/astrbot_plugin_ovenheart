@@ -161,3 +161,49 @@ async def test_persisted_pause_is_checked_inside_commit_transaction(store):
         await store.call("finish_run", run, scope, batch, [TRAIT], DEFAULTS, "")
     state = await store.call("state", scope)
     assert state["scope"]["pending"] == 3 and not state["traits"]
+
+
+async def test_persisted_target_change_is_checked_inside_commit_transaction(store):
+    scope = "a" * 24
+    batch = await seed(store)
+    run = await store.call("start_run", scope)
+    await store.call("settings", {"target_senders": ["new-target"]})
+    with pytest.raises(ValueError, match="学习对象"):
+        await store.call(
+            "finish_run", run, scope, batch, [TRAIT], DEFAULTS, "", "", None, []
+        )
+    assert not await store.call(
+        "batch", scope, 100, ["new-target", "x'); DROP TABLE messages; --"]
+    )
+    state = await store.call("state", scope)
+    assert state["scope"]["pending"] == 3 and not state["traits"]
+
+
+async def test_queued_capture_rechecks_persisted_target_and_pause(store):
+    scope = "b" * 24
+    await store.call("settings", {"target_senders": ["new-target"]})
+    assert not await store.call(
+        "capture",
+        scope,
+        "qq:g:1",
+        "default",
+        "test",
+        "old",
+        "old-target",
+        "迟到的旧对象消息",
+        DEFAULTS,
+    )
+    assert not (await store.call("state"))["scopes"]
+    await store.call("settings", {"learning_enabled": False})
+    assert not await store.call(
+        "capture",
+        scope,
+        "qq:g:1",
+        "default",
+        "test",
+        "peer",
+        "peer",
+        "暂停后的旁人语境",
+        DEFAULTS,
+        True,
+    )

@@ -39,7 +39,9 @@ class PageAPI:
         """
         if not self.plugin.ready:
             return {"status": "error", "message": "人格工坊正在初始化，请稍后刷新。"}
-        state = await self.plugin.store.call("state", request.query.get("scope"))
+        state = await self.plugin.store.call(
+            "state", request.query.get("scope"), self.plugin.settings["target_senders"]
+        )
         state.update(
             settings=self.plugin.settings,
             memory=self.plugin.memory.status(),
@@ -85,6 +87,7 @@ class PageAPI:
                     raise ValueError("最少证据数量不能大于每批素材数量。")
                 await self.plugin.store.call("settings", patch)
                 self.plugin.settings = merged
+                self.plugin.learning_context.clear()
                 self.plugin.participation.close()
                 return {"status": "ok", "data": {"message": "学习设置已保存。"}}
             scope = body.get("scope")
@@ -147,6 +150,8 @@ class PageAPI:
             else:
                 raise ValueError("不支持的操作，请刷新页面后重试。")
             await self.plugin.store.call("mutate", scope, operation, payload)
+            if operation in ("clear_messages", "profile", "restore"):
+                self.plugin.learning_context.pop(scope, None)
             if operation in ("profile", "restore"):
                 window = self.plugin.participation.windows.get(scope)
                 if window:

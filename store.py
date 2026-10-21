@@ -200,7 +200,17 @@ class Store:
         )
 
     def capture(
-        self, db, scope, umo, persona, label, source_id, sender, text, settings
+        self,
+        db,
+        scope,
+        umo,
+        persona,
+        label,
+        source_id,
+        sender,
+        text,
+        settings,
+        context_only=False,
     ):
         """Retain a bounded, deduplicated observation for a session and persona.
 
@@ -214,11 +224,26 @@ class Store:
             sender: Platform sender identity.
             text: Truncated plain text observation.
             settings: Effective runtime settings.
+            context_only: Check scoped learning permission without retaining raw text.
 
         Returns:
-            Whether a new observation was inserted.
+            Whether an observation was inserted or context-only capture is permitted.
         """
         now = time.time()
+        settings = settings | self.settings(db)
+        if not settings["enabled"] or not settings["learning_enabled"]:
+            return False
+        if (
+            not context_only
+            and settings["target_senders"]
+            and sender not in settings["target_senders"]
+        ):
+            return False
+        if context_only:
+            row = db.execute(
+                "SELECT profile FROM scopes WHERE id=?", (scope,)
+            ).fetchone()
+            return not row or json.loads(row[0])["learning_enabled"]
         db.execute(
             "INSERT INTO scopes VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET label=excluded.label, updated=excluded.updated",
             (scope, umo, persona, label, json.dumps(PROFILE_DEFAULTS), now),
@@ -242,20 +267,28 @@ class Store:
         )
         return cursor.rowcount == 1
 
-    def state(self, db, scope=None):
+    def state(self, db, scope=None, target_senders=None):
         """Load the bounded dashboard state or one scope's detail.
 
         Args:
             db: Open database connection.
             scope: Optional selected scope.
+            target_senders: Current learning targets for pending-material counts.
 
         Returns:
             A serializable dashboard state.
         """
+        targets = list(dict.fromkeys(target_senders or []))
+        sender_filter = (
+            " AND m.sender IN (" + ",".join("?" for _ in targets) + ")"
+            if targets
+            else ""
+        )
         scopes = [
             dict(row)
             for row in db.execute(
-                "SELECT s.*, (SELECT COUNT(*) FROM messages m WHERE m.scope=s.id AND m.consumed=0) pending, (SELECT COUNT(*) FROM traits t WHERE t.scope=s.id AND t.status='pending') review_count FROM scopes s ORDER BY updated DESC"
+                f"SELECT s.*, (SELECT COUNT(*) FROM messages m WHERE m.scope=s.id AND m.consumed=0{sender_filter}) pending, (SELECT COUNT(*) FROM traits t WHERE t.scope=s.id AND t.status='pending') review_count FROM scopes s ORDER BY updated DESC",
+                targets,
             )
         ]
         for item in scopes:
@@ -439,22 +472,27 @@ class Store:
                 (key, time.time()),
             )
 
-    def batch(self, db, scope, size):
+    def batch(self, db, scope, size, target_senders=None):
         """Read the oldest unconsumed messages for a learning batch.
 
         Args:
             db: Open database connection.
             scope: Session/persona key.
             size: Batch size limit.
+            target_senders: Current eligible senders, including after settings changes.
 
         Returns:
             Retained observations in arrival order.
         """
+        targets = list(dict.fromkeys(target_senders or []))
+        sender_filter = (
+            " AND sender IN (" + ",".join("?" for _ in targets) + ")" if targets else ""
+        )
         return [
             dict(row)
             for row in db.execute(
-                "SELECT * FROM messages WHERE scope=? AND consumed=0 ORDER BY id LIMIT ?",
-                (scope, size),
+                f"SELECT * FROM messages WHERE scope=? AND consumed=0{sender_filter} ORDER BY id LIMIT ?",
+                (scope, *targets, size),
             )
         ]
 
@@ -506,6 +544,7 @@ class Store:
         memory,
         error="",
         expected_profile=None,
+        expected_targets=None,
     ):
         """Commit candidates and consume exactly the successful batch atomically.
 
@@ -519,6 +558,7 @@ class Store:
             memory: Integration status description.
             error: Actionable failure description, if any.
             expected_profile: Identity anchor at the start of generation.
+            expected_targets: Learning targets at the start of generation.
 
         Returns:
             Count of newly inserted candidates.
@@ -536,6 +576,10 @@ class Store:
             return 0
         if not error:
             settings = settings | self.settings(db)
+            if expected_targets is not None and set(settings["target_senders"]) != set(
+                expected_targets
+            ):
+                raise ValueError("学习对象在学习期间已修改，旧结果未保存，素材保留。")
             profile = json.loads(
                 db.execute(
                     "SELECT profile FROM scopes WHERE id=?", (scope,)

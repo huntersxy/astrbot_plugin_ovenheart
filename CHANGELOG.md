@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.10.0
+
+- Preserve scoped, volatile neighbor context when learning from selected users, so replies retain their conversational conditions without treating peers as learning sources. Keep peer text out of SQLite, evidence and pending counts.
+- Recheck current targets when selecting retained batches, counting Panel/scheduler materials and committing delayed results. Keep excluded users' old rows unconsumed for later target changes.
+- Bound context to 64 messages in each of 128 scopes, use neighborhoods within five minutes with at most 16 excerpts, and clear it on settings/profile changes, source clearing and shutdown. Restarting does not restore peer context.
+- Verify target eligibility, transactional races, scope isolation, expiry and actual native-core capture. Add an optional neighbor-context control to the synthetic lifecycle evaluator.
+
 ## 0.9.0
 
 - Keep native command prefixes out of learning after AstrBot's waking stage strips them, by checking both original platform text and processed pipeline text.

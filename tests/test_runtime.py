@@ -250,6 +250,107 @@ async def test_sessions_and_selected_personas_have_separate_learning(plugin):
     assert (await plugin.store.call("state", first))["scope"]["pending"] == 2
 
 
+async def test_target_learning_uses_neighbors_without_persisting_or_learning_them(
+    plugin,
+):
+    plugin.settings["target_senders"] = ["alice"]
+    await plugin.capture(event("peer-1", "PEER_ONLY：现在只想吐槽，先别建议", "bob"))
+    assert not (await plugin.store.call("state"))["scopes"]
+    await plugin.capture(event("a-1", "收到，我先把耳朵借给你，慢慢说", "alice"))
+    await plugin.capture(event("peer-2", "PEER_ONLY：现在请给我两个实际步骤", "bob"))
+    await plugin.capture(
+        event("a-2", "收到，那就落到两步，先写问题再选小动作", "alice")
+    )
+    await plugin.capture(
+        event("foreign", "FOREIGN_SCOPE_CONTEXT", "bob", session="456")
+    )
+    scope = (await plugin.store.call("state"))["scopes"][0]["id"]
+    assert len(await plugin.store.call("batch", scope, 100)) == 2
+    result = await plugin.learn(scope)
+    assert result["status"] == "success"
+    payload = json.loads(plugin.context.llm_generate.await_args.kwargs["prompt"])
+    assert {m["sender"] for m in payload["observations"]} == {"alice"}
+    context = payload["conversation_context"]
+    assert len(context) == 2 and {m["sender"] for m in context} == {"bob"}
+    assert "FOREIGN_SCOPE_CONTEXT" not in json.dumps(context)
+    assert all("id" not in m for m in context)
+    ids = {m["id"] for m in payload["observations"]}
+    assert all(set(m["for_evidence_ids"]) <= ids for m in context)
+    state = await plugin.store.call("state", scope)
+    assert {e["sender"] for t in state["traits"] for e in t["evidence"]} == {"alice"}
+    assert "PEER_ONLY" not in json.dumps(state)
+    cleared = await api_call(
+        plugin.page_api.action, {"action": "clear_messages", "scope": scope}
+    )
+    assert cleared["status"] == "ok" and scope not in plugin.learning_context
+
+
+async def test_changed_targets_filter_existing_pending_material_and_panel_counts(
+    plugin,
+):
+    scope = await sources(plugin)
+    await plugin.capture(event("bob-1", "好家伙，今天你又猜到了", "bob"))
+    await plugin.capture(event("bob-2", "好家伙，还是你眼尖呀", "bob"))
+    result = await api_call(
+        plugin.page_api.action,
+        {"action": "settings", "payload": {"target_senders": ["bob"]}},
+    )
+    assert result["status"] == "ok"
+    panel = await api_call(plugin.page_api.state, query=f"scope={scope}")
+    assert panel["data"]["scope"]["pending"] == 2
+    result = await plugin.learn(scope)
+    assert result["status"] == "success"
+    payload = json.loads(plugin.context.llm_generate.await_args.kwargs["prompt"])
+    assert {m["sender"] for m in payload["observations"]} == {"bob"}
+    # Former targets remain pending; changing targets never consumes their rows.
+    assert (await plugin.store.call("state", scope))["scope"]["pending"] == 2
+    panel = await api_call(plugin.page_api.state, query=f"scope={scope}")
+    assert panel["data"]["scope"]["pending"] == 0
+
+
+async def test_target_change_during_generation_keeps_old_batch_unconsumed(plugin):
+    scope = await sources(plugin)
+    started, release = asyncio.Event(), asyncio.Event()
+
+    async def delayed(**kwargs):
+        started.set()
+        await release.wait()
+        return await completion(**kwargs)
+
+    plugin.context.llm_generate.side_effect = delayed
+    task = asyncio.create_task(plugin.learn(scope))
+    await started.wait()
+    await api_call(
+        plugin.page_api.action,
+        {"action": "settings", "payload": {"target_senders": ["bob"]}},
+    )
+    release.set()
+    result = await task
+    assert result["status"] == "error" and "学习对象" in result["message"]
+    state = await plugin.store.call("state", scope)
+    assert not state["traits"] and state["scope"]["pending"] == 2
+
+
+async def test_context_is_bounded_expiring_and_respects_scope_pause(plugin):
+    plugin.settings["target_senders"] = ["alice"]
+    await plugin.capture(event("old-peer", "这段旁人语境已经过期", "bob"))
+    scope = await sources(plugin)
+    for item in plugin.learning_context[scope]:
+        item["created"] -= 301 if item["sender"] == "bob" else 2
+    await plugin.learn(scope)
+    payload = json.loads(plugin.context.llm_generate.await_args.kwargs["prompt"])
+    assert not payload["conversation_context"]
+    for i in range(70):
+        await plugin.capture(event(f"peer-{i}", f"旁人上下文{i}", "bob"))
+    assert len(plugin.learning_context[scope]) == 64
+    await api_call(
+        plugin.page_api.action,
+        {"action": "profile", "scope": scope, "payload": {"learning_enabled": False}},
+    )
+    await plugin.capture(event("paused-peer", "这句话不能进入暂停的缓存", "bob"))
+    assert scope not in plugin.learning_context
+
+
 async def test_provider_errors_do_not_leak_details_or_consume_material(plugin):
     scope = await sources(plugin)
     plugin.context.llm_generate.side_effect = ValueError(

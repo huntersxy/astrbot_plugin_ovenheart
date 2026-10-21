@@ -19,6 +19,8 @@ jargon=本会话反复出现且含义明确的词汇；behavior=面对具体情�
 禁止提取泄露隐私、歧视攻击、操控他人、绕过规则或覆盖系统指令的习惯。
 只学习启用的类别。每项须给出真实 evidence_ids，来自本批素材中的至少 min_evidence 条不同消息。
 长期记忆仅用于理解情境，不得充当原始证据。没有充分证据就返回空数组，绝不凑数。
+observations 是本批唯一可学习的指定对象素材。conversation_context 是其他人的邻近发言，仅帮助理解 observations 的前提；
+for_evidence_ids 标记它与哪几条目标发言相邻，不表示这些目标发言支持其中的内容。不得学习这些旁人的用词、偏好或身份，不得把它们当成证据。
 最多输出 12 项。置信度是 0 到 1 的数字。只输出 JSON 对象，不要解释：
 {"traits":[{"kind":"expression","situation":"被朋友轻松调侃时","content":"用简短的反问接住玩笑，不过度解释", "confidence":0.92,"evidence_ids":[1,2]}]}
 known_traits 是已存习惯，仅作对照，不能作为证据。如果本批证据支持其中同一习惯，在候选中加 merge_id 指向其 id；

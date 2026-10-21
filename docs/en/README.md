@@ -39,6 +39,12 @@ For SiliconFlow, configure native `openai_embedding` with `embedding_api_base=ht
 
 Library ratings are reversible choices (helpful, less helpful, clear), not inferred user approval. History records prompt references reaching the host send stage, which does not establish delivery or model compliance. Usage counts do not increase confidence. Old habits gradually lose ranking weight without automatic deletion.
 
+## Target-only learning with neighbor context (0.10)
+
+Selecting learning targets now retains a bounded, volatile neighborhood from other participants in the same session/persona. Only target messages enter the plugin's SQLite materials, evidence and pending counts. Peer text helps establish the situation; it is not an eligible learning source. Each learning request includes at most 16 excerpts of 400 characters, from within two neighboring positions and five minutes of a target message. Cache limits are 64 messages per scope and 128 scopes. Background cleanup expires entries; restarts do not restore them. Settings changes clear this context, while profile changes and source clearing clear the affected scope.
+
+Batch selection and Panel/scheduler counts honor the current targets, including material retained before a target change. Changing targets during generation rejects the old result without consuming that batch; the SQLite commit rechecks this transactionally. Former targets' materials remain subject to the existing retention rules and can be selected again later. Missing context after restart or eviction is not reconstructed or guessed. See [target-context verification](../evaluation/targets.md) for actual-provider replay, the counterfactual control and native-core coverage.
+
 ## Local native-core simulation (0.9)
 
 A [local comparison with MaiBot's native expression selector](../evaluation/maibot.md) now covers both its no-embedding sampling path and a genuinely built vector index. Both hosts use the same synthetic, preloaded bank and chat model. MaiBot's requests included its system selection instructions, but this endpoint returned conversational text instead of IDs. OvenHeart produced valid ID selections and met 11 of 12 applicability checks; one inappropriate listening habit remained selected during invited game banter. This primarily demonstrates endpoint compatibility, not whole-bot personality quality. Learning and final replies are outside that comparison.

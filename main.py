@@ -7,6 +7,7 @@ import hashlib
 import json
 import time
 import weakref
+from collections import deque
 from uuid import uuid4
 
 from astrbot.api import logger
@@ -110,6 +111,7 @@ class PersonaPlugin(Star):
         self.tasks: set[asyncio.Task] = set()
         self.busy: set[str] = set()
         self.events: dict[str, AstrMessageEvent] = {}
+        self.learning_context: dict[str, deque] = {}
         self.last_attempt: dict[str, float] = {}
         self.ready = False
         self.closing = False
@@ -272,8 +274,7 @@ class PersonaPlugin(Star):
         if not text or len(text) < 2 or sender == event.get_self_id():
             return
         targets = self.settings["target_senders"]
-        if targets and sender not in targets:
-            return
+        context_only = bool(targets and sender not in targets)
         cfg = (
             cfg
             if cfg is not None
@@ -294,7 +295,7 @@ class PersonaPlugin(Star):
             event.message_obj.message_id
             or f"{sender}:{event.message_obj.timestamp}:{hashlib.sha256(text.encode()).hexdigest()}"
         )
-        await self.store.call(
+        retained = await self.store.call(
             "capture",
             scope,
             event.unified_msg_origin,
@@ -304,7 +305,31 @@ class PersonaPlugin(Star):
             sender,
             text[:1200],
             self.settings,
+            context_only,
         )
+        if not retained:
+            return
+        if targets and targets == self.settings["target_senders"]:
+            # Context is volatile and scoped; only target observations enter SQLite.
+            window = self.learning_context.pop(scope, deque(maxlen=64))
+            now = time.time()
+            window = deque((m for m in window if now - m["created"] <= 300), maxlen=64)
+            if not any(m["source_id"] == source for m in window):
+                window.append(
+                    {
+                        "source_id": source,
+                        "sender": sender,
+                        "text": text[:1200],
+                        "created": event.created_at,
+                    }
+                )
+            self.learning_context[scope] = deque(
+                sorted(window, key=lambda m: m["created"]), maxlen=64
+            )
+            if len(self.learning_context) > 128:
+                self.learning_context.pop(next(iter(self.learning_context)))
+        if context_only:
+            return
         self.events[scope] = event
         # Only a bounded number of real event references are needed for optional recall.
         if len(self.events) > 128:
@@ -679,7 +704,17 @@ class PersonaPlugin(Star):
             await asyncio.sleep(15)
             try:
                 await self.store.call("prune", self.settings["retention_days"])
-                state = await self.store.call("state")
+                now = time.time()
+                self.learning_context = {
+                    scope: deque(
+                        (m for m in window if now - m["created"] <= 300), maxlen=64
+                    )
+                    for scope, window in self.learning_context.items()
+                    if any(now - m["created"] <= 300 for m in window)
+                }
+                state = await self.store.call(
+                    "state", None, self.settings["target_senders"]
+                )
                 if (
                     not self.settings["enabled"]
                     or not self.settings["learning_enabled"]
@@ -761,7 +796,9 @@ class PersonaPlugin(Star):
                 raise ValueError("AstrBot 已停用当前会话或插件，请先恢复启用。")
             if not any(settings[f"learn_{kind}"] for kind in KINDS):
                 raise ValueError("没有启用任何学习类别，请先开启至少一个类别。")
-            batch = await self.store.call("batch", scope, settings["batch_size"])
+            batch = await self.store.call(
+                "batch", scope, settings["batch_size"], settings["target_senders"]
+            )
             if len(batch) < settings["min_evidence"]:
                 raise ValueError(
                     f"素材不足，至少需要 {settings['min_evidence']} 条不同消息。"
@@ -790,6 +827,31 @@ class PersonaPlugin(Star):
                 settings | {"max_traits": 40},
             )
             known = list({t["id"]: t for t in [*relevant, *known[:40]]}.values())
+            context = {}
+            if settings["target_senders"]:
+                sources = {m["source_id"]: m["id"] for m in batch}
+                window = list(self.learning_context.get(scope, ()))
+                now = time.time()
+                for index, item in enumerate(window):
+                    if item["source_id"] not in sources or now - item["created"] > 300:
+                        continue
+                    for nearby in window[max(0, index - 2) : index + 3]:
+                        if (
+                            nearby["sender"] in settings["target_senders"]
+                            or now - nearby["created"] > 300
+                            or abs(nearby["created"] - item["created"]) > 300
+                        ):
+                            continue
+                        entry = context.setdefault(
+                            nearby["source_id"],
+                            {
+                                "sender": nearby["sender"],
+                                "text": nearby["text"][:400],
+                                "created": nearby["created"],
+                                "for_evidence_ids": [],
+                            },
+                        )
+                        entry["for_evidence_ids"].append(sources[item["source_id"]])
             prompt = json.dumps(
                 {
                     "task": LEARNING_SYSTEM,
@@ -802,6 +864,9 @@ class PersonaPlugin(Star):
                         for m in batch
                     ],
                     "memory_context": memories,
+                    "conversation_context": sorted(
+                        context.values(), key=lambda m: m["created"]
+                    )[-16:],
                     "known_traits": [
                         {
                             k: t[k]
@@ -876,6 +941,8 @@ class PersonaPlugin(Star):
                     ) from exc
             # Re-read switches: pausing during a request must prevent its late commit.
             latest = await self.store.call("state", scope)
+            if set(self.settings["target_senders"]) != set(settings["target_senders"]):
+                raise ValueError("学习对象在学习期间已修改，旧结果未保存，素材保留。")
             if (
                 not self.settings["enabled"]
                 or not self.settings["learning_enabled"]
@@ -911,6 +978,7 @@ class PersonaPlugin(Star):
                 memory_status,
                 "",
                 selected["profile"],
+                settings["target_senders"],
             )
             return {
                 "status": "success",
@@ -968,6 +1036,7 @@ class PersonaPlugin(Star):
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
         self.events.clear()
+        self.learning_context.clear()
         prefix = f"/{PLUGIN_NAME}/"
         self.context.registered_web_apis[:] = [
             api

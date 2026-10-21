@@ -149,7 +149,7 @@ function renderSettings() {
       ${field("provider_id", "学习模型 ID", s.provider_id, "留空使用该会话的当前模型。填写 AstrBot 中已配置的模型提供商 ID。", {type:"text"})}
     </section>
     <section class="settings-group"><h2>学习范围</h2><p>每个会话与人格单独积累。AstrBot 的会话开关、插件开关与白名单始终有效。</p>
-      ${field("target_senders", "只向这些用户学习", s.target_senders.join("\n"), "每行一个用户 ID。留空向会话内除机器人自身以外的发送者学习。", {maxlength:16000})}
+      ${field("target_senders", "只向这些用户学习", s.target_senders.join("\n"), "每行一个用户 ID。留空学习所有人；指定后，旁人的邻近发言仅短暂用于理解语境，不入素材库或证据。", {maxlength:16000})}
       ${field("allowed_sessions", "允许学习与应用的会话", s.allowed_sessions.join("\n"), "每行一个完整 unified_msg_origin，可通过 AstrBot 的 /sid 获取。留空允许全部已启用会话。", {maxlength:32000})}
     </section>
     <section class="settings-group"><h2>记忆与表达</h2><p>记忆帮助理解来龙去脉；人格工坊只学习有原始聊天证据的习惯。</p>
