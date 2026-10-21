@@ -6,6 +6,7 @@ DEFAULTS = {
     "enabled": True,
     "learning_enabled": True,
     "apply_enabled": True,
+    "guidance_delivery": "system",
     "activation_mode": "review",
     "auto_confidence": 0.9,
     "min_evidence": 2,
@@ -120,6 +121,9 @@ def validate_settings(values: dict) -> dict:
         elif key == "selection_mode":
             if value not in ("lexical", "hybrid", "contextual"):
                 raise ValueError("检索方式必须为 lexical、hybrid 或 contextual。")
+        elif key == "guidance_delivery":
+            if value not in ("system", "dual"):
+                raise ValueError("提示投递方式必须为 system 或 dual。")
         elif key == "participation_mode":
             if value not in ("off", "observe", "auto"):
                 raise ValueError("参与方式必须为 off、observe 或 auto。")

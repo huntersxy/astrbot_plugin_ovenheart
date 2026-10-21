@@ -14,6 +14,13 @@
     "type": "bool",
     "default": true
   },
+  "guidance_delivery": {
+    "description": "提示投递方式",
+    "type": "string",
+    "default": "system",
+    "options": ["system", "dual"],
+    "hint": "system 仅补充系统提示词；dual 同时把当前角色与已选习惯作为临时用户上下文，适合 system 不生效的接口。不会复制整段宿主系统提示词。"
+  },
   "activation_mode": {
     "description": "新结果生效方式",
     "type": "string",

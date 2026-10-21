@@ -286,6 +286,12 @@ async def test_pause_during_planning_cancels_late_admission(participant):
 
 
 async def test_native_tools_are_isolated_and_only_explicitly_allowed(participant):
+    from astrbot.core.agent.message import (
+        Message,
+        TextPart,
+        dump_messages_with_checkpoints,
+    )
+
     incoming = event()
     request = (await requests(participant, incoming))[0]
     tools = ToolSet(
@@ -306,6 +312,11 @@ async def test_native_tools_are_isolated_and_only_explicitly_allowed(participant
     assert len(tools.tools) == 2
     assert request.system_prompt.startswith("宿主身份与规则")
     assert "先接住情绪" in request.system_prompt and request.extra_user_content_parts
+    assert all(isinstance(p, TextPart) for p in request.extra_user_content_parts)
+    context = await request.assemble_context()
+    persisted = dump_messages_with_checkpoints([Message.model_validate(context)])
+    assert "reply_goal" in str(context) and "reply_goal" not in str(persisted)
+    assert incoming.get_message_str() in str(persisted)
     direct = ProviderRequest(func_tool=tools, system_prompt="宿主")
     await participant.apply_participation(event("direct"), direct)
     assert direct.func_tool is tools and direct.system_prompt == "宿主"

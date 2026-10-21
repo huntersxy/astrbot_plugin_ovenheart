@@ -86,7 +86,7 @@ function renderProfile() {
     ${field("behavior", "行为准则", p.behavior, "例如：先倾听；拿不准时先澄清；对方难过时少说教。")}
     <div class="switches">${switchField("learning_enabled", "积累并学习", "仅影响当前会话与人格", p.learning_enabled)}${switchField("apply_enabled", "应用已生效的习惯", "关闭后保留全部学习数据", p.apply_enabled)}</div>
     <button class="primary" type="submit">保存人格底稿</button></form>
-    <aside class="preview"><h2>看看它会带上哪些习惯</h2><p>输入一句可能出现的话，查看本插件会追加给模型的表达参考。免费预览使用文字检索，不调用模型或发送消息；真实回复还可使用向量、重排序与情境筛选，结果可能不同。</p><form id="preview-form"><label for="preview-query">试一句话</label><textarea id="preview-query" placeholder="例如：今天又搞砸了，有点难过。" maxlength="1200"></textarea><button class="tonal" type="submit">预览生效内容</button></form><pre id="preview-output" hidden></pre><p class="muted">仅展示本插件的补充内容，最终回复仍由 AstrBot 的人格、上下文和模型共同决定。</p></aside></div>`;
+    <aside class="preview"><h2>看看它会带上哪些习惯</h2><p>输入一句可能出现的话，查看本插件会追加给模型的表达参考。免费预览使用文字检索，不调用模型或发送消息；真实回复还可使用向量、重排序与情境筛选，结果可能不同；兼容模式的角色资料未纳入此预览。</p><form id="preview-form"><label for="preview-query">试一句话</label><textarea id="preview-query" placeholder="例如：今天又搞砸了，有点难过。" maxlength="1200"></textarea><button class="tonal" type="submit">预览生效内容</button></form><pre id="preview-output" hidden></pre><p class="muted">仅展示本插件的补充内容，最终回复仍由 AstrBot 的人格、上下文和模型共同决定。</p></aside></div>`;
   $("#profile-form").addEventListener("submit", async event => {
     event.preventDefault();
     const form = event.currentTarget;
@@ -155,6 +155,7 @@ function renderSettings() {
     <section class="settings-group"><h2>记忆与表达</h2><p>记忆帮助理解来龙去脉；人格工坊只学习有原始聊天证据的习惯。</p>
       ${switchField("memory_enabled", "参考 LivingMemory 长期记忆", data.memory.message, s.memory_enabled)}
       <div class="number-fields">${field("memory_top_k", "最多参考记忆", s.memory_top_k, "条；仅在学习时检索", {type:"number", min:1, max:8})}${field("max_traits", "每次最多应用习惯", s.max_traits, "条；优先匹配当前对话", {type:"number", min:1, max:24})}${field("prompt_budget", "补充内容字数上限", s.prompt_budget, "字符；包含人工底稿", {type:"number", min:500, max:8000})}</div>
+      <div class="field"><label for="guidance_delivery">提示投递方式</label><select id="guidance_delivery" name="guidance_delivery"><option value="system" ${s.guidance_delivery === "system" ? "selected" : ""}>仅系统提示词</option><option value="dual" ${s.guidance_delivery === "dual" ? "selected" : ""}>系统与临时上下文（兼容模式）</option></select><small>当接口不遵循 system 中的角色或语气时使用兼容模式。只附加已有角色资料与本轮选中习惯，不复制完整系统提示词。原生 Agent 保存历史时剔除临时内容；第三方运行器需自行支持。</small></div>
       <div class="field"><label for="selection_mode">习惯检索方式</label><select id="selection_mode" name="selection_mode"><option value="contextual" ${s.selection_mode === "contextual" ? "selected" : ""}>按当前对话筛选</option><option value="hybrid" ${s.selection_mode === "hybrid" ? "selected" : ""}>语义与文字结合</option><option value="lexical" ${s.selection_mode === "lexical" ? "selected" : ""}>仅文字相关性</option></select><small>情境模式每次回复最多额外调用一次学习模型，未指定时用当前聊天模型。从最多 24 条候选中选 0–5 条，允许本轮不选；其他模式仅按相关性排序。</small></div>
       ${field("embedding_provider_id", "向量模型 ID", s.embedding_provider_id, "填写 AstrBot 中已配置的 embedding 提供商 ID。留空使用文字检索。", {type:"text"})}
       ${field("rerank_provider_id", "重排序模型 ID", s.rerank_provider_id, "可选，填写 AstrBot 中已配置的 rerank 提供商 ID。只改变候选顺序，不能代替情境判断。", {type:"text"})}
