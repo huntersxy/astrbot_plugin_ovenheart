@@ -97,6 +97,8 @@ async def completion(**kwargs):
                         ("jargon", "好家伙：轻松的惊讶"),
                         ("behavior", "先回应对方的情绪"),
                     )
+                    if kind != "jargon"
+                    or any("好家伙" in m["text"] for m in payload["observations"])
                 ]
             }
         )
@@ -462,6 +464,42 @@ async def test_provider_errors_do_not_leak_details_or_consume_material(plugin):
     result = await plugin.learn(scope)
     assert result["status"] == "error" and "证据" in result["message"]
     assert (await plugin.store.call("state", scope))["scope"]["pending"] == 2
+
+
+async def test_ungrounded_word_aborts_the_entire_batch_without_format_repair(plugin):
+    scope = await sources(plugin)
+
+    async def generated(**kwargs):
+        payload = json.loads(kwargs["prompt"])
+        if payload["enabled_kinds"] == ["jargon"]:
+            return SimpleNamespace(
+                completion_text=json.dumps(
+                    {
+                        "traits": [
+                            {
+                                "kind": "jargon",
+                                "situation": "聊天",
+                                "content": "月港：改期",
+                                "confidence": 0.99,
+                                "evidence_ids": [
+                                    m["id"] for m in payload["observations"]
+                                ],
+                            }
+                        ]
+                    }
+                )
+            )
+        return await completion(**kwargs)
+
+    plugin.context.llm_generate = AsyncMock(side_effect=generated)
+    outcome = await plugin.learn(scope)
+    assert outcome["status"] == "error" and "词汇名称" in outcome["message"]
+    assert plugin.context.llm_generate.await_count == 2
+    state = await plugin.store.call("state", scope)
+    assert not state["traits"] and state["scope"]["pending"] == 2
+    plugin.context.llm_generate = AsyncMock(side_effect=completion)
+    assert (await plugin.learn(scope))["status"] == "success"
+    assert (await plugin.store.call("state", scope))["scope"]["pending"] == 0
 
 
 async def test_schema_drift_gets_one_correction_with_original_evidence(plugin):

@@ -8,12 +8,13 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from astrbot_plugin_ovenheart.learning import build_guidance
 from astrbot_plugin_ovenheart.retrieval import (
     HabitRetriever,
     normalized_vector,
     rank_traits,
 )
-from astrbot_plugin_ovenheart.settings import DEFAULTS
+from astrbot_plugin_ovenheart.settings import DEFAULTS, PROFILE_DEFAULTS
 from astrbot_plugin_ovenheart.store import Store
 
 TRAITS = [
@@ -36,6 +37,27 @@ TRAITS = [
         "updated": 2,
     },
 ]
+
+
+def test_quoted_single_character_jargon_is_found_without_embeddings():
+    trait = TRAITS[0] | {
+        "kind": "jargon",
+        "content": "『典』：例子已归档",
+        "situation": "归档时",
+    }
+    assert rank_traits([trait], "典？", DEFAULTS, {trait["id"]: 0})
+    assert "词汇" in build_guidance(PROFILE_DEFAULTS, [trait], DEFAULTS, "典？")
+    assert not rank_traits([trait], "下雨", DEFAULTS, {trait["id"]: 0})
+
+
+def test_ascii_word_fragment_does_not_recall_an_unrelated_local_definition():
+    trait = TRAITS[0] | {
+        "kind": "jargon",
+        "content": "「LUX」：甲方报告",
+        "situation": "报告时",
+    }
+    assert not rank_traits([trait], "deluxe", DEFAULTS, {trait["id"]: 0})
+    assert rank_traits([trait], "ＬＵＸ？", DEFAULTS, {trait["id"]: 0})
 
 
 @pytest.fixture

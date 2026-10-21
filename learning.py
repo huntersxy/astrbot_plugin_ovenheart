@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import math
 import re
+import unicodedata
 
 from .settings import KINDS
 
@@ -32,11 +33,51 @@ known_traits 是已存习惯，仅作对照，不能作为证据。如果本批�
 只有类别一致、情境兼容、含义相同才可合并。不同立场、不同场景不能合并，矛盾时宁可不输出。
 已拒绝或停用的习惯不得换一种说法重新学习，可用 merge_id 标识它以防重复。
 词汇可在新证据下澄清或修正解释，但只针对同一个词，不能将不同的词合并；content 示例为「好家伙：表示轻松的惊讶」，不要把「词语」二字作为词条名。
+词汇 content 必须使用「词名：释义」，词名须在至少一条所引用的 observations 原文中真实出现；不能从记忆、邻近对话或模型常识新增未出现的词名，也不能把其他单词内部的字母片段当成缩写。
 """
 
 
 class LearningFormatError(ValueError):
     """Identify repairable serialization errors separately from invalid evidence."""
+
+
+def jargon_term(content: str) -> str:
+    """Extract a comparable term without altering its stored original wording.
+
+    Args:
+        content: A term or a term-definition entry.
+
+    Returns:
+        Compatibility-normalized, case-folded term with balanced quotes removed.
+    """
+    word = unicodedata.normalize("NFKC", content).split(":", 1)[0].strip()
+    pairs = {"“": "”", "‘": "’", "「": "」", "『": "』", '"': '"', "'": "'", "`": "`"}
+    while len(word) >= 2 and pairs.get(word[0]) == word[-1]:
+        word = word[1:-1].strip()
+    return word.casefold()
+
+
+def mentions_jargon(content: str, text: str) -> bool:
+    """Match a literal local term while avoiding ASCII word fragments.
+
+    Args:
+        content: Original term-definition entry.
+        text: Source or query text to inspect.
+
+    Returns:
+        Whether the normalized term appears, allowing adjacent Chinese text.
+    """
+    word = jargon_term(content)
+    if not word:
+        return False
+    pattern = re.escape(word)
+    if word[0].isascii() and (word[0].isalnum() or word[0] == "_"):
+        pattern = r"(?<![a-z0-9_])" + pattern
+    if word[-1].isascii() and (word[-1].isalnum() or word[-1] == "_"):
+        pattern += r"(?![a-z0-9_])"
+    return (
+        re.search(pattern, unicodedata.normalize("NFKC", text).casefold()) is not None
+    )
 
 
 def decode_model_object(text: str) -> dict:
@@ -174,22 +215,27 @@ def parse_candidates(
         ):
             raise ValueError("学习结果引用了无效或不同类别的合并目标，素材已保留。")
         if merge_id is not None and kind == "jargon":
-            old_term = (
-                known[merge_id]["content"]
-                .replace("：", ":")
-                .split(":", 1)[0]
-                .strip()
-                .casefold()
-            )
-            new_term = (
-                candidate["content"]
-                .replace("：", ":")
-                .split(":", 1)[0]
-                .strip()
-                .casefold()
-            )
+            old_term = jargon_term(known[merge_id]["content"])
+            new_term = jargon_term(candidate["content"])
             if old_term != new_term:
                 raise ValueError("不同词语不能合并为同一个词汇条目，素材已保留。")
+        if kind == "jargon":
+            _, separator, meaning = (
+                candidate["content"].replace("：", ":").partition(":")
+            )
+            if (
+                not separator
+                or not jargon_term(candidate["content"])
+                or not meaning.strip()
+            ):
+                raise LearningFormatError("词汇条目必须使用非空的「词名：释义」格式。")
+            if not any(
+                mentions_jargon(candidate["content"], sources[i]["text"])
+                for i in evidence_ids
+            ):
+                raise ValueError(
+                    "词汇名称未出现在所引用的原始素材中，已拒绝保存；请检查词名与证据，素材已保留。"
+                )
         result.append(
             {
                 "kind": kind,
@@ -269,7 +315,12 @@ def build_guidance(
             continue
         haystack = f"{trait['situation']} {trait['content']}".casefold()
         score = sum(token in haystack for token in tokens)
-        if not selected and trait["kind"] == "jargon" and score == 0:
+        if (
+            not selected
+            and trait["kind"] == "jargon"
+            and score == 0
+            and not mentions_jargon(trait["content"], query)
+        ):
             continue
         ranked.append((score, trait["confidence"], trait["updated"], trait))
     titles = {

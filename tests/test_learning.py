@@ -4,7 +4,13 @@ import json
 
 import pytest
 
-from astrbot_plugin_ovenheart.learning import build_guidance, parse_candidates
+from astrbot_plugin_ovenheart.learning import (
+    LearningFormatError,
+    build_guidance,
+    jargon_term,
+    mentions_jargon,
+    parse_candidates,
+)
 from astrbot_plugin_ovenheart.settings import (
     DEFAULTS,
     PROFILE_DEFAULTS,
@@ -105,6 +111,64 @@ def test_different_jargon_words_cannot_be_merged():
             DEFAULTS,
             [{"id": 1, "kind": "jargon", "content": "好家伙：惊讶"}],
         )
+
+
+@pytest.mark.parametrize(
+    "word", ["好家伙", "“好家伙”", "「好家伙」", "`好家伙`", "‘“好家伙”’"]
+)
+def test_jargon_quotes_do_not_break_evidence_or_explicit_same_word_merge(word):
+    result = parse_candidates(
+        candidates(kind="jargon", content=f"{word}：轻松的惊讶", merge_id=1),
+        MESSAGES,
+        DEFAULTS,
+        [{"id": 1, "kind": "jargon", "content": "『好家伙』：表示惊讶"}],
+    )
+    assert result[0]["merge_id"] == 1 and result[0]["content"].startswith(word)
+    assert jargon_term(result[0]["content"]) == "好家伙"
+
+
+@pytest.mark.parametrize("content", ["不存在的词：惊讶", "词语：惊讶", "AI：惊讶"])
+def test_real_evidence_ids_do_not_authorize_an_absent_jargon_name(content):
+    with pytest.raises(ValueError, match="词汇名称未出现"):
+        parse_candidates(candidates(kind="jargon", content=content), MESSAGES, DEFAULTS)
+    unrelated = MESSAGES + [MESSAGES[0] | {"id": 3, "text": content}]
+    with pytest.raises(ValueError, match="词汇名称未出现"):
+        parse_candidates(
+            candidates(kind="jargon", content=content), unrelated, DEFAULTS
+        )
+
+
+@pytest.mark.parametrize("content", ["好家伙", "：惊讶", "好家伙：", "“”：惊讶"])
+def test_jargon_format_is_repairable_but_ungrounded_content_is_not(content):
+    with pytest.raises(LearningFormatError, match="词名"):
+        parse_candidates(candidates(kind="jargon", content=content), MESSAGES, DEFAULTS)
+
+
+@pytest.mark.parametrize(
+    ("term", "text", "expected"),
+    [
+        ("AI：本群的安排", "AI今晚照旧", True),
+        ("「ＡＩ」：本群的安排", "ai今晚照旧", True),
+        ("ai：本群的安排", "ＡＩ今晚照旧", True),
+        ("AI：本群的安排", "rain 和 brain 都不是那个词", False),
+        ("AI：本群的安排", "wait_for_AI_result", False),
+        ("C++：本群的约定", "今天又 C++ 了", True),
+        ("C++：本群的约定", "abc++", False),
+        ("「典」：表示典型", "典？", True),
+    ],
+)
+def test_literal_jargon_matching_respects_ascii_word_boundaries(term, text, expected):
+    assert mentions_jargon(term, text) is expected
+
+
+def test_a_term_question_and_an_anaphoric_definition_can_support_the_same_word():
+    messages = [
+        MESSAGES[0] | {"text": "青栈是什么意思？"},
+        MESSAGES[1] | {"text": "这个词表示改期，不是取消。"},
+    ]
+    assert parse_candidates(
+        candidates(kind="jargon", content="青栈：计划改期"), messages, DEFAULTS
+    )
 
 
 @pytest.mark.parametrize(
