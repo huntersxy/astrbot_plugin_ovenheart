@@ -26,8 +26,10 @@ DEFAULTS = {
     "retention_days": 14,
     "max_messages_per_scope": 300,
     "embedding_provider_id": "",
+    "rerank_provider_id": "",
     "retrieval_timeout": 6,
-    "selection_mode": "hybrid",
+    "selection_mode": "contextual",
+    "selector_timeout": 12,
     "semantic_threshold": 0.25,
     "habit_half_life": 90,
     "participation_mode": "off",
@@ -77,6 +79,7 @@ def validate_settings(values: dict) -> dict:
         "retention_days": (1, 90),
         "max_messages_per_scope": (100, 1000),
         "retrieval_timeout": (1, 15),
+        "selector_timeout": (3, 30),
         "semantic_threshold": (0, 1),
         "habit_half_life": (7, 730),
         "participation_min_messages": (1, 30),
@@ -115,8 +118,8 @@ def validate_settings(values: dict) -> dict:
             if value not in ("review", "auto"):
                 raise ValueError("生效方式必须为审核或自动。")
         elif key == "selection_mode":
-            if value not in ("lexical", "hybrid"):
-                raise ValueError("检索方式必须为 lexical 或 hybrid。")
+            if value not in ("lexical", "hybrid", "contextual"):
+                raise ValueError("检索方式必须为 lexical、hybrid 或 contextual。")
         elif key == "participation_mode":
             if value not in ("off", "observe", "auto"):
                 raise ValueError("参与方式必须为 off、observe 或 auto。")

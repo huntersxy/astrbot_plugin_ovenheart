@@ -31,6 +31,12 @@ The source-user list accepts one user ID per line. The allowed-conversation list
 
 Set an existing AstrBot embedding provider ID to enable hybrid semantic/text retrieval. Without it, or on failure/timeout, lexical retrieval remains available. The current input plus bounded recent context forms the query. Ranking combines relevance, evidence accumulation, freshness, explicit feedback and exposure variety. Cached habit vectors are keyed by model and content; the first request indexes at most 64 missing habits and later requests advance coverage. Query vectors remain in a bounded in-memory cache. Free previews use lexical retrieval only and say so.
 
+New installations default to `contextual`: recall up to 24 candidates, optionally rerank, then ask the learning provider (or current chat provider) to select 0–5 applicable IDs. Existing saved `hybrid`/`lexical` settings remain unchanged. The selector receives bounded conversation context, autonomous reply intent when present, and the host/manual identity. It cannot rewrite habits or select unknown IDs. Empty selections are valid.
+
+Contextual mode adds at most one chat-model call per reply with active habits, with a default 12-second timeout. Embedding and rerank share a separate six-second budget. Rerank and contextual selection each allow two concurrent calls without queued work. If selection fails, times out or is busy, that reply keeps the host/manual persona and skips all learned habits. Settings, persona and active entries are checked again after waiting. Free previews remain lexical only.
+
+For SiliconFlow, configure native `openai_embedding` with `embedding_api_base=https://api.siliconflow.cn/v1` and `embedding_model=BAAI/bge-m3`; configure native `vllm_rerank` with `rerank_api_base=https://api.siliconflow.cn`, suffix `/v1/rerank`, and model `BAAI/bge-reranker-v2-m3`. Store keys in the host provider settings and enter only the provider IDs in this plugin. These free model variants were tested through real native providers; avoid the `Pro/` variants when seeking free usage and recheck [official pricing](https://siliconflow.cn/pricing). See [synthetic evaluation](../evaluation/README.md) for reproducibility and limitations.
+
 Library ratings are reversible choices (helpful, less helpful, clear), not inferred user approval. History records prompt references reaching the host send stage, which does not establish delivery or model compliance. Usage counts do not increase confidence. Old habits gradually lose ranking weight without automatic deletion.
 
 ## LivingMemory and QQ Enhance
@@ -74,3 +80,7 @@ The test suite covers SQLite transactions, evidence validation and native AstrBo
 ![Participation history with illustrative data](../assets/participation.jpg)
 
 ![Mobile participation viewport with illustrative data](../assets/participation-mobile.jpg)
+
+![Contextual selection settings viewport, illustrative environment](../assets/selection-settings.jpg)
+
+![Mobile selection settings viewport, illustrative environment](../assets/selection-settings-mobile.jpg)

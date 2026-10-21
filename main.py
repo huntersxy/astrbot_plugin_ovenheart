@@ -461,7 +461,7 @@ class PersonaPlugin(Star):
             return
         if not event.get_extra("ovenheart_observed", False):
             await self.capture(event)
-        scope, _, _ = await self.resolve_scope(event, req)
+        scope, persona, _ = await self.resolve_scope(event, req)
         state = await self.store.call("guidance", scope)
         if state["scope"] is None:
             return
@@ -480,17 +480,53 @@ class PersonaPlugin(Star):
                 else getattr(message, "content", None)
             )
             if isinstance(content, str):
-                history.append(content[:300])
-        query = ("\n".join(history)[-1200:] + "\n当前输入：" + query[:1200]).strip()
-        selection = await self.retriever.select(
-            scope, state["traits"], query, self.settings
+                role = (
+                    message.get("role", "context")
+                    if isinstance(message, dict)
+                    else getattr(message, "role", "context")
+                )
+                history.append(f"{role}: {content[:300]}")
+        query = ("\n".join(history)[-900:] + "\n当前输入：" + query[:1000]).strip()
+        plan = event.get_extra("ovenheart_decision")
+        if plan:
+            query += "\n本轮回复目标：" + plan["intent"][:240]
+        settings = self.settings.copy()
+        provider_id, identity = None, ""
+        if settings["selection_mode"] == "contextual" and state["traits"]:
+            anchor = self.context.persona_manager.get_persona_v3_by_id(persona)
+            identity = json.dumps(
+                {
+                    "host": anchor["prompt"][:4000] if anchor else "",
+                    "profile": state["scope"]["profile"],
+                },
+                ensure_ascii=False,
+            )
+            provider_id = settings[
+                "provider_id"
+            ] or await self.context.get_current_chat_provider_id(
+                event.unified_msg_origin
+            )
+        selection = await self.track(
+            self.retriever.select(
+                scope,
+                state["traits"],
+                query,
+                settings,
+                provider_id=provider_id,
+                identity=identity,
+            )
         )
         # Retrieval may await a remote service; pausing must still prevent late application.
         latest = await self.store.call("guidance", scope)
+        current_scope, _, _ = await self.resolve_scope(event, req)
         if (
             not await self.permitted(event)
             or not self.settings["apply_enabled"]
+            or self.settings != settings
+            or current_scope != scope
+            or not latest["scope"]
             or not latest["scope"]["profile"]["apply_enabled"]
+            or latest["scope"]["profile"] != state["scope"]["profile"]
         ):
             return
         current = {t["id"]: t for t in latest["traits"] if t["status"] == "active"}

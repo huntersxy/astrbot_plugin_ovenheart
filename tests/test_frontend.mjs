@@ -71,4 +71,8 @@ test('all participation controls are available with host schema defaults', () =>
     assert.ok(html.includes('name="'+name+'"'),name);
   }
   assert.ok(html.includes('value="off" selected'));
+  assert.ok(html.includes('value="contextual" selected'));
+  assert.ok(html.includes('name="rerank_provider_id"'));
+  assert.ok(html.includes('name="selector_timeout"'));
+  assert.ok(html.includes('本轮不追加学习条目'));
 });

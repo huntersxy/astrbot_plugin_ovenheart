@@ -135,7 +135,7 @@ async def plugin(monkeypatch, tmp_path):
         registered_web_apis=[],
     )
     context.register_web_api = lambda *args: context.registered_web_apis.append(args)
-    instance = PersonaPlugin(context, {})
+    instance = PersonaPlugin(context, {"selection_mode": "hybrid"})
     await instance.initialize()
     yield instance
     await instance.terminate()

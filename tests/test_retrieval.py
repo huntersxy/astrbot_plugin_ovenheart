@@ -84,7 +84,7 @@ async def retrieval(tmp_path):
 
 async def test_semantic_synonyms_rank_without_matching_characters(retrieval):
     retriever, provider = retrieval
-    settings = DEFAULTS | {"embedding_provider_id": "embed"}
+    settings = DEFAULTS | {"selection_mode": "hybrid", "embedding_provider_id": "embed"}
     result = await retriever.select(
         "scope-a", TRAITS, "心里堵得慌，什么都不想干", settings
     )
@@ -103,7 +103,7 @@ async def test_semantic_synonyms_rank_without_matching_characters(retrieval):
 
 async def test_model_and_edited_content_invalidate_cached_vectors(retrieval):
     retriever, provider = retrieval
-    settings = DEFAULTS | {"embedding_provider_id": "embed"}
+    settings = DEFAULTS | {"selection_mode": "hybrid", "embedding_provider_id": "embed"}
     await retriever.select("scope-a", TRAITS, "心里堵得慌", settings)
     provider.get_embeddings.return_value = [[1.0, 0.0]]
     await retriever.select(
@@ -127,7 +127,10 @@ async def test_bad_embeddings_fall_back_without_persisting_invalid_vectors(retri
     retriever, provider = retrieval
     provider.get_embeddings.return_value = [[float("nan"), 0], [0, 1]]
     result = await retriever.select(
-        "scope-a", TRAITS, "游戏操作", DEFAULTS | {"embedding_provider_id": "embed"}
+        "scope-a",
+        TRAITS,
+        "游戏操作",
+        DEFAULTS | {"selection_mode": "hybrid", "embedding_provider_id": "embed"},
     )
     assert result["mode"] == "lexical" and "回退" in result["message"]
     assert result["traits"][0]["id"] == 2
@@ -135,9 +138,30 @@ async def test_bad_embeddings_fall_back_without_persisting_invalid_vectors(retri
         assert db.execute("SELECT COUNT(*) FROM embeddings").fetchone()[0] == 0
 
 
+async def test_native_embedding_config_model_and_endpoint_invalidate_cache(retrieval):
+    retriever, provider = retrieval
+    provider.get_model = lambda: ""
+    provider.provider_config.update(
+        embedding_model="BAAI/bge-m3", embedding_api_base="https://example.test/v1"
+    )
+    settings = DEFAULTS | {"selection_mode": "hybrid", "embedding_provider_id": "embed"}
+    await retriever.select("scope-a", TRAITS, "今天想聊游戏", settings)
+    provider.provider_config["embedding_model"] = "different-model"
+    await retriever.select("scope-a", TRAITS, "今天想聊游戏", settings)
+    provider.provider_config["embedding_api_base"] = "https://other.test/v1"
+    await retriever.select("scope-a", TRAITS, "今天想聊游戏", settings)
+    assert (
+        provider.get_embeddings.await_count == provider.get_embedding.await_count == 3
+    )
+
+
 async def test_deadline_cancels_model_work_and_preview_is_free(retrieval):
     retriever, provider = retrieval
-    settings = DEFAULTS | {"embedding_provider_id": "embed", "retrieval_timeout": 0.5}
+    settings = DEFAULTS | {
+        "selection_mode": "hybrid",
+        "embedding_provider_id": "embed",
+        "retrieval_timeout": 0.5,
+    }
     cancelled = asyncio.Event()
 
     async def delayed(texts):

@@ -124,18 +124,31 @@
     "hint": "填写 AstrBot 已配置的 embedding 提供商 ID；留空回退文字相关性。"
   },
   "retrieval_timeout": {
-    "description": "语义检索总超时（秒）",
+    "description": "向量与重排序总超时（秒）",
     "type": "int",
     "default": 6
   },
   "selection_mode": {
     "description": "习惯检索方式",
     "type": "string",
-    "default": "hybrid",
+    "default": "contextual",
     "options": [
+      "contextual",
       "hybrid",
       "lexical"
     ]
+  },
+  "selector_timeout": {
+    "description": "情境筛选等待上限（秒）",
+    "type": "int",
+    "default": 12,
+    "hint": "情境模式每次回复最多额外调用一次学习模型，未指定时使用当前聊天模型；超时沿用人格底稿，本轮不追加学习条目。"
+  },
+  "rerank_provider_id": {
+    "description": "习惯重排序提供商 ID",
+    "type": "string",
+    "default": "",
+    "hint": "填写 AstrBot 已配置的 rerank 提供商 ID；留空跳过。模型相关性不能代替情境适用判断。"
   },
   "semantic_threshold": {
     "description": "语义相关性门槛",
