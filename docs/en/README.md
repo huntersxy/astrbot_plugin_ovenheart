@@ -101,6 +101,8 @@ Synthetic real-provider tests on the user-specified endpoint showed system-only 
 
 LivingMemory is optional. The adapter targets the supplied `2.7.0-beta.3` interface and discovers the active instance at runtime. It respects LivingMemory access control, configured session/user/global scopes, persona filtering and host plugin switches. At most three memory excerpts are retrieved by default, only while learning. Missing, disabled, incompatible, unavailable or timed-out memory integration does not prevent independent learning. After reload, a scope without a new real event uses retained chat material only.
 
+Version 0.12 preserves LivingMemory's intentional unfiltered legacy scope when session filtering is off and no forced-isolation list exists. Persona filtering still applies independently. If isolation is configured, LivingMemory decides between the global pool and the isolated session. See [native memory integration acceptance](../evaluation/memory.md) for the synthetic two-plugin checks and their limits.
+
 Memory searches may update LivingMemory access times and trigger its existing legacy-scope migration. OvenHeart does not write additional memories or change LivingMemory's database directly. QQ Enhance is independently optional; autonomous tools are disabled by default; explicitly allowed tools remain subject to host and QQ Enhance policies.
 
 ## Data and rollback

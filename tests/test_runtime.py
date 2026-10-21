@@ -722,8 +722,25 @@ async def test_memory_bridge_uses_livingmemory_policy_and_bounded_context(
     assert call["k"] == 3
     prompt = json.loads(plugin.context.llm_generate.await_args.kwargs["prompt"])
     assert prompt["memory_context"][0]["id"] == "m1"
+    for mode, session_filter, isolated, expected in (
+        ("legacy", False, "", None),
+        ("legacy", True, "", event().unified_msg_origin),
+        ("global", True, "", "livingmemory:global"),
+        ("user", True, "", "livingmemory:user:aiocqhttp:alice"),
+        ("global", False, event().unified_msg_origin, event().unified_msg_origin),
+        ("legacy", False, "another-session", "livingmemory:global"),
+    ):
+        values.update(
+            {
+                "filtering_settings.memory_scope_mode": mode,
+                "filtering_settings.use_session_filtering": session_filter,
+                "filtering_settings.isolated_sessions": isolated,
+            }
+        )
+        await plugin.memory.recall(event(), "default", plugin.settings)
+        assert engine.search_memories.await_args.kwargs["session_id"] == expected
     values["access_control.whitelist_enabled"] = True
     values["access_control.allowed_ids"] = "nobody"
     memories, message = await plugin.memory.recall(event(), "default", plugin.settings)
     assert memories == [] and "禁止" in message
-    assert engine.search_memories.await_count == 1
+    assert engine.search_memories.await_count == 7

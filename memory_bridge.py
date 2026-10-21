@@ -85,7 +85,8 @@ class MemoryBridge:
                 plugin.initializer.memory_engine.search_memories(
                     query=event.get_message_str()[:500],
                     k=settings["memory_top_k"],
-                    session_id=scope or event.unified_msg_origin,
+                    # None deliberately means unfiltered in LivingMemory's legacy mode.
+                    session_id=scope,
                     persona_id=(None if persona == "[%None]" else persona)
                     if use_persona
                     else None,

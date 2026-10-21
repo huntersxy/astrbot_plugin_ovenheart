@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.12.0
+
+- Preserve LivingMemory's explicit unfiltered legacy scope instead of replacing it with the current session. Keep session, user, alias, global and forced-isolation policies unchanged.
+- Add an isolated two-plugin native acceptance runner using the real LivingMemory initializer, SQLite/FTS5/FAISS, free bge-m3 embeddings and an actual chat-model learning batch. Check persona filters, access denial, host/session plugin switches and source-evidence boundaries without real QQ messages or existing memory data.
+
 ## 0.11.0
 
 - Include per-sender language rhythm summaries from at least four eligible source messages: median/maximum length, paragraph use, questions and enumerated lists, with original evidence IDs. Keep peers and different speakers separate.
