@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.15.0
+
+- Add configurable learning self-check, enabled by default, using original evidence, source conditions and the identity anchor. The model can only partition fixed candidate IDs; it cannot rewrite candidates or evidence.
+- Keep flagged new candidates pending even in automatic activation mode, and ignore flagged updates to existing entries. Human approval remains authoritative. Failed checks preserve the entire batch; extraction, review and their format corrections share the existing 90-second budget.
+- Store bounded self-check audits with learning runs, migrate old run records with empty audits, and expose escaped reasons in Panel history and matching library details. Preserve expanded details during automatic refresh.
+- Add predeclared synthetic proposal diagnostics with the actual reviewer and a complete native-core acceptance run. Retain a real reviewer timeout showing source preservation, and label simulated UI screenshots separately.
+
 ## 0.14.0
 
 - Require jargon names to occur in their cited source messages. Treat malformed term-definition formatting as repairable, but reject ungrounded names without a format retry or partial batch commit.

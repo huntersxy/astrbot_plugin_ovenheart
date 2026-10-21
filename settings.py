@@ -5,6 +5,7 @@ from __future__ import annotations
 DEFAULTS = {
     "enabled": True,
     "learning_enabled": True,
+    "learning_review_enabled": True,
     "apply_enabled": True,
     "guidance_delivery": "system",
     "activation_mode": "review",

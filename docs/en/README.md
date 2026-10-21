@@ -29,6 +29,16 @@ Version 0.14 requires a nonempty `term: definition` and the term's actual occurr
 
 The source-user list accepts one user ID per line. The allowed-conversation list accepts complete `unified_msg_origin` values obtainable through `/sid`. Empty lists allow all otherwise permitted sources. The host's allowlist, plugin set, conversation switch and plugin switch still apply. Settings saved in this native view take precedence over the host plugin configuration.
 
+## Learning self-check (0.15)
+
+Enabled by default and configurable under **Learning settings → Learning and activation**, self-check uses the same learning provider to assess original evidence, conditions, identity boundaries and local definitions. It can only approve or flag fixed candidate IDs. Flagged new candidates remain pending even in auto mode; flagged updates cannot alter or reinforce existing entries. Human review can override model judgments. Failed checks preserve the entire batch, and changes to the review switch are rechecked before commit.
+
+Check reasons in expandable learning history and matching library entries. Audits contain at most 24 proposals and follow the existing 100-run retention per scope; the Panel shows the newest 30 runs. Original evidence on pending entries follows existing trait retention. Old databases acquire an empty run-audit field without changing human decisions.
+
+With all categories enabled, extraction normally uses two calls plus one self-check when there are candidates. Empty proposals skip self-check. Each phase permits one format correction, all sharing the existing 90-second deadline. No foreground calls are added. Disabling the feature restores existing activation rules for later batches; unsupported pending entries may still qualify under future evidence unless a human decides otherwise. This is model assistance, not independent semantic certification. See [actual-provider and native-core evidence](../evaluation/learning-review.md).
+
+![Self-check history with simulated demonstration data](../assets/self-review-history.jpg)
+
 ## Retrieval and explicit feedback
 
 Set an existing AstrBot embedding provider ID to enable hybrid semantic/text retrieval. Without it, or on failure/timeout, lexical retrieval remains available. The current input plus bounded recent context forms the query. Ranking combines relevance, evidence accumulation, freshness, explicit feedback and exposure variety. Cached habit vectors are keyed by model and content; the first request indexes at most 64 missing habits and later requests advance coverage. Query vectors remain in a bounded in-memory cache. Free previews use lexical retrieval only and say so.

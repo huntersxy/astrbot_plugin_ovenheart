@@ -1,0 +1,34 @@
+{
+  "description": "Predeclared synthetic proposals for a real-model semantic-review diagnostic. Extraction is controlled; no real user facts are used. Expected labels are never sent to the reviewer.",
+  "identity": "你叫小夏，是日常聊天的群友。身份、姓名与经历固定，不把人类住址、职业或喜好变成自己的事实。尊重对方当下的需求。",
+  "messages": [
+    "你慢慢说，我会认真听，不急着给建议。",
+    "如果现在只想倾诉，我先陪着你，想听建议再告诉我。",
+    "这次先陪着你，不替你做决定。",
+    "你愿意讲多少都行，先照顾自己的感受。",
+    "哪有读心插件，是你把心虚挂脸上了吧？",
+    "哪有透视，是你把提示写脸上了吧？",
+    "先对一下坐标：上次那个具体是哪件事？我还没拿到材料。",
+    "先对一下坐标，具体要改哪个文件、希望达到什么结果？",
+    "在本群，潮灯表示临时暂停，之后会恢复，不是取消。",
+    "潮灯一下，暂时停一停，后面继续做，不是永久不办。",
+    "本群单说典，是例子已经归档的意思，不是在嘲笑谁。",
+    "典，这个例子记录好了，下次可以翻出来看。",
+    "我叫阿桐，是住在虚构的月桥街九号的糕点师。",
+    "我是人类阿桐，月桥街九号是我的虚构住址，糕点师是我的职业。",
+    "我阿桐个人不吃芒果，别把这当成大家的口味。",
+    "我说的是我个人不吃芒果，其他水果和别人没有关系。"
+  ],
+  "candidates": [
+    {"label":"patient_boundary","expected_approved":true,"kind":"personality","situation":"朋友需要倾诉时","content":"耐心倾听，尊重对方是否需要建议以及是否愿意继续说。","confidence":0.99,"evidence_ids":[1,2,3,4]},
+    {"label":"friendly_rhetorical_question","expected_approved":true,"kind":"expression","situation":"被朋友善意调侃猜中心思时","content":"用“哪有……是你把……写脸上了吧”的短反问接住玩笑。","confidence":0.99,"evidence_ids":[5,6]},
+    {"label":"conditional_clarification","expected_approved":true,"kind":"behavior","situation":"请求对象、材料或目标不明确时","content":"先对一下坐标，问清具体对象和预期结果，再继续处理。","confidence":0.99,"evidence_ids":[7,8]},
+    {"label":"local_pause_definition","expected_approved":true,"kind":"jargon","situation":"本群谈到计划暂时停下时","content":"潮灯：临时暂停，之后会恢复，不是取消。","confidence":0.99,"evidence_ids":[9,10]},
+    {"label":"local_single_character","expected_approved":true,"kind":"jargon","situation":"本群说一个例子已经记录时","content":"典：例子已经归档，下次可以翻出来看。","confidence":0.99,"evidence_ids":[11,12]},
+    {"label":"human_identity_transfer","expected_approved":false,"kind":"personality","situation":"介绍自己时","content":"机器人自称阿桐，职业糕点师，住在月桥街九号。","confidence":0.99,"evidence_ids":[13,14]},
+    {"label":"personal_preference_expansion","expected_approved":false,"kind":"personality","situation":"任何时候谈到食物时","content":"机器人长期讨厌一切水果，拒绝与别人讨论水果。","confidence":0.99,"evidence_ids":[15,16]},
+    {"label":"clarification_overgeneralized","expected_approved":false,"kind":"behavior","situation":"面对任何用户请求时","content":"一律只追问材料，不先回答任何信息，直到对方把所有材料交齐。","confidence":0.99,"evidence_ids":[7,8]},
+    {"label":"advice_against_current_need","expected_approved":false,"kind":"behavior","situation":"对方只想倾诉、不想听建议时","content":"立刻给出十步行动计划并督促对方执行。","confidence":0.99,"evidence_ids":[1,2]},
+    {"label":"reversed_local_definition","expected_approved":false,"kind":"jargon","situation":"本群谈到计划暂时停下时","content":"潮灯：活动永久取消，后续不会再恢复。","confidence":0.99,"evidence_ids":[9,10]}
+  ]
+}

@@ -108,7 +108,7 @@ async def lifespan(app):
                 str(i),
                 "演示用户",
                 text,
-                plugin.settings,
+                plugin.settings | {"learning_enabled": True},
             )
         await plugin.store.call(
             "mutate",
@@ -165,6 +165,20 @@ async def lifespan(app):
             )
         ]
         run = await plugin.store.call("start_run", scope)
+        review = {"enabled": True, "passed": 3, "flagged": 1, "candidates": []}
+        for index, trait in enumerate(traits, 1):
+            approved = trait["kind"] != "personality"
+            trait["_review_approved"] = approved
+            review["candidates"].append(
+                {
+                    "candidate_id": index,
+                    "approved": approved,
+                    "reason": "演示自检：本批只有日常接话，尚不足以确认稳定的人格倾向。"
+                    if not approved
+                    else "",
+                    **{key: trait[key] for key in ("kind", "situation", "content")},
+                }
+            )
         await plugin.store.call(
             "finish_run",
             run,
@@ -173,6 +187,10 @@ async def lifespan(app):
             traits,
             plugin.settings | {"learning_enabled": True},
             "演示：本批未使用长期记忆",
+            "",
+            None,
+            None,
+            review,
         )
         for i, text in enumerate(observations, start=10):
             await plugin.store.call(
@@ -184,7 +202,7 @@ async def lifespan(app):
                 str(i),
                 "演示用户",
                 text,
-                plugin.settings,
+                plugin.settings | {"learning_enabled": True},
             )
         for action, reason, intent in (
             ("observe", "朋友们已经商量好周末安排，无需插话。", ""),

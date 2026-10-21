@@ -138,6 +138,8 @@ class Store:
             "CREATE INDEX IF NOT EXISTS decisions_room_created ON decisions(room,created)"
         )
         columns = {r[1] for r in db.execute("PRAGMA table_info(traits)")}
+        if "review" not in {r[1] for r in db.execute("PRAGMA table_info(runs)")}:
+            db.execute("ALTER TABLE runs ADD COLUMN review TEXT NOT NULL DEFAULT '{}'")
         for column, definition in {
             "support_count": "INTEGER NOT NULL DEFAULT 1",
             "evidence_count": "INTEGER NOT NULL DEFAULT 0",
@@ -315,7 +317,7 @@ class Store:
             for trait in result["traits"]:
                 trait["evidence"] = json.loads(trait["evidence"])
             result["runs"] = [
-                dict(row)
+                dict(row) | {"review": json.loads(row["review"])}
                 for row in db.execute(
                     "SELECT * FROM runs WHERE scope=? ORDER BY id DESC LIMIT 30",
                     (scope,),
@@ -545,6 +547,8 @@ class Store:
         error="",
         expected_profile=None,
         expected_targets=None,
+        review=None,
+        expected_review_enabled=None,
     ):
         """Commit candidates and consume exactly the successful batch atomically.
 
@@ -559,6 +563,8 @@ class Store:
             error: Actionable failure description, if any.
             expected_profile: Identity anchor at the start of generation.
             expected_targets: Learning targets at the start of generation.
+            review: Server-assembled semantic review audit, without provider secrets.
+            expected_review_enabled: Review switch captured before generation.
 
         Returns:
             Count of newly inserted candidates.
@@ -576,6 +582,13 @@ class Store:
             return 0
         if not error:
             settings = settings | self.settings(db)
+            if (
+                expected_review_enabled is not None
+                and settings["learning_review_enabled"] != expected_review_enabled
+            ):
+                raise ValueError(
+                    "入库自检开关在提交前已修改，旧结果未保存、素材已保留。"
+                )
             if expected_targets is not None and set(settings["target_senders"]) != set(
                 expected_targets
             ):
@@ -645,6 +658,11 @@ class Store:
                 # Similar spelling cannot establish compatible conditions or meaning.
                 # Only exact aliases or an explicitly offered model merge may consolidate.
                 if target is not None:
+                    # A flagged proposal cannot modify or reinforce a stored entry.
+                    if trait.get("_review_approved") is False and target[
+                        "status"
+                    ] not in ("rejected", "disabled"):
+                        continue
                     db.execute(
                         "INSERT OR IGNORE INTO trait_aliases VALUES (?, ?, ?)",
                         (scope, fingerprint, target["id"]),
@@ -747,6 +765,7 @@ class Store:
                 status = (
                     "active"
                     if settings["activation_mode"] == "auto"
+                    and trait.get("_review_approved") is not False
                     and trait["confidence"] >= settings["auto_confidence"]
                     and len(trait["evidence"]) >= settings["min_evidence"]
                     else "pending"
@@ -787,7 +806,7 @@ class Store:
                 [(scope, m["id"]) for m in messages],
             )
         db.execute(
-            "UPDATE runs SET status=?, finished=?, count=?, message=?, memory=? WHERE id=?",
+            "UPDATE runs SET status=?, finished=?, count=?, message=?, memory=?, review=? WHERE id=?",
             (
                 "error" if error else "success",
                 now,
@@ -795,6 +814,7 @@ class Store:
                 error
                 or f"分析 {len(messages)} 条素材，新增 {added} 条，补充证据 {len(reinforced)} 条。",
                 memory,
+                json.dumps(review or {}, ensure_ascii=False),
                 run_id,
             ),
         )

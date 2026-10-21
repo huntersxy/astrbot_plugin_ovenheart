@@ -78,5 +78,32 @@ test('all participation controls are available with host schema defaults', () =>
   assert.ok(html.includes('value="system" selected'));
   assert.ok(html.includes('value="dual"'));
   assert.ok(html.includes('第三方运行器需自行支持'));
-  assert.ok(html.includes('本轮不追加学习条目'));
+  assert.ok(html.includes('仍保留当前输入直接命中的本地词义'));
+  assert.ok(html.includes('name="learning_review_enabled"'));
+  assert.ok(html.includes('通常增加一次后台调用'));
+});
+
+test('learning self-check reasons are visible and escaped in history and the library', () => {
+  const {context,element}=fixture();
+  runInContext(`data.runs=[{started:1,status:'success',message:'完成',memory:'',review:{enabled:true,passed:0,flagged:1,candidates:[{kind:'expression',situation:'被调侃时',content:'原始习惯',approved:false,reason:'<img src=x onerror=alert(1)>'}]}}]; renderLibrary();`,context);
+  let html=element('#content').innerHTML;
+  assert.ok(html.includes('学习自检提示'));
+  assert.ok(html.includes('人工审核可以覆盖'));
+  assert.ok(html.includes('&lt;img src=x onerror=alert(1)&gt;'));
+  assert.ok(!html.includes('<img src=x'));
+  runInContext(`data.settings={participation_mode:'off'};data.revisions=[];data.applications=[];data.decisions=[];renderHistory();`,context);
+  html=element('#content').innerHTML;
+  assert.ok(html.includes('查看自检提示与候选'));
+  assert.ok(html.includes('未通过的更新不改旧条目'));
+  assert.ok(html.includes('&lt;img src=x onerror=alert(1)&gt;'));
+  assert.ok(!html.includes('<img src=x'));
+});
+
+test('open review details survive automatic history refresh for the same run', () => {
+  const {context,element}=fixture();
+  context.document.querySelectorAll=selector=>selector==='details[data-review-run][open]' ? [{dataset:{reviewRun:'7'}}] : [];
+  runInContext(`data={settings:{participation_mode:'off'},runs:[{id:7,started:1,status:'success',message:'完成',memory:'',review:{enabled:true,passed:0,flagged:1,candidates:[{kind:'expression',situation:'闲聊',content:'候选',approved:false,reason:'待确认'}]}}],revisions:[],applications:[],decisions:[]};renderHistory();`,context);
+  assert.ok(element('#content').innerHTML.includes('data-review-run="7" open'));
+  runInContext('data.runs[0].id=8;renderHistory();',context);
+  assert.ok(!element('#content').innerHTML.includes('data-review-run="8" open'));
 });
