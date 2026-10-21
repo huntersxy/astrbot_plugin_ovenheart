@@ -1,0 +1,52 @@
+{
+  "description": "Fictional context regression. The first two queries are identical, while structured conversation history specifies opposite needs. Expected checks are not sent during learning.",
+  "identity": "你叫小夏，是日常聊天的群友。用自然简短的中文回应当前对话，保留固定身份。用户当下对语气和长度的要求优先于学来的表达习惯。不展示内部分析和习惯编号。",
+  "batches": [
+    [
+      {"sender":"a","text":"今天好烦，先别给我建议，我只想吐槽。"},
+      {"sender":"b","text":"把耳朵借给你，慢慢讲，我不急着出主意。"},
+      {"sender":"c","text":"有点难受，不用帮我解决，听我说说就好。"},
+      {"sender":"b","text":"耳朵借给你，我先好好听着，不抢着找答案。"},
+      {"sender":"a","text":"这次我需要实际的办法，请直接给两步，不用安慰了。"},
+      {"sender":"b","text":"那就落到两步：先写清目标，再找个现在就能开始的小动作。"},
+      {"sender":"c","text":"给我两步能动手的建议，不要只说理解我的心情。"},
+      {"sender":"b","text":"那就落到两步：先确认已有条件，再试一个最小的方案。"}
+    ],
+    [
+      {"sender":"a","text":"又被批评了，暂时不想听分析，陪我说说话吧。"},
+      {"sender":"b","text":"把耳朵借给你，想从哪说就从哪说，我先不下结论。"},
+      {"sender":"c","text":"先让我缓缓，别给解决办法。"},
+      {"sender":"b","text":"耳朵借给你，先听你说完，不着急找答案。"},
+      {"sender":"a","text":"心情已经缓过来了，现在要解决问题，给两步建议就行。"},
+      {"sender":"b","text":"那就落到两步：先看最卡的地方，再选一个容易验证的动作。"},
+      {"sender":"c","text":"别继续安慰了，我要两步具体做法。"},
+      {"sender":"b","text":"那就落到两步：先选一个目标，再给第一步留十分钟。"}
+    ]
+  ],
+  "cases": [
+    {
+      "id":"same_input_listening","query":"就按刚才说的来。",
+      "contexts":[
+        {"role":"user","content":[{"type":"text","text":"今天有些委屈，不想分析对错，也不需要方案，只想有人听我慢慢说。"}]},
+        {"role":"assistant","content":[{"type":"text","text":"你希望我先陪着听，不给建议，对吗？"}]}
+      ],
+      "forbidden":["落到两步","第一步","第二步","你应该","selected_ids"],"max_chars":180
+    },
+    {
+      "id":"same_input_advice","query":"就按刚才说的来。",
+      "contexts":[
+        {"role":"user","content":[{"type":"text","text":"心情已经缓过来了。我想开始整理堆积的旧照片，现在只要两步能动手的办法，不用安慰。"}]},
+        {"role":"assistant","content":[{"type":"text","text":"你希望我直接给两步整理照片的建议，不再安慰，对吗？"}]}
+      ],
+      "forbidden":["耳朵借给你","我先听你说","慢慢倾诉","selected_ids"],"max_chars":220
+    },
+    {
+      "id":"current_topic_overrides_history","query":"换个话题，不用安慰。七乘八是多少？只给数字。",
+      "contexts":[
+        {"role":"user","content":[{"type":"text","text":"今天难过，只想倾诉，不想听建议。"}]},
+        {"role":"assistant","content":[{"type":"text","text":"我听着，慢慢说。"}]}
+      ],
+      "required":["56"],"forbidden":["耳朵","两步","我听着","selected_ids"],"max_chars":6
+    }
+  ]
+}

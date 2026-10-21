@@ -39,6 +39,12 @@ For SiliconFlow, configure native `openai_embedding` with `embedding_api_base=ht
 
 Library ratings are reversible choices (helpful, less helpful, clear), not inferred user approval. History records prompt references reaching the host send stage, which does not establish delivery or model compliance. Usage counts do not increase confidence. Old habits gradually lose ranking weight without automatic deletion.
 
+## Recent conversation for selection (0.8)
+
+Retrieval and contextual selection read ordinary user/assistant text in the last six native history records, supporting both string content and `type=text` blocks. Tool/system/checkpoint messages, thinking/media blocks and temporary text are excluded from the selector's conversational input. The host's final request still retains its own tool results, rules and original context.
+
+Autonomous turns also use up to six recent live group messages from their admitted session/persona plan. Selection reads that scoped snapshot directly because its native hook runs before participation context is appended. Newer complete context lines share a 1,100-character budget, while the current input retains up to 1,000 characters and the goal up to 240, keeping the full query under the existing 2,400-character limit. No additional model calls or persisted copies are introduced. Current explicit topic/style requests take precedence over older conversation. See [conversation-context verification](../evaluation/context.md).
+
 ## Consolidation and independent batches (0.7)
 
 Similar spelling does not establish the same meaning or compatible conditions. Consolidation uses exact aliases or an explicit `merge_id` pointing to a same-kind habit offered to the learning model. Text similarity no longer merges entries automatically. Model semantic judgments can still be wrong; review and human edits remain authoritative. Without a supported merge, separate candidates can remain for review.

@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.8.0
+
+- Give contextual habit selection the native text blocks from recent user/assistant turns and the current scope's admitted live group conversation. Preserve the current input and reply goal within the existing query budget.
+- Exclude tool/system messages, thinking, media references and temporary parts from selector conversation text. Preserve native request contexts without copying another persona's live plan.
+- Verify actual native hook ordering and extend provider replay to forward structured history to final generation and retain the selector's exact synthetic inputs.
+
 ## 0.7.0
 
 - Consolidate habits only through exact aliases or model-specified scoped targets; remove spelling-based merges that collapsed opposing conditions or meanings.

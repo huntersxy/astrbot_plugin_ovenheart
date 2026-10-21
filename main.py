@@ -494,21 +494,43 @@ class PersonaPlugin(Star):
         # Recent turns disambiguate terse replies without persisting another copy of them.
         history = []
         for message in (req.contexts or [])[-6:]:
-            content = (
-                message.get("content")
-                if isinstance(message, dict)
-                else getattr(message, "content", None)
-            )
-            if isinstance(content, str):
-                role = (
-                    message.get("role", "context")
-                    if isinstance(message, dict)
-                    else getattr(message, "role", "context")
+            if (
+                not isinstance(message, dict)
+                or message.get("role") not in ("user", "assistant")
+                or message.get("_no_save")
+            ):
+                continue
+            content = message.get("content")
+            if isinstance(content, list):
+                content = "\n".join(
+                    part["text"][:300]
+                    for part in content[:16]
+                    if isinstance(part, dict)
+                    and part.get("type") == "text"
+                    and not part.get("_no_save")
+                    and isinstance(part.get("text"), str)
                 )
-                history.append(f"{role}: {content[:300]}")
-        query = ("\n".join(history)[-900:] + "\n当前输入：" + query[:1000]).strip()
+            if isinstance(content, str):
+                history.append(f"{message['role']}: {content[:300]}")
         plan = event.get_extra("ovenheart_decision")
-        if plan:
+        if plan and plan["scope"] == scope:
+            # The selector runs before the participation context hook in the native order.
+            # Read the validated scope's live turns directly, without another data copy.
+            history.extend(
+                "群聊："
+                + json.dumps(
+                    {"sender": m["sender"][:40], "text": m["text"][:300]},
+                    ensure_ascii=False,
+                )
+                for m in plan["messages"][-6:]
+            )
+        recent, size = [], 0
+        for line in reversed(history):
+            if size + len(line) + 1 <= 1100:
+                recent.append(line)
+                size += len(line) + 1
+        query = ("\n".join(reversed(recent)) + "\n当前输入：" + query[:1000]).strip()
+        if plan and plan["scope"] == scope:
             query += "\n本轮回复目标：" + plan["intent"][:240]
         settings = self.settings.copy()
         provider_id, identity = None, ""
