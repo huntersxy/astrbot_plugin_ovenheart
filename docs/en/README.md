@@ -3,16 +3,20 @@
 
 ## Shared effects, optional isolation and cache-friendly delivery (0.18)
 
-The default `session_isolation=false` uses one common profile and writes newly learned habits into a shared space for all permitted conversations. The header becomes **学习素材来源 / Learning source**: it chooses the pending source batch and source history, while Profile edits the shared anchor. The common profile is editable before any messages arrive. Raw materials, nearby learning context, native histories and participation decisions remain source-scoped. Learning never concatenates different groups into one raw batch. Evidence deduplication includes the source scope, so matching platform message IDs from different conversations remain independent.
+The default `session_isolation=false` uses one common profile and writes newly learned personality, expression and behavior habits into a shared space for all permitted conversations. The header becomes **学习素材来源 / Learning source**: it chooses the pending source batch and source history, while Profile edits the shared anchor. The common profile is editable before any messages arrive. Raw materials, nearby learning context, native histories and participation decisions remain source-scoped. Learning never concatenates different groups into one raw batch. Evidence deduplication includes the source scope, so matching platform message IDs from different conversations remain independent.
 
 Enable **Settings → Learning scope → 启用会话隔离** to read, learn and apply separately per complete session/persona. Both spaces survive mode changes. Late learning commits recheck the mode in memory and within the transaction. Disabling isolation restores the common profile and habits.
 
-Existing local profiles are preserved without combining potentially conflicting identities; enable isolation to use them. Existing active local habits can also be recalled in shared mode, retaining their original owners and decisions. New learning accumulates or consolidates within the common space. Common entries are labelled **全会话共用 / 所有人格** in Library; evidence excerpts retain their source labels. Isolation does not automatically clone common entries into local spaces.
+Existing local profiles are preserved without combining potentially conflicting identities; enable isolation to use them. Existing active local non-jargon habits can also be recalled across conversations in shared mode, retaining their original owners and decisions. New non-jargon learning accumulates or consolidates within the common space. Common entries are labelled **全会话共用 / 所有人格** in Library; evidence excerpts retain their source labels. Isolation does not automatically clone common entries into local spaces.
 
-| Previous behavior | 0.18 behavior |
+Since 0.18.1, **群聊词汇 / local jargon** always belongs to its native session/persona, regardless of the general isolation switch. Different groups can keep independent meanings for the same word. Learning, merge targets, meaning refinement, previews, reply selection and delivery accounting all enforce this boundary. A shared batch versions the common space and native jargon space separately; restore controls identify the affected space.
+
+On upgrade, an old common jargon record moves intact to its source only when all evidence is retained, identifies exactly one existing source, and no local fingerprint or alias conflicts. IDs, evidence, decisions, ratings, counters and vectors survive. Other common jargon remains intact in **Library → All conversations → Jargon → All statuses**, labelled **仅保留 / retained only**, and cannot be injected or directly approved for global use. Relearn it in the appropriate source conversation for review. Missing origins and mixed definitions are not guessed or distributed across groups.
+
+| Previous behavior | 0.18.1 behavior |
 | --- | --- |
 | Header always selects the profile being edited | Common profile by default; header selects local profiles only with isolation enabled |
-| Session/persona learning and application isolated by default | Common learning space by default; raw contexts and participation remain isolated |
+| Session/persona learning and application isolated by default | Common personality/expression/behavior by default; jargon, raw contexts and participation stay isolated |
 | New installations default to `guidance_delivery=system` | New installations default to `cached`; existing explicit `system`/`dual` values remain configurable |
 
 **Memory and expression → Guidance delivery → 缓存友好（推荐）** keeps authored persona supplements in a stable system prefix and places changing selected habits after history in temporary user content. Autonomous goals and live excerpts also go at the tail. Selector candidates serialize in stable ID order before the changing dialogue. Native Agent history excludes temporary parts. No unsupported provider cache flags are sent. Cache hits and billing depend on the provider and runner; third-party runners must support temporary parts. Traditional `system` and compatibility `dual` delivery remain available.
@@ -20,7 +24,7 @@ Existing local profiles are preserved without combining potentially conflicting 
 [Verification and provider observations](../evaluation/sharing-cache.md) distinguish stable local prefixes from actual provider-reported cached tokens.
 
 ![Common profile using illustrative local data](../assets/shared-profile-v0.18.jpg)
-![Isolation and cache settings using illustrative local data](../assets/shared-cache-settings-v0.18.jpg)
+![Jargon always stays isolated; illustrative local data](../assets/jargon-isolation-v0.18.1.jpg)
 
 ## Install and open
 

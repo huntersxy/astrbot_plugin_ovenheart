@@ -169,6 +169,66 @@ class Store:
         if "manual" not in columns:
             # Previous releases did not distinguish operator edits from model output.
             db.execute("UPDATE traits SET manual=1")
+        # Keep ambiguous legacy definitions in Library without guessing their origin.
+        # A complete, single-source record can move intact, including its ID and counters.
+        migrated_scopes = set()
+        for row in db.execute(
+            "SELECT * FROM traits WHERE scope=? AND kind='jargon'", (SHARED_SCOPE,)
+        ).fetchall():
+            evidence = json.loads(row["evidence"])
+            origins = {e.get("scope") for e in evidence}
+            if (
+                not evidence
+                or row["evidence_count"] > len(evidence)
+                or len(origins) != 1
+            ):
+                continue
+            origin = next(iter(origins))
+            source = db.execute(
+                "SELECT * FROM scopes WHERE id=? AND id<>?", (origin, SHARED_SCOPE)
+            ).fetchone()
+            aliases = db.execute(
+                "SELECT fingerprint FROM trait_aliases WHERE trait_id=?", (row["id"],)
+            ).fetchall()
+            if (
+                source is None
+                or db.execute(
+                    "SELECT 1 FROM traits WHERE scope=? AND fingerprint=?",
+                    (origin, row["fingerprint"]),
+                ).fetchone()
+                or any(
+                    db.execute(
+                        "SELECT 1 FROM trait_aliases WHERE scope=? AND fingerprint=?",
+                        (origin, alias[0]),
+                    ).fetchone()
+                    for alias in aliases
+                )
+            ):
+                continue
+            if origin not in migrated_scopes:
+                snapshot = {
+                    "profile": json.loads(source["profile"]),
+                    "traits": [
+                        dict(t)
+                        for t in db.execute(
+                            "SELECT * FROM traits WHERE scope=?", (origin,)
+                        )
+                    ],
+                }
+                db.execute(
+                    "INSERT INTO revisions(scope, action, snapshot, created) VALUES (?, 'jargon_isolation', ?, ?)",
+                    (origin, json.dumps(snapshot, ensure_ascii=False), time.time()),
+                )
+                db.execute(
+                    "DELETE FROM revisions WHERE scope=? AND id NOT IN (SELECT id FROM revisions WHERE scope=? ORDER BY id DESC LIMIT 30)",
+                    (origin, origin),
+                )
+                migrated_scopes.add(origin)
+            db.execute("UPDATE traits SET scope=? WHERE id=?", (origin, row["id"]))
+            db.execute(
+                "UPDATE trait_aliases SET scope=? WHERE trait_id=?",
+                (origin, row["id"]),
+            )
         db.execute(
             "UPDATE runs SET status='error', finished=?, message=? WHERE status='running'",
             (time.time(), "插件重启中断了学习，素材已保留，可重新学习。"),
@@ -330,8 +390,8 @@ class Store:
             "shared_scope": common,
             "effect_scope": SHARED_SCOPE if shared else scope,
             "active_count": db.execute(
-                "SELECT COUNT(*) FROM traits WHERE status='active' AND (scope=? OR ?)",
-                (scope, shared),
+                "SELECT COUNT(*) FROM traits WHERE status='active' AND ((kind='jargon' AND scope=? AND scope<>?) OR (kind<>'jargon' AND (scope=? OR ?)))",
+                (scope, SHARED_SCOPE, scope, shared),
             ).fetchone()[0],
             "review_count": sum(item["review_count"] for item in all_scopes),
             "scope": None,
@@ -352,8 +412,14 @@ class Store:
             result["traits"] = [
                 dict(row)
                 for row in db.execute(
-                    "SELECT * FROM traits WHERE scope=? ORDER BY updated DESC LIMIT 1000",
-                    (trait_scope,),
+                    "SELECT * FROM traits WHERE "
+                    + (
+                        "((scope=? AND kind<>'jargon') OR (scope=? AND scope<>? AND kind='jargon'))"
+                        if shared
+                        else "scope=?"
+                    )
+                    + " ORDER BY updated DESC LIMIT 1000",
+                    (trait_scope, scope, SHARED_SCOPE) if shared else (trait_scope,),
                 )
             ]
             for trait in result["traits"]:
@@ -368,8 +434,8 @@ class Store:
             result["revisions"] = [
                 dict(row)
                 for row in db.execute(
-                    "SELECT id, scope, action, created FROM revisions WHERE scope=? ORDER BY id DESC LIMIT 30",
-                    (trait_scope,),
+                    "SELECT id, scope, action, created FROM revisions WHERE scope IN (?, ?) ORDER BY id DESC LIMIT 30",
+                    (trait_scope, scope),
                 )
             ]
             result["applications"] = [
@@ -625,7 +691,7 @@ class Store:
         Args:
             db: Open database connection.
             scope: Source session/persona key.
-            shared: Use the common profile and all existing active habits.
+            shared: Share non-jargon habits and profile, keeping jargon source-local.
 
         Returns:
             Profile and compact ranking records, without dashboard history.
@@ -639,8 +705,8 @@ class Store:
             "traits": [
                 dict(t)
                 for t in db.execute(
-                    "SELECT id,kind,situation,content,confidence,status,created,updated,support_count,evidence_count,last_seen,use_count,rating FROM traits WHERE (scope=? OR ?) AND status='active' ORDER BY updated DESC LIMIT 1000",
-                    (scope, shared),
+                    "SELECT id,kind,situation,content,confidence,status,created,updated,support_count,evidence_count,last_seen,use_count,rating FROM traits WHERE status='active' AND ((kind='jargon' AND scope=? AND scope<>?) OR (kind<>'jargon' AND (scope=? OR ?))) ORDER BY updated DESC LIMIT 1000",
+                    (scope, SHARED_SCOPE, scope, shared),
                 )
             ],
         }
@@ -694,13 +760,13 @@ class Store:
             review: Server-assembled semantic review audit, without provider secrets.
             expected_review_enabled: Review switch captured before generation.
             expected_blocked: Blacklist captured before generation.
-            shared: Commit traits into the common space, keeping source rows isolated.
+            shared: Share non-jargon learning while keeping jargon and sources local.
             expected_isolation: Mode captured before generation.
 
         Returns:
             Count of newly inserted candidates.
         """
-        trait_scope = SHARED_SCOPE if shared else scope
+        profile_scope = SHARED_SCOPE if shared else scope
         now = time.time()
         added = 0
         reinforced = set()
@@ -739,7 +805,7 @@ class Store:
                 raise ValueError("学习黑名单在学习期间已修改，旧结果未保存，素材保留。")
             profile = json.loads(
                 db.execute(
-                    "SELECT profile FROM scopes WHERE id=?", (trait_scope,)
+                    "SELECT profile FROM scopes WHERE id=?", (profile_scope,)
                 ).fetchone()[0]
             )
             if (
@@ -761,6 +827,9 @@ class Store:
             ]
             # Compare review inputs before this batch can update a shared target.
             for trait in traits:
+                trait_scope = (
+                    SHARED_SCOPE if shared and trait["kind"] != "jargon" else scope
+                )
                 expected = trait.get("_merge_target")
                 if expected is not None:
                     current = db.execute(
@@ -773,9 +842,18 @@ class Store:
                         raise ValueError(
                             "合并目标在自检后已修改，旧结果未保存、素材已保留，请重新学习。"
                         )
-            if traits:
+            for trait_scope in sorted(
+                {
+                    SHARED_SCOPE if shared and t["kind"] != "jargon" else scope
+                    for t in traits
+                }
+            ):
                 snapshot = {
-                    "profile": profile,
+                    "profile": json.loads(
+                        db.execute(
+                            "SELECT profile FROM scopes WHERE id=?", (trait_scope,)
+                        ).fetchone()[0]
+                    ),
                     "traits": [
                         dict(t)
                         for t in db.execute(
@@ -792,6 +870,9 @@ class Store:
                     (trait_scope, trait_scope),
                 )
             for trait in traits:
+                trait_scope = (
+                    SHARED_SCOPE if shared and trait["kind"] != "jargon" else scope
+                )
                 fingerprint = hashlib.sha256(
                     json.dumps(
                         [
@@ -1043,8 +1124,8 @@ class Store:
         valid = [
             r[0]
             for r in db.execute(
-                "SELECT id FROM traits WHERE (scope=? OR ?) AND status='active'",
-                (scope, shared),
+                "SELECT id FROM traits WHERE status='active' AND ((kind='jargon' AND scope=? AND scope<>?) OR (kind<>'jargon' AND (scope=? OR ?)))",
+                (scope, SHARED_SCOPE, scope, shared),
             )
             if r[0] in ids
         ]
@@ -1102,10 +1183,19 @@ class Store:
             )
         elif action in ("trait", "feedback"):
             row = db.execute(
-                "SELECT id FROM traits WHERE scope=? AND id=?", (scope, payload["id"])
+                "SELECT id,kind FROM traits WHERE scope=? AND id=?",
+                (scope, payload["id"]),
             ).fetchone()
             if not row:
                 raise ValueError("学习条目不存在或不属于当前会话。")
+            if (
+                row["kind"] == "jargon"
+                and scope == SHARED_SCOPE
+                and payload.get("status") == "active"
+            ):
+                raise ValueError(
+                    "旧共用词汇的来源尚未确定，原条目与证据已保留；请在来源会话重新学习后审核。"
+                )
             updates = {
                 k: v
                 for k, v in payload.items()

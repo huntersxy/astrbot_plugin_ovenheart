@@ -143,3 +143,15 @@ test('QQ blacklist accepts pasted numbers without platform prefixes',() => {
   element('#settings-form').onsubmit({preventDefault(){},currentTarget:{elements:{namedItem:key=>key==='blocked_senders'?input:null}}});
   assert.equal(runInContext('saved.blocked_senders.join(",")',context),'123456,234567,345678,456789,567890');
 });
+
+test('legacy common jargon is retained without a global approval action', () => {
+  const {context,element}=fixture();
+  runInContext(`data.shared_scope={id:'0'.repeat(24)};data.traits[0].kind='jargon';data.traits[0].scope='0'.repeat(24);renderLibrary();`,context);
+  const html=element('#content').innerHTML;
+  assert.ok(html.includes('仅保留'));
+  assert.ok(html.includes('不参与回复'));
+  assert.ok(!html.includes('data-review="active"'));
+  runInContext(`data.traits[0].scope='a'.repeat(24);renderLibrary();`,context);
+  assert.ok(element('#content').innerHTML.includes('data-review="active"'));
+  assert.ok(element('#content').innerHTML.includes('不受「启用会话隔离」开关影响'));
+});

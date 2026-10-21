@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.18.1
+
+- Always isolate jargon by its native session/persona, including shared-mode learning, known merge targets, refinement, previews, reply retrieval and delivery accounting. Keep personality, expression and behavior under the existing general isolation switch. Snapshot both affected spaces atomically and identify restore ownership in Panel.
+- Move unambiguous, complete legacy common jargon records intact to their sources without changing IDs, decisions, counters or cached vectors. Retain mixed, unknown, truncated or conflicting legacy records for inspection without injecting them or allowing global approval. Show their retained-only status in Library.
+- Add native SDK and SQLite regression coverage for conflicting local meanings, mode changes, independent support, atomic merge rejection and idempotent lossless migration. Update Panel guidance and bilingual instructions.
+
 ## 0.18.0
 
 - Default to a common authored profile and learning space across permitted conversations. Add opt-in session/persona isolation, retain both spaces and legacy records, and keep raw batches, native histories, volatile context and participation admissions source-scoped. The header selects learning sources in shared mode and local profiles in isolated mode.

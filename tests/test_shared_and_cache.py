@@ -58,16 +58,19 @@ async def test_shared_learning_accumulates_across_sources_without_mixing_raw_bat
     second = next(s["id"] for s in scopes if s["id"] != first)
     assert len(await plugin.store.call("batch", second, 30)) == 2
     result = await plugin.learn(second)
-    assert result["status"] == "success" and result["count"] == 0
+    assert result["status"] == "success" and result["count"] == 1
     traits = (await plugin.store.call("state", SHARED_SCOPE))["traits"]
-    assert len(traits) == 4 and all(t["support_count"] == 2 for t in traits)
+    assert len(traits) == 3 and all(t["support_count"] == 2 for t in traits)
     assert {e["id"] for t in traits for e in t["evidence"]} == {1, 2, 3, 4}
     for scope in (first, second):
         assert not await plugin.store.call("batch", scope, 30)
         assert len((await plugin.store.call("state", scope))["runs"]) == 1
+        local = (await plugin.store.call("state", scope))["traits"]
+        assert len(local) == 1 and local[0]["kind"] == "jargon"
+        assert local[0]["support_count"] == 1
     report = (await api_call(plugin.page_api.state, query=f"scope={second}"))["data"]
     assert report["effect_scope"] == SHARED_SCOPE and report["active_count"] == 4
-    assert {t["scope"] for t in report["traits"]} == {SHARED_SCOPE}
+    assert {t["scope"] for t in report["traits"]} == {SHARED_SCOPE, second}
 
 
 async def test_shared_habits_apply_to_another_persona_but_history_stays_local(
@@ -140,6 +143,80 @@ async def test_shared_habits_apply_to_another_persona_but_history_stays_local(
     assert (
         "共用身份补充" in restored.system_prompt and restored.extra_user_content_parts
     )
+
+
+async def test_shared_learning_and_reply_never_offer_another_groups_jargon(
+    shared_plugin,
+):
+    plugin = shared_plugin
+    offered = []
+
+    async def local_completion(**kwargs):
+        payload = json.loads(kwargs["prompt"])
+        result = json.loads((await completion(**kwargs)).completion_text)
+        meaning = (
+            "烤好了" if "烤好了" in payload["observations"][0]["text"] else "暂停游戏"
+        )
+        if "jargon" in payload["enabled_kinds"]:
+            offered.append((meaning, payload["known_traits"]))
+        for trait in result["traits"]:
+            if trait["kind"] == "jargon":
+                trait["content"] = f"好家伙：{meaning}"
+        return type("Completion", (), {"completion_text": json.dumps(result)})()
+
+    plugin.context.llm_generate.side_effect = local_completion
+    scopes = []
+    for session, meaning in (("123", "烤好了"), ("456", "暂停游戏"), ("123", "烤好了")):
+        for index in range(2):
+            await plugin.capture(
+                event(
+                    f"{meaning}-{len(offered)}-{index}",
+                    f"好家伙，这里指{meaning}",
+                    session=session,
+                )
+            )
+        incoming = event("scope", session=session)
+        scope, _, _ = await plugin.resolve_scope(incoming)
+        scopes.append(scope)
+        assert (await plugin.learn(scope))["status"] == "success"
+    assert offered[0][1] == offered[1][1] == []
+    assert len(offered[2][1]) == 1 and "烤好了" in offered[2][1][0]["content"]
+    assert (await plugin.store.call("state", scopes[0]))["traits"][0][
+        "support_count"
+    ] == 2
+    original = plugin.retriever.select
+    seen = []
+
+    async def record(scope, traits, *args, **kwargs):
+        seen.append([t["content"] for t in traits if t["kind"] == "jargon"])
+        return await original(scope, traits, *args, **kwargs)
+
+    plugin.retriever.select = record
+    for isolated in (False, True, False):
+        await api_call(
+            plugin.page_api.action,
+            {"action": "settings", "payload": {"session_isolation": isolated}},
+        )
+        for session, own, foreign in (
+            ("123", "烤好了", "暂停游戏"),
+            ("456", "暂停游戏", "烤好了"),
+            ("789", "", "好家伙："),
+        ):
+            incoming = event(f"reply-{isolated}-{session}", "好家伙", session=session)
+            request = ProviderRequest(prompt="好家伙", system_prompt="固定身份")
+            await plugin.apply_persona(incoming, request)
+            injected = request.system_prompt + "".join(
+                p.text for p in request.extra_user_content_parts
+            )
+            assert foreign not in injected
+            assert seen[-1] == ([f"好家伙：{own}"] if own else [])
+            if own:
+                assert f"好家伙：{own}" in injected
+            scope, _, _ = await plugin.resolve_scope(incoming)
+            preview = await api_call(
+                plugin.page_api.preview, {"scope": scope, "query": "好家伙"}
+            )
+            assert foreign not in preview["data"]["guidance"]
 
 
 async def test_cached_delivery_keeps_system_and_history_prefix_equal_across_selected_habits(
