@@ -309,3 +309,462 @@ async def test_review_flags_do_not_forget_aliases_of_a_human_rejection(plugin):
         state = await plugin.store.call("state", scope)
         assert len(state["traits"]) == 1 and state["traits"][0]["status"] == "rejected"
         plugin.settings["learning_review_enabled"] = False
+
+
+@pytest.mark.parametrize("approved", [True, False])
+async def test_explicit_merge_review_receives_the_stored_target_and_preserves_it_when_flagged(
+    plugin, approved
+):
+    plugin.settings.update(
+        activation_mode="auto",
+        learn_personality=False,
+        learn_expression=False,
+        learn_jargon=False,
+    )
+    scope = await sources(plugin)
+    await plugin.learn(scope)
+    before = (await plugin.store.call("state", scope))["traits"][0]
+    plugin.settings["learning_review_enabled"] = True
+
+    async def generate(**kwargs):
+        payload = json.loads(kwargs["prompt"])
+        if kwargs["system_prompt"] == LEARNING_REVIEW_SYSTEM:
+            candidate = payload["candidates"][0]
+            assert candidate["merge_target"] == {
+                k: before[k] for k in ("id", "kind", "situation", "content", "status")
+            }
+            assert "confidence" not in candidate
+            assert set(candidate["evidence_ids"]).isdisjoint(
+                e["id"] for e in before["evidence"]
+            )
+            return SimpleNamespace(
+                completion_text=json.dumps(
+                    {
+                        "approved_ids": [1] if approved else [],
+                        "flagged": []
+                        if approved
+                        else [
+                            {"candidate_id": 1, "reason": "有证据但不属于该目标习惯"}
+                        ],
+                    }
+                )
+            )
+        return SimpleNamespace(
+            completion_text=json.dumps(
+                {
+                    "traits": [
+                        {
+                            "kind": "behavior",
+                            "situation": "处理请求时",
+                            "content": "先确认具体对象再处理",
+                            "confidence": 0.99,
+                            "merge_id": before["id"],
+                            "evidence_ids": [m["id"] for m in payload["observations"]],
+                        }
+                    ]
+                }
+            )
+        )
+
+    plugin.context.llm_generate = AsyncMock(side_effect=generate)
+    for i in (1, 2):
+        await plugin.capture(event(f"merge-{i}", text="先确认对象再继续"))
+    assert (await plugin.learn(scope))["status"] == "success"
+    state = await plugin.store.call("state", scope)
+    assert len(state["traits"]) == 1
+    after = state["traits"][0]
+    if approved:
+        assert after["support_count"] == before["support_count"] + 1
+    else:
+        assert after == before
+    assert (
+        state["runs"][0]["review"]["candidates"][0]["merge_target"]["id"]
+        == before["id"]
+    )
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"content": "人工改成完全不同的习惯"},
+        {"situation": "人工限制为另一种情境"},
+        {"status": "rejected"},
+    ],
+)
+async def test_target_changes_during_review_preserve_human_edits_and_the_whole_batch(
+    plugin, change
+):
+    plugin.settings.update(
+        activation_mode="auto",
+        learn_personality=False,
+        learn_expression=False,
+        learn_jargon=False,
+    )
+    scope = await sources(plugin)
+    await plugin.learn(scope)
+    before = (await plugin.store.call("state", scope))["traits"][0]
+    plugin.settings["learning_review_enabled"] = True
+
+    async def generate(**kwargs):
+        payload = json.loads(kwargs["prompt"])
+        if kwargs["system_prompt"] == LEARNING_REVIEW_SYSTEM:
+            await plugin.store.call(
+                "mutate", scope, "trait", {"id": before["id"]} | change
+            )
+            return SimpleNamespace(completion_text='{"approved_ids":[1],"flagged":[]}')
+        return SimpleNamespace(
+            completion_text=json.dumps(
+                {
+                    "traits": [
+                        {
+                            "kind": "behavior",
+                            "situation": "轻松聊天时",
+                            "content": "先回应感受，不急着给建议",
+                            "confidence": 0.99,
+                            "merge_id": before["id"],
+                            "evidence_ids": [m["id"] for m in payload["observations"]],
+                        }
+                    ]
+                }
+            )
+        )
+
+    plugin.context.llm_generate = AsyncMock(side_effect=generate)
+    for i in (1, 2):
+        await plugin.capture(event(f"changed-target-{i}", text="先接住感受"))
+    result = await plugin.learn(scope)
+    state = await plugin.store.call("state", scope)
+    assert result["status"] == "error" and "合并目标" in result["message"]
+    assert state["scope"]["pending"] == 2 and len(state["traits"]) == 1
+    after = state["traits"][0]
+    assert after["support_count"] == before["support_count"]
+    assert after["evidence"] == before["evidence"]
+    assert all(after[k] == v for k, v in change.items())
+
+
+async def test_two_approved_candidates_can_share_a_target_that_activates_in_the_batch(
+    plugin,
+):
+    plugin.settings.update(
+        learn_personality=False, learn_expression=False, learn_jargon=False
+    )
+    scope = await sources(plugin)
+    await plugin.learn(scope)
+    before = (await plugin.store.call("state", scope))["traits"][0]
+    assert before["status"] == "pending"
+    plugin.settings.update(activation_mode="auto", learning_review_enabled=True)
+
+    async def generate(**kwargs):
+        payload = json.loads(kwargs["prompt"])
+        if kwargs["system_prompt"] == LEARNING_REVIEW_SYSTEM:
+            return SimpleNamespace(
+                completion_text='{"approved_ids":[1,2],"flagged":[]}'
+            )
+        return SimpleNamespace(
+            completion_text=json.dumps(
+                {
+                    "traits": [
+                        {
+                            "kind": "behavior",
+                            "situation": "轻松聊天时",
+                            "content": f"先回应感受，表达方式{n}",
+                            "confidence": 0.99,
+                            "merge_id": before["id"],
+                            "evidence_ids": [m["id"] for m in payload["observations"]],
+                        }
+                        for n in (1, 2)
+                    ]
+                }
+            )
+        )
+
+    plugin.context.llm_generate = AsyncMock(side_effect=generate)
+    for i in (1, 2):
+        await plugin.capture(event(f"shared-target-{i}", text="先回应感受"))
+    assert (await plugin.learn(scope))["status"] == "success"
+    state = await plugin.store.call("state", scope)
+    assert state["traits"][0]["status"] == "active"
+    assert state["traits"][0]["support_count"] == before["support_count"] + 1
+
+
+async def test_conflicting_alias_and_reviewed_merge_roll_back_even_earlier_new_candidates(
+    plugin,
+):
+    plugin.settings.update(
+        activation_mode="auto",
+        learn_personality=False,
+        learn_expression=False,
+        learn_jargon=False,
+    )
+    scope = await sources(plugin)
+
+    async def seed(**kwargs):
+        payload = json.loads(kwargs["prompt"])
+        return SimpleNamespace(
+            completion_text=json.dumps(
+                {
+                    "traits": [
+                        {
+                            "kind": "behavior",
+                            "situation": "日常闲聊时",
+                            "content": content,
+                            "confidence": 0.99,
+                            "evidence_ids": [m["id"] for m in payload["observations"]],
+                        }
+                        for content in ("先回应情绪", "任务不清楚时先确认材料")
+                    ]
+                }
+            )
+        )
+
+    plugin.context.llm_generate = seed
+    assert (await plugin.learn(scope))["status"] == "success"
+    before = (await plugin.store.call("state", scope))["traits"]
+    first, second = before
+    plugin.settings["learning_review_enabled"] = True
+
+    async def generate(**kwargs):
+        payload = json.loads(kwargs["prompt"])
+        if kwargs["system_prompt"] == LEARNING_REVIEW_SYSTEM:
+            return SimpleNamespace(
+                completion_text='{"approved_ids":[1,2],"flagged":[]}'
+            )
+        common = {
+            "kind": "behavior",
+            "confidence": 0.99,
+            "evidence_ids": [m["id"] for m in payload["observations"]],
+        }
+        return SimpleNamespace(
+            completion_text=json.dumps(
+                {
+                    "traits": [
+                        common | {"situation": "新情境", "content": "这个候选本应新增"},
+                        common
+                        | {k: first[k] for k in ("situation", "content")}
+                        | {"merge_id": second["id"]},
+                    ]
+                }
+            )
+        )
+
+    plugin.context.llm_generate = generate
+    for i in (1, 2):
+        await plugin.capture(event(f"alias-conflict-{i}", text="新的一批素材"))
+    result = await plugin.learn(scope)
+    state = await plugin.store.call("state", scope)
+    assert result["status"] == "error" and "别名" in result["message"]
+    assert state["scope"]["pending"] == 2 and state["traits"] == before
+
+
+async def test_review_keeps_uncited_neighbor_requests_as_context_without_new_evidence(
+    plugin,
+):
+    observations = [
+        {
+            "id": i,
+            "sender": "mentor" if i in (3, 7) else "peer",
+            "text": f"消息{i}" + "x" * 450,
+        }
+        for i in range(1, 22)
+    ]
+    original = {
+        "sender": "outside-target",
+        "text": "我只想倾诉",
+        "for_evidence_ids": [3],
+    }
+    trait = {
+        "kind": "behavior",
+        "situation": "对方只想倾诉时",
+        "content": "先听对方说完",
+        "evidence": [{"id": 3}, {"id": 7}],
+    }
+    seen = []
+
+    async def generate(**kwargs):
+        seen.append(json.loads(kwargs["prompt"]))
+        return SimpleNamespace(completion_text='{"approved_ids":[1],"flagged":[]}')
+
+    plugin.context.llm_generate = generate
+    base = {
+        "identity_anchor": "小夏",
+        "profile": {},
+        "observations": observations,
+        "conversation_context": [original],
+        "memory_context": [],
+        "known_traits": [],
+    }
+    reviewed, _ = await plugin._review_learning(
+        [trait], base, "fixture", time.monotonic() + 1
+    )
+    payload = seen[0]
+    assert {m["id"] for m in payload["observations"]} == {3, 7}
+    assert payload["conversation_context"][0] == original
+    neighbors = {m["observation_id"]: m for m in payload["conversation_context"][1:]}
+    assert 2 in neighbors and neighbors[2]["for_evidence_ids"] == [3]
+    assert neighbors[5]["for_evidence_ids"] == [3, 7]
+    assert 21 not in neighbors and all(
+        len(m["text"]) <= 400 for m in neighbors.values()
+    )
+    assert reviewed[0]["evidence"] == [{"id": 3}, {"id": 7}]
+    assert base["observations"] == observations and base["conversation_context"] == [
+        original
+    ]
+
+
+async def test_review_neighbor_context_retains_the_existing_total_bound(plugin):
+    observations = [
+        {"id": i, "sender": "person", "text": "普通消息"} for i in range(1, 51)
+    ]
+    trait = {
+        "kind": "expression",
+        "situation": "闲聊",
+        "content": "自然接话",
+        "evidence": [{"id": i} for i in range(3, 49, 4)],
+    }
+    seen = []
+
+    async def generate(**kwargs):
+        seen.append(json.loads(kwargs["prompt"]))
+        return SimpleNamespace(completion_text='{"approved_ids":[1],"flagged":[]}')
+
+    plugin.context.llm_generate = generate
+    await plugin._review_learning(
+        [trait],
+        {
+            "identity_anchor": "小夏",
+            "profile": {},
+            "observations": observations,
+            "conversation_context": [],
+            "memory_context": [],
+            "known_traits": [],
+        },
+        "fixture",
+        time.monotonic() + 1,
+    )
+    assert len(seen[0]["conversation_context"]) == 16
+    assert all(m["for_evidence_ids"] for m in seen[0]["conversation_context"])
+
+
+async def test_context_is_not_lost_when_a_different_candidate_cites_the_request(plugin):
+    seen = []
+
+    async def generate(**kwargs):
+        seen.append(json.loads(kwargs["prompt"]))
+        return SimpleNamespace(completion_text='{"approved_ids":[1,2],"flagged":[]}')
+
+    plugin.context.llm_generate = generate
+    await plugin._review_learning(
+        [
+            {
+                "kind": "behavior",
+                "situation": "只想倾诉时",
+                "content": "先倾听",
+                "evidence": [{"id": 2}, {"id": 4}],
+            },
+            {
+                "kind": "expression",
+                "situation": "求助时",
+                "content": "直说需求",
+                "evidence": [{"id": 1}, {"id": 3}],
+            },
+        ],
+        {
+            "identity_anchor": "小夏",
+            "profile": {},
+            "observations": [
+                {
+                    "id": i,
+                    "sender": "peer" if i % 2 else "mentor",
+                    "text": "只想倾诉" if i % 2 else "先听你说",
+                }
+                for i in range(1, 5)
+            ],
+            "conversation_context": [],
+            "memory_context": [],
+            "known_traits": [],
+        },
+        "fixture",
+        time.monotonic() + 1,
+    )
+    contexts = {m["observation_id"]: m for m in seen[0]["conversation_context"]}
+    assert 2 in contexts[1]["for_evidence_ids"]
+    assert 4 in contexts[3]["for_evidence_ids"]
+    assert all(
+        m["observation_id"] not in m["for_evidence_ids"] for m in contexts.values()
+    )
+
+
+async def test_relevance_ranking_preserves_an_older_human_rejection_outside_recent_entries(
+    plugin,
+):
+    plugin.settings.update(
+        learn_personality=False, learn_expression=False, learn_jargon=False
+    )
+    scope = await sources(plugin)
+    await plugin.learn(scope)
+    target = (await plugin.store.call("state", scope))["traits"][0]
+    await plugin.store.call(
+        "mutate", scope, "trait", {"id": target["id"], "status": "rejected"}
+    )
+    seed_number = 0
+
+    async def seed(**kwargs):
+        payload = json.loads(kwargs["prompt"])
+        return SimpleNamespace(
+            completion_text=json.dumps(
+                {
+                    "traits": [
+                        {
+                            "kind": "behavior",
+                            "situation": "其他任务情境",
+                            "content": f"其他资料习惯 {seed_number}-{i}",
+                            "confidence": 0.99,
+                            "evidence_ids": [m["id"] for m in payload["observations"]],
+                        }
+                        for i in range(12)
+                    ]
+                }
+            )
+        )
+
+    plugin.context.llm_generate = seed
+    for seed_number in range(4):
+        for i in (1, 2):
+            await plugin.capture(event(f"older-{seed_number}-{i}", text="其他任务资料"))
+        assert (await plugin.learn(scope))["status"] == "success"
+    rows = (await plugin.store.call("state", scope))["traits"]
+    assert next(i for i, t in enumerate(rows) if t["id"] == target["id"]) >= 40
+    plugin.settings["learning_review_enabled"] = True
+
+    async def generate(**kwargs):
+        payload = json.loads(kwargs["prompt"])
+        if kwargs["system_prompt"] == LEARNING_REVIEW_SYSTEM:
+            assert payload["candidates"][0]["merge_target"]["status"] == "rejected"
+            return SimpleNamespace(completion_text='{"approved_ids":[1],"flagged":[]}')
+        offered = next(t for t in payload["known_traits"] if t["id"] == target["id"])
+        assert offered["status"] == "rejected"
+        return SimpleNamespace(
+            completion_text=json.dumps(
+                {
+                    "traits": [
+                        {
+                            "kind": "behavior",
+                            "situation": "情绪交流时",
+                            "content": "先接住对方的情绪",
+                            "confidence": 0.99,
+                            "merge_id": target["id"],
+                            "evidence_ids": [m["id"] for m in payload["observations"]],
+                        }
+                    ]
+                }
+            )
+        )
+
+    plugin.context.llm_generate = generate
+    for i in (1, 2):
+        await plugin.capture(event(f"old-rejection-{i}", text=target["content"]))
+    assert (await plugin.learn(scope))["status"] == "success"
+    state = await plugin.store.call("state", scope)
+    after = next(t for t in state["traits"] if t["id"] == target["id"])
+    assert after["status"] == "rejected" and len(state["traits"]) == 49
+    assert after["support_count"] == target["support_count"]

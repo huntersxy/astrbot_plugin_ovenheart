@@ -615,6 +615,20 @@ class Store:
                 if settings[f"learn_{t['kind']}"]
                 and len(t["evidence"]) >= settings["min_evidence"]
             ]
+            # Compare review inputs before this batch can update a shared target.
+            for trait in traits:
+                expected = trait.get("_merge_target")
+                if expected is not None:
+                    current = db.execute(
+                        "SELECT * FROM traits WHERE scope=? AND id=?",
+                        (scope, expected["id"]),
+                    ).fetchone()
+                    if current is None or any(
+                        current[key] != value for key, value in expected.items()
+                    ):
+                        raise ValueError(
+                            "合并目标在自检后已修改，旧结果未保存、素材已保留，请重新学习。"
+                        )
             if traits:
                 snapshot = {
                     "profile": profile,
@@ -658,6 +672,13 @@ class Store:
                 # Similar spelling cannot establish compatible conditions or meaning.
                 # Only exact aliases or an explicitly offered model merge may consolidate.
                 if target is not None:
+                    if (
+                        trait.get("_merge_target") is not None
+                        and target["id"] != trait["_merge_target"]["id"]
+                    ):
+                        raise ValueError(
+                            "候选的既有别名与合并目标冲突，结果未保存、素材已保留，请重新学习。"
+                        )
                     # A flagged proposal cannot modify or reinforce a stored entry.
                     if trait.get("_review_approved") is False and target[
                         "status"

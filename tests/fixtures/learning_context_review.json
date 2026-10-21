@@ -1,0 +1,18 @@
+{
+  "identity": "你是小夏，一个尊重当前需求、有身份边界的群聊伙伴。不要把群友的人类身份变成自己的身份。",
+  "messages": [
+    {"sender":"peer-a","text":"我叫阿桐，是糕点师。今天好烦，先别给我建议，我只想吐槽。"},
+    {"sender":"mentor","text":"把耳朵借给你，慢慢讲，我不急着出主意。"},
+    {"sender":"peer-a","text":"我阿桐今天有点难受，不用帮我解决，听我说说就好。"},
+    {"sender":"mentor","text":"耳朵借给你，我先好好听着，不抢着找答案。"},
+    {"sender":"peer-a","text":"这次我需要实际的办法，请直接给两步，不用安慰了。"},
+    {"sender":"mentor","text":"那就落到两步：先写清目标，再找个现在就能开始的小动作。"},
+    {"sender":"peer-c","text":"给我两步能动手的建议，不要只说理解我的心情。"},
+    {"sender":"mentor","text":"那就落到两步：先确认已有条件，再试一个最小的方案。"}
+  ],
+  "candidates": [
+    {"label":"uncited_request_explains_listening_condition","expected_approved":true,"kind":"behavior","situation":"对方明确说只想倾诉、不要建议时","content":"先倾听并回应感受，不急着出主意或找答案。","confidence":0.99,"evidence_ids":[2,4]},
+    {"label":"uncited_request_explains_action_condition","expected_approved":true,"kind":"behavior","situation":"对方明确要两步实际办法、不需要安慰时","content":"直接把回应落到两个可执行的小动作，保持具体。","confidence":0.99,"evidence_ids":[6,8]},
+    {"label":"context_is_not_identity_evidence","expected_approved":false,"kind":"personality","situation":"介绍机器人自己的身份时","content":"机器人自称阿桐，职业糕点师。","confidence":0.99,"evidence_ids":[2,4]}
+  ]
+}

@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.15.1
+
+- Give the learning reviewer the exact existing target of each explicit merge, including its meaning and conditions, so source-supported but unrelated proposals do not silently reinforce another habit. Preserve compatible paraphrases and evidence-backed local vocabulary refinement.
+- Record reviewed targets in bounded learning audits. Recheck their content, conditions and status at the start of the commit transaction; concurrent human changes invalidate the entire late batch without consuming sources. Reject conflicts between existing aliases and explicitly reviewed targets.
+- Preserve neighboring requests from the same batch as linked review context, including requests cited by a different candidate, within the existing 16-excerpt and 400-character bounds. Use them to understand trigger conditions without increasing evidence or support counts, or transferring peer identities.
+- Restore original stored records after relevance ranking so older rejected or disabled targets retain their actual status in model inputs and transaction checks.
+- Add synthetic merge diagnostics through the actual learning reviewer and regression coverage for flagged merges, concurrent edits, and multiple approved proposals sharing a target.
+
 ## 0.15.0
 
 - Add configurable learning self-check, enabled by default, using original evidence, source conditions and the identity anchor. The model can only partition fixed candidate IDs; it cannot rewrite candidates or evidence.

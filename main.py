@@ -826,22 +826,50 @@ class PersonaPlugin(Star):
             ValueError: If review fails or exceeds the shared budget.
         """
         cited = {e["id"] for t in traits for e in t["evidence"]}
+        context = [
+            m
+            for m in base["conversation_context"]
+            if cited.intersection(m["for_evidence_ids"])
+        ]
+        neighbors = {}
+        for index, observation in enumerate(base["observations"]):
+            if observation["id"] not in cited:
+                continue
+            for nearby in base["observations"][max(0, index - 2) : index + 3]:
+                if nearby["id"] == observation["id"]:
+                    continue
+                entry = neighbors.setdefault(
+                    nearby["id"],
+                    {
+                        "observation_id": nearby["id"],
+                        "sender": nearby["sender"],
+                        "text": nearby["text"][:400],
+                        "for_evidence_ids": [],
+                    },
+                )
+                entry["for_evidence_ids"].append(observation["id"])
+        context = [*context, *neighbors.values()][:16]
+        known = {t["id"]: t for t in base.get("known_traits", [])}
+        for trait in traits:
+            if trait.get("merge_id") is not None:
+                target = known[trait["merge_id"]]
+                trait["_merge_target"] = {
+                    key: target[key]
+                    for key in ("id", "kind", "situation", "content", "status")
+                }
         payload = {
             "task": LEARNING_REVIEW_SYSTEM,
             "identity_anchor": base["identity_anchor"],
             "profile": base["profile"],
             "observations": [m for m in base["observations"] if m["id"] in cited],
-            "conversation_context": [
-                m
-                for m in base["conversation_context"]
-                if cited.intersection(m["for_evidence_ids"])
-            ],
+            "conversation_context": context,
             "memory_context": base["memory_context"],
             "candidates": [
                 {
                     "candidate_id": index,
                     **{key: t[key] for key in ("kind", "situation", "content")},
                     "evidence_ids": [e["id"] for e in t["evidence"]],
+                    "merge_target": t.get("_merge_target"),
                 }
                 for index, t in enumerate(traits, 1)
             ],
@@ -898,6 +926,7 @@ class PersonaPlugin(Star):
                     "reason": verdicts[index] or "",
                     **{key: trait[key] for key in ("kind", "situation", "content")},
                     "evidence_ids": [e["id"] for e in trait["evidence"]],
+                    "merge_target": trait.get("_merge_target"),
                 }
             )
         return [
@@ -989,13 +1018,16 @@ class PersonaPlugin(Star):
             )
             # Include rejected/disabled habits too, so paraphrases cannot undo a decision.
             known = (await self.store.call("state", scope))["traits"]
+            stored = {t["id"]: t for t in known}
             batch_text = "\n".join(m["text"] for m in batch)
             relevant = rank_traits(
                 [t | {"status": "active"} for t in known],
                 batch_text,
                 settings | {"max_traits": 40},
             )
-            known = list({t["id"]: t for t in [*relevant, *known[:40]]}.values())
+            known = list(
+                {t["id"]: stored[t["id"]] for t in [*relevant, *known[:40]]}.values()
+            )
             language_features = []
             # These describe one eligible speaker, not an independent source of evidence.
             for sender in sorted({m["sender"] for m in batch}):
