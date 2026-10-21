@@ -25,9 +25,9 @@
     ]
   ],
   "cases": [
-    {"id": "temporary_pause", "query": "群里说今天活动潮灯了，是不是彻底取消了？", "forbidden": ["selected_ids", "候选 ID", "雾港"], "max_chars": 240},
-    {"id": "fullwidth_alias", "query": "在你们群有人发ＬＵＸ，这是什么意思，是在说灯吗？", "forbidden": ["selected_ids", "候选 ID", "雾港"], "max_chars": 240},
-    {"id": "single_character", "query": "你们群里单独发一个典字是什么意思？是在嘲笑我吗？", "forbidden": ["selected_ids", "候选 ID", "雾港"], "max_chars": 240},
+    {"id": "temporary_pause", "query": "群里说今天活动潮灯了，是不是彻底取消了？", "expected_jargon": ["潮灯"], "forbidden": ["selected_ids", "候选 ID", "雾港"], "max_chars": 240},
+    {"id": "fullwidth_alias", "query": "在你们群有人发ＬＵＸ，这是什么意思，是在说灯吗？", "expected_jargon": ["LUX"], "forbidden": ["selected_ids", "候选 ID", "雾港"], "max_chars": 240},
+    {"id": "single_character", "query": "你们群里单独发一个典字是什么意思？是在嘲笑我吗？", "expected_jargon": ["典"], "forbidden": ["selected_ids", "候选 ID", "雾港"], "max_chars": 240},
     {"id": "ascii_fragment", "query": "deluxe这个英文词一般是什么意思？只解释英文词义。", "forbidden": ["平安", "到家", "潮灯", "selected_ids", "候选 ID"], "max_chars": 240}
   ]
 }

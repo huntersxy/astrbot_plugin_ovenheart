@@ -589,6 +589,7 @@ class PersonaPlugin(Star):
                 settings,
                 provider_id=provider_id,
                 identity=identity,
+                literal_query=event.get_message_str()[:1200],
             )
         )
         # Retrieval may await a remote service; pausing must still prevent late application.

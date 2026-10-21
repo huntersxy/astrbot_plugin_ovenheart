@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.14.0
+
+- Require jargon names to occur in their cited source messages. Treat malformed term-definition formatting as repairable, but reject ungrounded names without a format retry or partial batch commit.
+- Normalize balanced quotes, Unicode compatibility forms and case for term comparison without rewriting stored wording. Use ASCII boundaries to avoid matching abbreviations inside unrelated words, and recall quoted single-character terms without embeddings.
+- Preserve active vocabulary directly mentioned in the current human input as factual context, independently of expression selection or selector failure. Keep existing total limits, scope/persona isolation and late-disable checks. Do not use history or planner goals for this direct-match path.
+- Retain an actual learned-but-unused single-character failure and the corrected real-provider replay, including a selector timeout with successful local definition delivery. Extend replay records with selector candidates and expected-local-term checks.
+
 ## 0.13.0
 
 - Clarify that identity and behavior boundaries guide generation internally, and should not become a recited self-introduction. Preserve the current request's scope and complete detailed explanations when requested.

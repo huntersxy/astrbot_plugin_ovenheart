@@ -192,6 +192,7 @@ class PageAPI:
                 body.get("query", "")[:1200],
                 self.plugin.settings,
                 semantic=False,
+                literal_query=body.get("query", "")[:1200],
             )
             included_ids = []
             guidance = build_guidance(

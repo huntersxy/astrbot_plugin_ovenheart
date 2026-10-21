@@ -181,6 +181,7 @@ class HabitRetriever:
         semantic=True,
         provider_id=None,
         identity="",
+        literal_query="",
     ):
         """Recall, optionally rerank, then select habits within bounded deadlines.
 
@@ -192,6 +193,7 @@ class HabitRetriever:
             semantic: Whether model calls are permitted (false for free previews).
             provider_id: Effective native chat provider for contextual selection.
             identity: Host persona and manual profile; never learned autobiographies.
+            literal_query: Current human input only, excluding history and planner goals.
 
         Returns:
             Habits, retrieval mode and a visible fallback explanation.
@@ -262,7 +264,9 @@ class HabitRetriever:
             result["traits"] = []
             result["mode"] = "contextual_fallback"
             if self.selecting >= 2:
-                result["message"] = "情境筛选繁忙，本轮沿用人格底稿，不追加学习条目。"
+                result["message"] = (
+                    "情境筛选繁忙，本轮不选表达、性格与行为习惯；保留人格底稿和当前输入直接命中的词汇。"
+                )
             else:
                 self.selecting += 1
                 try:
@@ -289,10 +293,40 @@ class HabitRetriever:
                         else "调用失败"
                     )
                     result["message"] = (
-                        f"情境筛选{problem}，本轮沿用人格底稿，不追加学习条目；请检查学习模型与筛选等待上限。"
+                        f"情境筛选{problem}，本轮不选表达、性格与行为习惯；保留人格底稿和当前输入直接命中的词汇。请检查学习模型与筛选等待上限。"
                     )
                 finally:
                     self.selecting -= 1
+        # Local definitions are factual context, not optional expression preferences.
+        # Match only current input so an old topic or planner goal cannot pin a word.
+        literal = (
+            rank_traits(
+                [
+                    t
+                    for t in active
+                    if t["kind"] == "jargon"
+                    and mentions_jargon(t["content"], literal_query[:1200])
+                ],
+                literal_query[:1200],
+                settings,
+            )
+            if literal_query
+            else []
+        )
+        if literal:
+            direct_ids = {t["id"] for t in literal}
+            maximum = (
+                min(5, settings["max_traits"])
+                if settings["selection_mode"] == "contextual"
+                else settings["max_traits"]
+            )
+            result["traits"] = (
+                [t | {"_reason": "当前输入直接命中本群词汇"} for t in literal]
+                + [t for t in result["traits"] if t["id"] not in direct_ids]
+            )[:maximum]
+            result["message"] += (
+                f" 当前输入直接命中 {min(len(literal), maximum)} 条本群词汇，优先提供本地释义。"
+            )
         self.status[scope] = {"mode": result["mode"], "message": result["message"]}
         if len(self.status) > 128:
             self.status.pop(next(iter(self.status)))

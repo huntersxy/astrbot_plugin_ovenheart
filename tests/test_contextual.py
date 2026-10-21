@@ -73,6 +73,93 @@ async def test_selector_failure_never_injects_unmatched_conditionals(retrieval):
     assert none["traits"] == []
 
 
+@pytest.mark.parametrize("response", ['{"selected_ids":[]}', '{"selected_ids":[999]}'])
+async def test_current_local_definition_survives_an_empty_or_failed_style_selector(
+    retrieval, response
+):
+    retriever, _ = retrieval
+    retriever.context.llm_generate = AsyncMock(
+        return_value=SimpleNamespace(completion_text=response)
+    )
+    word = TRAITS[0] | {
+        "id": 5,
+        "kind": "jargon",
+        "content": "『典』：例子已经归档",
+        "situation": "归档时",
+    }
+    result = await retriever.select(
+        "scope-a",
+        TRAITS + [word],
+        "当前输入：典是什么意思？",
+        DEFAULTS,
+        literal_query="典是什么意思？",
+    )
+    assert [t["id"] for t in result["traits"]] == [5]
+    assert "当前输入直接命中" in result["traits"][0]["_reason"]
+    assert isinstance(result["traits"][0]["_score"], (int, float))
+    old_topic = await retriever.select(
+        "scope-a",
+        TRAITS + [word],
+        "历史：刚才说典。当前：现在几点？",
+        DEFAULTS,
+        literal_query="现在几点？",
+    )
+    assert old_topic["traits"] == []
+
+
+async def test_literal_vocabulary_respects_disabled_entries_and_the_total_limit(
+    retrieval,
+):
+    retriever, provider = retrieval
+    retriever.context.llm_generate = AsyncMock(
+        return_value=SimpleNamespace(completion_text='{"selected_ids":[1]}')
+    )
+    word = TRAITS[0] | {
+        "id": 5,
+        "kind": "jargon",
+        "content": "LUX：平安到家",
+        "situation": "报平安时",
+    }
+    result = await retriever.select(
+        "scope-a",
+        TRAITS + [word],
+        "LUX是什么意思",
+        DEFAULTS | {"max_traits": 1},
+        literal_query="LUX是什么意思",
+    )
+    assert [t["id"] for t in result["traits"]] == [5]
+    preview = await retriever.select(
+        "scope-a",
+        [word],
+        "ＬＵＸ？",
+        DEFAULTS,
+        semantic=False,
+        literal_query="ＬＵＸ？",
+    )
+    assert [t["id"] for t in preview["traits"]] == [5]
+    provider.get_embeddings.assert_not_awaited()
+    assert not (
+        await retriever.select(
+            "scope-a",
+            [word | {"status": "disabled"}],
+            "LUX",
+            DEFAULTS,
+            semantic=False,
+            literal_query="LUX",
+        )
+    )["traits"]
+    assert not (
+        await retriever.select(
+            "scope-a",
+            [word],
+            "deluxe",
+            DEFAULTS,
+            semantic=False,
+            literal_query="deluxe",
+        )
+    )["traits"]
+
+
 async def test_free_preview_and_busy_selector_never_call_models(retrieval):
     retriever, provider = retrieval
     retriever.context.llm_generate = AsyncMock()
@@ -213,7 +300,7 @@ async def test_native_contextual_application_preserves_identity_and_exact_select
     plugin.context.llm_generate.return_value = SimpleNamespace(
         completion_text=json.dumps({"selected_ids": ids})
     )
-    incoming = event("selected")
+    incoming = event("selected", text="别开玩笑了")
     request = ProviderRequest(
         prompt="别开玩笑了",
         system_prompt="宿主人格",
@@ -229,3 +316,60 @@ async def test_native_contextual_application_preserves_identity_and_exact_select
     assert incoming.get_extra("ovenheart_application")["ids"] == ids
     payload = json.loads(plugin.context.llm_generate.await_args.kwargs["prompt"])
     assert "assistant: 刚才的回应" in payload["conversation"]
+
+
+async def test_native_literal_vocabulary_uses_current_human_input_and_rechecks_disabling(
+    plugin,
+):
+    from astrbot.api.provider import ProviderRequest
+
+    from tests.test_runtime import event, sources
+
+    scope = await sources(plugin)
+    await plugin.learn(scope)
+    plugin.settings["selection_mode"] = "contextual"
+    word = next(
+        t
+        for t in (await plugin.store.call("state", scope))["traits"]
+        if t["kind"] == "jargon"
+    )
+    await plugin.store.call(
+        "mutate",
+        scope,
+        "trait",
+        {"id": word["id"], "content": "「典」：例子已归档", "status": "active"},
+    )
+    plugin.context.llm_generate.side_effect = None
+    plugin.context.llm_generate.return_value = SimpleNamespace(
+        completion_text='{"selected_ids":[]}'
+    )
+    incoming = event("word-query", text="你们说典是什么意思？")
+    request = ProviderRequest(
+        prompt=incoming.get_message_str(), system_prompt="Host identity"
+    )
+    await plugin.apply_persona(incoming, request)
+    assert "归档" in request.system_prompt
+    assert incoming.get_extra("ovenheart_application")["ids"] == [word["id"]]
+    changed_topic = event("new-topic", text="现在天气如何？")
+    request = ProviderRequest(
+        prompt=changed_topic.get_message_str(),
+        system_prompt="Host identity",
+        contexts=[{"role": "user", "content": "刚才讨论典的含义"}],
+    )
+    await plugin.apply_persona(changed_topic, request)
+    assert request.system_prompt == "Host identity"
+
+    async def disable_during_selection(**kwargs):
+        await plugin.store.call(
+            "mutate", scope, "trait", {"id": word["id"], "status": "disabled"}
+        )
+        return SimpleNamespace(completion_text='{"selected_ids":[]}')
+
+    plugin.context.llm_generate.side_effect = disable_during_selection
+    request = ProviderRequest(
+        prompt=incoming.get_message_str(), system_prompt="Host identity"
+    )
+    await plugin.apply_persona(
+        event("disabled-query", text=incoming.get_message_str()), request
+    )
+    assert request.system_prompt == "Host identity"
