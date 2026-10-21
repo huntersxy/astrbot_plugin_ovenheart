@@ -97,6 +97,10 @@ Synthetic real-provider tests on the user-specified endpoint showed system-only 
 
 ![Mobile compatibility delivery viewport, illustrative environment](../assets/delivery-settings-mobile.jpg)
 
+## Application guidance (0.13)
+
+Version 0.13 clarifies that identity and behavior boundaries constrain generation internally rather than becoming a recited introduction. Current request scope and detailed answers remain authoritative. No extra model calls or settings are added. The [controlled application comparison](../evaluation/application.md) freezes real learned habits and selections; diagnostic model reviews are not independent ratings or proof of superiority.
+
 ## LivingMemory and QQ Enhance
 
 LivingMemory is optional. The adapter targets the supplied `2.7.0-beta.3` interface and discovers the active instance at runtime. It respects LivingMemory access control, configured session/user/global scopes, persona filtering and host plugin switches. At most three memory excerpts are retrieved by default, only while learning. Missing, disabled, incompatible, unavailable or timed-out memory integration does not prevent independent learning. After reload, a scope without a new real event uses retained chat material only.

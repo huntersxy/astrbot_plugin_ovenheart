@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.13.0
+
+- Clarify that identity and behavior boundaries guide generation internally, and should not become a recited self-introduction. Preserve the current request's scope and complete detailed explanations when requested.
+- Add a controlled application replay that freezes actual learned habits, selected IDs, identity, style and history. Verify exact reconstruction of the original guidance before comparing a single rule change through the native provider.
+- Add order-swapped, source-blind diagnostic model reviews with strict score/tie validation. Preserve the incomplete pilot and its contradictory verdict as evidence of critic limitations; do not treat model preferences as independent ratings or a MaiBot win rate.
+
 ## 0.12.0
 
 - Preserve LivingMemory's explicit unfiltered legacy scope instead of replacing it with the current session. Keep session, user, alias, global and forced-isolation policies unchanged.
