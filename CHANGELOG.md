@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.17.0
+
+- Add opt-in Debug mode in Panel and host configuration. Log full plugin system/temporary-context injections, retrieval results, learning and correction requests/completions, self-check audits and participation plans at INFO level. Keep it off by default; never collect provider credentials, headers or arbitrary provider exception messages. Verify exact request/log equality and immediate disabling.
+
+- Add an All conversations Library view, defaulting to pending review, with owner labels, status/category filters before 100-entry pagination and global pending counts. The header conversation continues to control Profile, Start learning and History; review/edit/rating actions use the selected entry owner.
+- Add global learning exclusions via bare QQ numbers in Settings and `blocked_senders` in host configuration. Exclude capture, retained pending sources, material counts and volatile neighbor context; reject late batches after blacklist changes and recheck persisted settings within transactions. Keep existing habits and evidence for manual review.
+- Verify scoped actions, pagination, draft guards, QQ input parsing and blacklist races using native SDK tests and illustrative desktop/mobile browser checks.
+
 ## 0.16.0
 
 - Run the two independent extraction passes concurrently, then review their combined results in stable pass order. Raise the shared background batch budget to 180 seconds after observed review calls exhausted the former 90-second budget; retain per-pass format correction limits and single atomic commit. Disabled categories do not add requests.

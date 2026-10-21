@@ -13,6 +13,18 @@ The view uses AstrBot authentication, its native bridge and light/dark themes. N
 | 学习与参与 / Learning and participation (formerly 学习记录) | Inspect batches, participation reasons, waits, cancellations and prior versions |
 | 学习设置 / Settings | Configure activation, evidence, sources, provider, batch timing and retention |
 
+## All conversations and excluded users (0.17)
+
+Library now defaults to **全部会话 / All conversations** and **待审核 / Pending**, with the tab badge counting pending entries across scopes. Previously, operators switched the header conversation to review each library; now the library has its own conversation filter. The header still controls Profile, Start learning and History. Category and status filters apply before pagination; use Previous/Next to browse pages of up to 100 entries. Rows and details name the owning conversation/persona. Editing, rating and review actions target that owner while keeping the header selection intact. Unsaved edits require confirmation before changing filters, rows or pages.
+
+In Settings → Learning scope → **不学习的用户（QQ 号）**, enter bare QQ numbers without a platform prefix. Newlines, whitespace, ASCII/Chinese commas and semicolons separate multiple numbers. Saving deduplicates the list and displays one ID per line. The global `blocked_senders` setting overrides learning targets: excluded users are neither captured nor used as temporary learning context; their retained pending messages are excluded from batches and material counts. Changes during generation invalidate the old batch without consuming its material. Removing an ID makes its retained, unconsumed material eligible again.
+
+Existing habits and evidence are preserved; inspect and disable them manually in Library. This learning exclusion is not a QQ platform ban and does not change LivingMemory's own capture policy or host reply permissions.
+
+![All-conversation library with illustrative data](../assets/library-all-v0.17.jpg)
+![Excluded QQ users with illustrative numbers](../assets/blacklist-v0.17.jpg)
+
+
 ## Learning and activation
 
 Configure the core persona in AstrBot first. After ordinary text messages arrive, the conversation appears in the scope selector. Each complete unified message origin and effective host persona has a separate learning space. Human-readable conversation names take priority over IDs.
@@ -168,3 +180,16 @@ The test suite covers SQLite transactions, evidence validation and native AstrBo
 ![Contextual selection settings viewport, illustrative environment](../assets/selection-settings.jpg)
 
 ![Mobile selection settings viewport, illustrative environment](../assets/selection-settings-mobile.jpg)
+
+
+## Debug mode (0.17)
+
+Enable **学习设置 → 调试日志 → 启用 Debug 模式** and save, or set `debug_enabled: true` in host plugin configuration. Default: off. Saved Panel overrides take precedence. Search AstrBot INFO logs for `OvenHeart debug`; the host must allow INFO logging. Disabling immediately stops subsequent debug events.
+
+`persona_injection` and `participation_injection` contain the exact, untruncated system additions and temporary user context appended by this plugin, with scope, persona, delivery mode, included IDs or allowed tools. They do not dump unrelated host prompts or claim to represent later downstream mutations. `retrieval` includes the actual query, selected entries, scores, reasons and fallback messages; `application_skipped` identifies an invalidated or disabled application.
+
+Learning diagnostics include batch source IDs, the full extraction/format-correction request and original model completion, self-check request/response and committed audit. Planner request/response and parsed participation plans are also logged. Capture skips, cancellation and safe error/cause class names help explain failures while preserving sources. JSON string newlines use `\n` and round-trip without truncation.
+
+Only explicit business fields are serialized. Provider configuration credentials, HTTP authorization headers and arbitrary provider exception messages are never collected for debug logs. Conversation excerpts, persona and memory excerpts are included; turn debug off after diagnosis.
+
+![Saved Debug setting with illustrative data](../assets/debug-settings-v0.17.jpg)

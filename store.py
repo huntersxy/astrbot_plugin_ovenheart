@@ -241,6 +241,8 @@ class Store:
             and sender not in settings["target_senders"]
         ):
             return False
+        if sender in settings["blocked_senders"]:
+            return False
         if context_only:
             row = db.execute(
                 "SELECT profile FROM scopes WHERE id=?", (scope,)
@@ -269,13 +271,14 @@ class Store:
         )
         return cursor.rowcount == 1
 
-    def state(self, db, scope=None, target_senders=None):
+    def state(self, db, scope=None, target_senders=None, blocked_senders=None):
         """Load the bounded dashboard state or one scope's detail.
 
         Args:
             db: Open database connection.
             scope: Optional selected scope.
             target_senders: Current learning targets for pending-material counts.
+            blocked_senders: Excluded users, overriding learning targets.
 
         Returns:
             A serializable dashboard state.
@@ -286,11 +289,23 @@ class Store:
             if targets
             else ""
         )
+        blocked = list(
+            dict.fromkeys(
+                [
+                    *(blocked_senders or []),
+                    *self.settings(db).get("blocked_senders", []),
+                ]
+            )
+        )
+        if blocked:
+            sender_filter += (
+                " AND m.sender NOT IN (" + ",".join("?" for _ in blocked) + ")"
+            )
         scopes = [
             dict(row)
             for row in db.execute(
                 f"SELECT s.*, (SELECT COUNT(*) FROM messages m WHERE m.scope=s.id AND m.consumed=0{sender_filter}) pending, (SELECT COUNT(*) FROM traits t WHERE t.scope=s.id AND t.status='pending') review_count FROM scopes s ORDER BY updated DESC",
-                targets,
+                (*targets, *blocked),
             )
         ]
         for item in scopes:
@@ -345,6 +360,72 @@ class Store:
                 )
             ]
         return result
+
+    def library(self, db, scope="all", kind="all", status="pending", offset=0):
+        """Read a filtered page across conversations without changing their ownership.
+
+        Args:
+            db: Open database connection.
+            scope: One conversation key, or all conversations.
+            kind: Learning category filter.
+            status: Review status filter.
+            offset: Zero-based page offset.
+
+        Returns:
+            Entries with owner labels, scoped review audits and pagination metadata.
+
+        Raises:
+            ValueError: If any filter or page is invalid.
+        """
+        if (
+            not isinstance(scope, str)
+            or (scope != "all" and len(scope) != 24)
+            or kind not in ("all", "personality", "expression", "jargon", "behavior")
+            or status not in ("all", "pending", "active", "rejected", "disabled")
+            or type(offset) is not int
+            or offset < 0
+        ):
+            raise ValueError("学习库筛选无效，请刷新后重试。")
+        filters, values = [], []
+        for column, value in (("scope", scope), ("kind", kind), ("status", status)):
+            if value != "all":
+                filters.append(f"t.{column}=?")
+                values.append(value)
+        where = " AND ".join(filters) or "1=1"
+        total = db.execute(
+            f"SELECT COUNT(*) FROM traits t JOIN scopes s ON s.id=t.scope WHERE {where}",
+            values,
+        ).fetchone()[0]
+        offset = min(offset // 100, max(0, (total - 1) // 100)) * 100
+        traits = [
+            dict(row) | {"evidence": json.loads(row["evidence"])}
+            for row in db.execute(
+                f"SELECT t.*, s.label, s.persona FROM traits t JOIN scopes s ON s.id=t.scope WHERE {where} ORDER BY t.updated DESC, t.id DESC LIMIT 100 OFFSET ?",
+                (*values, offset),
+            )
+        ]
+        for owner in dict.fromkeys(t["scope"] for t in traits):
+            candidates = [
+                candidate
+                for row in db.execute(
+                    "SELECT review FROM runs WHERE scope=? ORDER BY id DESC LIMIT 30",
+                    (owner,),
+                )
+                for candidate in json.loads(row["review"]).get("candidates", [])
+            ]
+            for trait in (t for t in traits if t["scope"] == owner):
+                trait["review"] = next(
+                    (
+                        candidate
+                        for candidate in candidates
+                        if all(
+                            candidate.get(key) == trait[key]
+                            for key in ("kind", "situation", "content")
+                        )
+                    ),
+                    None,
+                )
+        return {"traits": traits, "total": total, "offset": offset}
 
     def touch_scope(self, db, scope, umo, persona, label):
         """Create a scope even when raw-message learning is disabled.
@@ -474,7 +555,7 @@ class Store:
                 (key, time.time()),
             )
 
-    def batch(self, db, scope, size, target_senders=None):
+    def batch(self, db, scope, size, target_senders=None, blocked_senders=None):
         """Read the oldest unconsumed messages for a learning batch.
 
         Args:
@@ -482,6 +563,7 @@ class Store:
             scope: Session/persona key.
             size: Batch size limit.
             target_senders: Current eligible senders, including after settings changes.
+            blocked_senders: Users excluded even if also selected as targets.
 
         Returns:
             Retained observations in arrival order.
@@ -490,11 +572,23 @@ class Store:
         sender_filter = (
             " AND sender IN (" + ",".join("?" for _ in targets) + ")" if targets else ""
         )
+        blocked = list(
+            dict.fromkeys(
+                [
+                    *(blocked_senders or []),
+                    *self.settings(db).get("blocked_senders", []),
+                ]
+            )
+        )
+        if blocked:
+            sender_filter += (
+                " AND sender NOT IN (" + ",".join("?" for _ in blocked) + ")"
+            )
         return [
             dict(row)
             for row in db.execute(
                 f"SELECT * FROM messages WHERE scope=? AND consumed=0{sender_filter} ORDER BY id LIMIT ?",
-                (scope, *targets, size),
+                (scope, *targets, *blocked, size),
             )
         ]
 
@@ -549,6 +643,7 @@ class Store:
         expected_targets=None,
         review=None,
         expected_review_enabled=None,
+        expected_blocked=None,
     ):
         """Commit candidates and consume exactly the successful batch atomically.
 
@@ -565,6 +660,7 @@ class Store:
             expected_targets: Learning targets at the start of generation.
             review: Server-assembled semantic review audit, without provider secrets.
             expected_review_enabled: Review switch captured before generation.
+            expected_blocked: Blacklist captured before generation.
 
         Returns:
             Count of newly inserted candidates.
@@ -593,6 +689,11 @@ class Store:
                 expected_targets
             ):
                 raise ValueError("学习对象在学习期间已修改，旧结果未保存，素材保留。")
+            if (
+                expected_blocked is not None
+                and set(settings["blocked_senders"]) != set(expected_blocked)
+            ) or any(m["sender"] in settings["blocked_senders"] for m in messages):
+                raise ValueError("学习黑名单在学习期间已修改，旧结果未保存，素材保留。")
             profile = json.loads(
                 db.execute(
                     "SELECT profile FROM scopes WHERE id=?", (scope,)

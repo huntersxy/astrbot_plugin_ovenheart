@@ -226,6 +226,47 @@ async def lifespan(app):
                 "observed",
                 plugin.settings,
             )
+        second_scope = "b" * 24
+        await plugin.store.call(
+            "touch_scope",
+            second_scope,
+            "qq:GroupMessage:demo2",
+            "工作时的自己",
+            "烘焙讨论",
+        )
+        for i, text in enumerate(("烘焙先说关键步骤就好", "容易出错的地方最后补充")):
+            await plugin.store.call(
+                "capture",
+                second_scope,
+                "qq:GroupMessage:demo2",
+                "工作时的自己",
+                "烘焙讨论",
+                f"bake-{i}",
+                "烘焙演示用户",
+                text,
+                plugin.settings | {"learning_enabled": True},
+            )
+        second_batch = await plugin.store.call("batch", second_scope, 30)
+        second_run = await plugin.store.call("start_run", second_scope)
+        await plugin.store.call(
+            "finish_run",
+            second_run,
+            second_scope,
+            second_batch,
+            [
+                traits[0]
+                | {
+                    "evidence": [
+                        {k: m[k] for k in ("id", "sender", "text", "created")}
+                        for m in second_batch
+                    ],
+                    "situation": "讨论烘焙步骤时",
+                    "content": "先说明关键步骤，再补充容易出错的地方",
+                }
+            ],
+            plugin.settings | {"learning_enabled": True},
+            "演示数据",
+        )
         try:
             yield
         finally:
@@ -288,7 +329,7 @@ async def api(endpoint: str, request: Request):
     Returns:
         Native plugin response.
     """
-    if endpoint not in ("state", "action", "preview"):
+    if endpoint not in ("state", "library", "action", "preview"):
         return {"status": "error", "message": "Unknown test endpoint"}
     with bind_request_context(
         PluginRequest(

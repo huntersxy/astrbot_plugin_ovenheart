@@ -24,6 +24,7 @@ function fixture() {
   dialog.showModal = () => { dialog.returnValue = confirmations.shift() ? 'continue' : 'cancel'; onClose(); };
   runInContext(source, context);
   runInContext(`data = {traits:[{id:1,kind:'expression',situation:'被调侃时',content:'原始习惯',confidence:0.95,status:'pending',evidence:[]}]}; renderLibrary(); dirty = true;`, context);
+  runInContext(`bridge = {apiGet:async () => data, apiPost:async () => ({message:'已保存'})};`, context);
   return {context, element, confirmations};
 }
 
@@ -42,6 +43,7 @@ for (const [selector, variable, oldValue, nextValue] of [['#kind-filter','catego
   });
   test(`confirm ${variable} filter change applies filter and clears discarded draft`, async () => {
     const {context, element, confirmations} = fixture();
+    runInContext(`const scope={id:'a'.repeat(24),label:'测试群',persona:'默认',pending:0,review_count:1,profile:{learning_enabled:true}}; selectedScope=scope.id; tab='library'; data={...data,scope,scopes:[scope],settings:{},memory:{},busy:[]}; bridge.apiGet=async endpoint => endpoint === 'library' ? {traits:[],runs:[],total:0,offset:0} : data;`,context);
     confirmations.push(true);
     const input = element(selector);
     input.value = nextValue;
@@ -67,7 +69,7 @@ test('all participation controls are available with host schema defaults', () =>
   const settings=Object.fromEntries(Object.entries(schema).map(([key,value])=>[key,value.default]));
   runInContext(`data={settings:${JSON.stringify(settings)},memory:{message:'未启用'},scope:null}; renderSettings();`,context);
   const html=element('#content').innerHTML;
-  for (const name of ['participation_mode','participation_min_messages','participation_debounce','participation_cooldown','participation_hourly_limit','planner_provider_id','planner_timeout','planner_reply_threshold','planner_max_wait','autonomous_tools']) {
+  for (const name of ['participation_mode','participation_min_messages','participation_debounce','participation_cooldown','participation_hourly_limit','planner_provider_id','planner_timeout','planner_reply_threshold','planner_max_wait','autonomous_tools','debug_enabled']) {
     assert.ok(html.includes('name="'+name+'"'),name);
   }
   assert.ok(html.includes('value="off" selected'));
@@ -106,4 +108,38 @@ test('open review details survive automatic history refresh for the same run', (
   assert.ok(element('#content').innerHTML.includes('data-review-run="7" open'));
   runInContext('data.runs[0].id=8;renderHistory();',context);
   assert.ok(!element('#content').innerHTML.includes('data-review-run="8" open'));
+});
+
+for (const approved of [false, true]) test(`all-conversation filter respects dirty draft confirmation ${approved}`, async () => {
+  const {context,element,confirmations}=fixture();
+  runInContext(`libraryScope='a'.repeat(24);renderLibrary();`,context);
+  confirmations.push(approved);
+  runInContext(`load=async () => {};`,context);
+  const input=element('#library-scope'); input.value='all';
+  await input.onchange({target:input});
+  assert.equal(runInContext('libraryScope',context),approved?'all':'a'.repeat(24));
+  assert.equal(runInContext('dirty',context),!approved);
+});
+
+test('all-library review uses the entry owner rather than the header conversation',async () => {
+  const {context,element}=fixture();
+  const reviews=[{dataset:{review:'active'}}], feedback=[{dataset:{feedback:'-1'}}];
+  context.document.querySelectorAll=selector => selector==='[data-review]'?reviews:selector==='[data-feedback]'?feedback:[];
+  runInContext(`selectedScope='a'.repeat(24);data.traits[0].scope='b'.repeat(24);data.traits[0].label='<群>';data.traits[0].persona='烘焙';data.library={traits:data.traits,runs:[],total:1,offset:0};globalThis.sent=[];mutate=async(...args)=>sent.push(args);renderLibrary();`,context);
+  element('#field-situation').value='编辑情境';element('#field-content').value='编辑内容';
+  reviews[0].onclick();
+  runInContext('dirty=false',context);await feedback[0].onclick();
+  const form={situation:{value:'编辑情境'},content:{value:'编辑内容'}};
+  await element('#trait-form').onsubmit({preventDefault(){},currentTarget:form});
+  assert.equal(runInContext('sent.length',context),3);
+  assert.ok(runInContext("sent.every(args=>args[2]==='b'.repeat(24))",context));
+  assert.ok(element('#content').innerHTML.includes('&lt;群&gt; / 烘焙'));
+});
+
+test('QQ blacklist accepts pasted numbers without platform prefixes',() => {
+  const {context,element}=fixture();
+  runInContext(`data={settings:{blocked_senders:[],target_senders:[],allowed_sessions:[],autonomous_tools:[]},memory:{}};renderSettings();globalThis.saved=null;mutate=(action,payload)=>saved=payload;`,context);
+  const input={value:'123456, 234567，345678\n456789；567890'};
+  element('#settings-form').onsubmit({preventDefault(){},currentTarget:{elements:{namedItem:key=>key==='blocked_senders'?input:null}}});
+  assert.equal(runInContext('saved.blocked_senders.join(",")',context),'123456,234567,345678,456789,567890');
 });

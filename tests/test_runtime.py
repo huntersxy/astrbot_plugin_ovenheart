@@ -713,7 +713,7 @@ async def test_background_learning_rechecks_current_host_plugin_set(plugin):
 
 
 async def test_native_page_validation_and_teardown(plugin):
-    assert len(plugin.context.registered_web_apis) == 3
+    assert len(plugin.context.registered_web_apis) == 4
     scope = await sources(plugin)
     assert (await api_call(plugin.page_api.state, query=f"scope={scope}"))[
         "status"
@@ -796,3 +796,158 @@ async def test_memory_bridge_uses_livingmemory_policy_and_bounded_context(
     memories, message = await plugin.memory.recall(event(), "default", plugin.settings)
     assert memories == [] and "禁止" in message
     assert engine.search_memories.await_count == 7
+
+
+async def test_blacklisted_qq_is_not_captured_or_used_as_neighbor_context(plugin):
+    plugin.settings["target_senders"] = ["alice", "123456"]
+    await plugin.capture(event("old", "历史待学文字", "123456"))
+    scope = (await plugin.store.call("state"))["scopes"][0]["id"]
+    await plugin.capture(event("peer", "不应成为学习语境", "123456"))
+    result = await api_call(
+        plugin.page_api.action,
+        {
+            "action": "settings",
+            "payload": {"blocked_senders": ["123456"], "target_senders": ["alice"]},
+        },
+    )
+    assert result["status"] == "ok" and not plugin.learning_context
+    await plugin.capture(event("new", "拉黑之后的文字", "123456"))
+    await sources(plugin)
+    assert (await api_call(plugin.page_api.state, query=f"scope={scope}"))["data"][
+        "scope"
+    ]["pending"] == 2
+    result = await plugin.learn(scope)
+    assert result["status"] == "success"
+    for call in plugin.context.llm_generate.await_args_list:
+        payload = json.loads(call.kwargs["prompt"])
+        assert {m["sender"] for m in payload["observations"]} == {"alice"}
+        assert not payload["conversation_context"]
+    # Old sources remain excluded rather than being consumed by an unrelated batch.
+    await plugin.store.call("settings", {"blocked_senders": []})
+    assert len(await plugin.store.call("batch", scope, 100, [], [])) == 2
+
+
+async def test_blacklist_change_during_generation_prevents_late_learning(plugin):
+    scope = await sources(plugin)
+    started, release = asyncio.Event(), asyncio.Event()
+
+    async def delayed(**kwargs):
+        started.set()
+        await release.wait()
+        return await completion(**kwargs)
+
+    plugin.context.llm_generate.side_effect = delayed
+    task = asyncio.create_task(plugin.learn(scope))
+    await started.wait()
+    await api_call(
+        plugin.page_api.action,
+        {"action": "settings", "payload": {"blocked_senders": ["alice"]}},
+    )
+    release.set()
+    result = await task
+    assert result["status"] == "error" and "黑名单" in result["message"]
+    assert not (await plugin.store.call("library"))["traits"]
+    await plugin.store.call("settings", {"blocked_senders": []})
+    assert len(await plugin.store.call("batch", scope, 100, [], [])) == 2
+
+
+async def test_library_native_api_filters_and_rejects_invalid_parameters(plugin):
+    scope = await sources(plugin)
+    await plugin.learn(scope)
+    response = await api_call(plugin.page_api.library)
+    assert response["status"] == "ok" and response["data"]["total"] == 4
+    assert {t["scope"] for t in response["data"]["traits"]} == {scope}
+    assert (await api_call(plugin.page_api.library, query="kind=jargon"))["data"][
+        "total"
+    ] == 1
+    for query in ("offset=-1", "offset=bad", "status=bad", "scope=bad"):
+        assert (await api_call(plugin.page_api.library, query=query))[
+            "status"
+        ] == "error"
+
+
+async def test_debug_defaults_off_then_logs_exact_injection_without_host_config(
+    plugin, monkeypatch
+):
+    from astrbot_plugin_ovenheart.main import logger
+
+    records = []
+    monkeypatch.setattr(logger, "info", lambda *args: records.append(args))
+    scope = await sources(plugin)
+    result = await plugin.learn(scope)
+    assert result["status"] == "success" and records == []
+    long_identity = "调试身份内容" * 140
+    await plugin.store.call("mutate", scope, "profile", {"identity": long_identity})
+    await api_call(
+        plugin.page_api.action,
+        {
+            "action": "settings",
+            "payload": {"debug_enabled": True, "guidance_delivery": "dual"},
+        },
+    )
+    plugin.context.get_config = lambda umo: {
+        "plugin_set": ["*"],
+        "platform_settings": {},
+        "api_key": "sensitive-config-must-not-be-logged",
+    }
+    records.clear()
+    request = ProviderRequest(
+        prompt="普通对话", system_prompt="宿主自己的提示词不作调试转储"
+    )
+    await plugin.apply_persona(event("debug-turn"), request)
+    entries = [
+        (args[1], json.loads(args[2]))
+        for args in records
+        if args[0].startswith("OvenHeart debug")
+    ]
+    injection = next(body for stage, body in entries if stage == "persona_injection")
+    assert request.system_prompt == "宿主自己的提示词不作调试转储" + injection["system"]
+    assert injection["temporary_user"] == request.extra_user_content_parts[-1].text
+    assert long_identity in injection["system"] and len(injection["system"]) > 800
+    assert any(stage == "retrieval" for stage, _ in entries)
+    assert "sensitive-config-must-not-be-logged" not in str(records)
+    await api_call(
+        plugin.page_api.action,
+        {"action": "settings", "payload": {"debug_enabled": False}},
+    )
+    records.clear()
+    await plugin.apply_persona(
+        event("debug-disabled"), ProviderRequest(prompt="普通对话")
+    )
+    assert records == []
+
+
+async def test_debug_logs_learning_json_and_safe_provider_failure(plugin, monkeypatch):
+    from astrbot_plugin_ovenheart.main import logger
+
+    records = []
+    monkeypatch.setattr(logger, "info", lambda *args: records.append(args))
+    plugin.settings["debug_enabled"] = True
+    scope = await sources(plugin)
+    result = await plugin.learn(scope)
+    assert result["status"] == "success"
+    entries = [
+        (args[1], json.loads(args[2]))
+        for args in records
+        if args[0].startswith("OvenHeart debug")
+    ]
+    assert sum(stage == "learning_request" for stage, _ in entries) == 2
+    assert sum(stage == "learning_response" for stage, _ in entries) == 2
+    assert any(stage == "learning_committed" for stage, _ in entries)
+    for call in plugin.context.llm_generate.await_args_list:
+        assert any(
+            body.get("prompt") == json.loads(call.kwargs["prompt"])
+            for stage, body in entries
+            if stage == "learning_request"
+        )
+    await plugin.capture(event("failure-1", "第二批学习素材一"))
+    await plugin.capture(event("failure-2", "第二批学习素材二"))
+    plugin.context.llm_generate.side_effect = RuntimeError(
+        "Authorization: Bearer secret-must-not-be-logged"
+    )
+    records.clear()
+    assert (await plugin.learn(scope))["status"] == "error"
+    assert "secret-must-not-be-logged" not in str(records)
+    errors = [json.loads(args[2]) for args in records if args[1] == "learning_failed"]
+    assert errors and errors[0]["sources_preserved"] is True
+    assert errors[0]["error_type"] == "RuntimeError"

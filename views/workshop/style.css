@@ -139,3 +139,17 @@ button.text { border-color: transparent; background: transparent; }
 .settings-group summary:focus-visible { outline: 2px solid var(--focus); outline-offset: 3px; }
 
 .participation-settings { grid-column: 1 / -1; }
+
+.trait-owner { display: block; color: var(--muted); margin: 8px 0; overflow-wrap: anywhere; }
+#library-scope { max-width: 100%; }
+.library-pages { margin-top: 20px; flex-wrap: wrap; align-items: center; }
+
+.filter-field { display: flex; align-items: center; gap: 12px; min-width: 0; max-width: 100%; }
+@media (max-width: 640px) {
+  .filter-row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .filter-field { flex-direction: column; align-items: stretch; gap: 6px; }
+  .filter-field:first-child { grid-column: 1 / -1; }
+  .filter-field select { min-width: 0; width: 100%; }
+}
+
+.debug-settings { grid-column: 1 / -1; }

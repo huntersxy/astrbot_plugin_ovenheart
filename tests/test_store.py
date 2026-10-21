@@ -207,3 +207,92 @@ async def test_queued_capture_rechecks_persisted_target_and_pause(store):
         DEFAULTS,
         True,
     )
+
+
+async def test_library_pages_filter_before_limit_and_preserve_owner(store):
+    for scope in ("a" * 24, "b" * 24):
+        batch = await seed(store, scope)
+        run = await store.call("start_run", scope)
+        await store.call(
+            "finish_run",
+            run,
+            scope,
+            batch,
+            [TRAIT | {"content": f"习惯 {i}"} for i in range(105)],
+            DEFAULTS,
+            "",
+        )
+    first = await store.call("library")
+    assert first["total"] == 210 and len(first["traits"]) == 100
+    second = await store.call("library", "all", "all", "pending", 100)
+    last = await store.call("library", "all", "all", "pending", 200)
+    ids = [t["id"] for page in (first, second, last) for t in page["traits"]]
+    assert len(ids) == len(set(ids)) == 210
+    chosen = first["traits"][0]
+    assert chosen["label"] == "测试群" and chosen["persona"] == "default"
+    wrong_scope = "a" * 24 if chosen["scope"] == "b" * 24 else "b" * 24
+    with pytest.raises(ValueError):
+        await store.call(
+            "mutate", wrong_scope, "trait", {"id": chosen["id"], "status": "active"}
+        )
+    await store.call(
+        "mutate", chosen["scope"], "trait", {"id": chosen["id"], "status": "active"}
+    )
+    active = await store.call("library", "all", "expression", "active")
+    assert active["total"] == 1 and active["traits"][0]["scope"] == chosen["scope"]
+    assert (await store.call("library", wrong_scope))["total"] == 105
+    assert (await store.call("library", "all", "jargon"))["total"] == 0
+    assert (await store.call("library", "all", "all", "active", 9999))["offset"] == 0
+    with pytest.raises(ValueError):
+        await store.call("library", "all", "invalid")
+
+
+async def test_blacklist_filters_stored_material_capture_and_atomic_commit(store):
+    scope = "a" * 24
+    batch = await seed(store)
+    run = await store.call("start_run", scope)
+    await store.call("settings", {"blocked_senders": ["alice"]})
+    assert not await store.call("batch", scope, 100, ["alice"])
+    assert (await store.call("state", scope, ["alice"]))["scope"]["pending"] == 0
+    assert not await store.call(
+        "capture",
+        scope,
+        "qq:g:1",
+        "default",
+        "test",
+        "late",
+        "alice",
+        "迟到的文字",
+        DEFAULTS,
+    )
+    assert not await store.call(
+        "capture",
+        scope,
+        "qq:g:1",
+        "default",
+        "test",
+        "context",
+        "alice",
+        "旁人语境",
+        DEFAULTS,
+        True,
+    )
+    with pytest.raises(ValueError, match="黑名单"):
+        await store.call(
+            "finish_run",
+            run,
+            scope,
+            batch,
+            [TRAIT],
+            DEFAULTS,
+            "",
+            "",
+            None,
+            None,
+            None,
+            None,
+            [],
+        )
+    assert not (await store.call("library"))["traits"]
+    await store.call("settings", {"blocked_senders": []})
+    assert len(await store.call("batch", scope, 100)) == 3

@@ -5,6 +5,7 @@ from __future__ import annotations
 LEARNING_TIMEOUT_SECONDS = 180
 
 DEFAULTS = {
+    "debug_enabled": False,
     "enabled": True,
     "learning_enabled": True,
     "learning_review_enabled": True,
@@ -20,6 +21,7 @@ DEFAULTS = {
     "memory_enabled": True,
     "memory_top_k": 3,
     "target_senders": [],
+    "blocked_senders": [],
     "allowed_sessions": [],
     "learn_personality": True,
     "learn_expression": True,
@@ -132,4 +134,9 @@ def validate_settings(values: dict) -> dict:
                 raise ValueError("参与方式必须为 off、observe 或 auto。")
         elif not isinstance(value, str) or len(value) > 256:
             raise ValueError(f"{key} 必须为长度不超过 256 的字符串。")
-    return values.copy()
+    result = values.copy()
+    if "blocked_senders" in result:
+        result["blocked_senders"] = list(
+            dict.fromkeys(v.strip() for v in result["blocked_senders"])
+        )
+    return result

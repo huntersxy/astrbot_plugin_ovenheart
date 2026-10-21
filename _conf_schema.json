@@ -24,7 +24,10 @@
     "description": "提示投递方式",
     "type": "string",
     "default": "system",
-    "options": ["system", "dual"],
+    "options": [
+      "system",
+      "dual"
+    ],
     "hint": "system 仅补充系统提示词；dual 同时把当前角色与已选习惯作为临时用户上下文，适合 system 不生效的接口。不会复制整段宿主系统提示词。"
   },
   "activation_mode": {
@@ -232,5 +235,17 @@
     "type": "list",
     "default": [],
     "hint": "工具名称列表；默认仅文字回复。只限制自主参与，直接唤醒仍使用原有工具策略。"
+  },
+  "blocked_senders": {
+    "description": "学习黑名单用户 ID",
+    "type": "list",
+    "default": [],
+    "hint": "QQ 用户直接填写 QQ 号，一项一个；黑名单优先于学习对象，不采集或学习其文字，也不作为学习上下文。已生效习惯不会自动删除。"
+  },
+  "debug_enabled": {
+    "description": "Debug 调试日志",
+    "type": "bool",
+    "default": false,
+    "hint": "开启后在 AstrBot INFO 日志中完整输出本插件注入内容、学习请求/响应、自检和检索结果。包含聊天、人格和记忆摘录；调试结束后建议关闭。不会读取或输出模型配置密钥、HTTP 鉴权头或原始供应商异常。"
   }
 }

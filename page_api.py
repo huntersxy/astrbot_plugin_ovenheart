@@ -21,6 +21,7 @@ class PageAPI:
         """Register routes using the same plugin namespace as the Panel view."""
         for route, handler, method in (
             ("state", self.state, "GET"),
+            ("library", self.library, "GET"),
             ("action", self.action, "POST"),
             ("preview", self.preview, "POST"),
         ):
@@ -40,7 +41,10 @@ class PageAPI:
         if not self.plugin.ready:
             return {"status": "error", "message": "人格工坊正在初始化，请稍后刷新。"}
         state = await self.plugin.store.call(
-            "state", request.query.get("scope"), self.plugin.settings["target_senders"]
+            "state",
+            request.query.get("scope"),
+            self.plugin.settings["target_senders"],
+            self.plugin.settings["blocked_senders"],
         )
         state.update(
             settings=self.plugin.settings,
@@ -55,6 +59,26 @@ class PageAPI:
             ),
         )
         return {"status": "ok", "data": state}
+
+    async def library(self):
+        """Return an authenticated, filtered page of learning entries.
+
+        Returns:
+            A standard response containing entries and their conversation owners.
+        """
+        if not self.plugin.ready:
+            return {"status": "error", "message": "人格工坊正在初始化，请稍后刷新。"}
+        try:
+            result = await self.plugin.store.call(
+                "library",
+                request.query.get("scope", "all"),
+                request.query.get("kind", "all"),
+                request.query.get("status", "pending"),
+                int(request.query.get("offset", "0")),
+            )
+            return {"status": "ok", "data": result}
+        except (ValueError, TypeError):
+            return {"status": "error", "message": "学习库筛选无效，请刷新后重试。"}
 
     async def action(self):
         """Validate and execute settings, review, learning or restoration actions.
@@ -87,6 +111,7 @@ class PageAPI:
                     raise ValueError("最少证据数量不能大于每批素材数量。")
                 await self.plugin.store.call("settings", patch)
                 self.plugin.settings = merged
+                self.plugin.debug("settings_updated", fields=sorted(patch))
                 self.plugin.learning_context.clear()
                 self.plugin.participation.close()
                 return {"status": "ok", "data": {"message": "学习设置已保存。"}}

@@ -334,6 +334,7 @@ class ParticipationController:
                         if not work.done():
                             work.cancel()
                     await asyncio.gather(task, interruption, return_exceptions=True)
+                plugin.debug("participation_plan", scope=scope, plan=plan)
                 plan = plan | {"room": room_key}
                 if (
                     changed.is_set()
@@ -455,6 +456,12 @@ class ParticipationController:
                 event.unified_msg_origin
             )
         )
+        plugin.debug(
+            "planner_request",
+            provider=provider_id,
+            system=PLANNER_SYSTEM,
+            prompt=prompt,
+        )
         response = await asyncio.wait_for(
             plugin.context.llm_generate(
                 chat_provider_id=provider_id,
@@ -462,6 +469,11 @@ class ParticipationController:
                 system_prompt=PLANNER_SYSTEM,
             ),
             timeout=settings["planner_timeout"],
+        )
+        plugin.debug(
+            "planner_response",
+            provider=provider_id,
+            completion=response.completion_text,
         )
         return parse_plan(response.completion_text, settings, waited)
 

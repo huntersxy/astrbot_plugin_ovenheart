@@ -449,3 +449,32 @@ def test_low_confidence_and_repeated_wait_become_observation():
         parse_plan(decision("wait").completion_text, DEFAULTS, waited=True)["action"]
         == "observe"
     )
+
+
+async def test_debug_planner_and_participation_injections_match_native_request(
+    participant, monkeypatch
+):
+    from astrbot_plugin_ovenheart.main import logger
+
+    records = []
+    monkeypatch.setattr(logger, "info", lambda *args: records.append(args))
+    participant.settings["debug_enabled"] = True
+    incoming = event(text="我需要一点安慰")
+    request = (await requests(participant, incoming))[0]
+    before = request.system_prompt
+    await participant.apply_participation(incoming, request)
+    entries = [
+        (args[1], json.loads(args[2]))
+        for args in records
+        if args[0].startswith("OvenHeart debug")
+    ]
+    injection = next(
+        body for stage, body in entries if stage == "participation_injection"
+    )
+    assert request.system_prompt == before + injection["system"]
+    assert injection["temporary_user"] == request.extra_user_content_parts[-1].text
+    assert {stage for stage, _ in entries} >= {
+        "planner_request",
+        "planner_response",
+        "participation_plan",
+    }

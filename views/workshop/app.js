@@ -4,6 +4,7 @@ const kinds = {personality:"人格倾向", expression:"表达方式", jargon:"�
 const statuses = {pending:"待审核", active:"已生效", rejected:"已拒绝", disabled:"已停用", success:"学习完成", error:"学习失败", running:"学习中"};
 const actions = {profile:"修改人格底稿", trait:"调整学习条目", restore:"恢复历史版本", clear_messages:"清除原始素材", feedback:"调整习惯评价", learning:"合并学习结果"};
 const date = value => new Date(value * 1000).toLocaleString("zh-CN", {month:"2-digit", day:"2-digit", hour:"2-digit", minute:"2-digit"});
+let libraryScope = "all", libraryOffset = 0;
 let bridge, data, selectedScope = "", tab = "profile", selectedTrait = null, category = "all", status = "pending", pending = false, polling = false, dirty = false;
 
 function confirmAction(message) {
@@ -23,20 +24,28 @@ function notify(message, error = false) {
   $("#notice").dataset.error = String(error);
 }
 
-async function api(endpoint, body) {
-  const response = body === undefined ? await bridge.apiGet(endpoint, endpoint === "state" ? {scope:selectedScope} : {}) : await bridge.apiPost(endpoint, body);
+async function api(endpoint, body, query = {}) {
+  const response = body === undefined ? await bridge.apiGet(endpoint, endpoint === "state" ? {scope:selectedScope} : query) : await bridge.apiPost(endpoint, body);
   if (response?.status === "error") throw new Error(response.message || "请求失败，请刷新页面后重试。");
   return response?.status === "ok" ? response.data : response;
 }
 
 async function load(renderContent = true) {
   const scopeAtStart = selectedScope;
+  const viewAtStart = JSON.stringify([tab, libraryScope, category, status, libraryOffset]);
   const next = await api("state");
-  if (scopeAtStart !== selectedScope) return;
+  if (scopeAtStart !== selectedScope || viewAtStart !== JSON.stringify([tab, libraryScope, category, status, libraryOffset])) return;
+  if (tab === "library") {
+    next.library = await api("library", undefined, {scope:libraryScope, kind:category, status, offset:libraryOffset});
+    if (scopeAtStart !== selectedScope || viewAtStart !== JSON.stringify([tab, libraryScope, category, status, libraryOffset])) return;
+    libraryOffset = next.library.offset;
+  }
   data = next;
   if (!selectedScope && data.scopes.length) {
     selectedScope = data.scopes[0].id;
+    const library = data.library;
     data = await api("state");
+    data.library = library;
   }
   const scopeSelect = $("#scope");
   scopeSelect.innerHTML = data.scopes.length ? data.scopes.map(s => `<option value="${escape(s.id)}">${escape(s.label)} / ${escape(s.persona === "[%None]" ? "未设置人格" : s.persona)}</option>`).join("") : '<option value="">尚无学习会话</option>';
@@ -44,7 +53,7 @@ async function load(renderContent = true) {
   scopeSelect.disabled = !data.scopes.length || pending;
   $("#session-status").textContent = data.scope ? `${data.scope.pending} 条待学素材，${data.traits.filter(t => t.status === "active").length} 条习惯已生效` : "收到有效聊天消息后，会话将自动出现在这里。";
   $("#memory-status").textContent = data.settings.memory_enabled ? data.memory.message : "记忆联动已关闭";
-  $("#review-count").textContent = data.scope?.review_count || "";
+  $("#review-count").textContent = data.scopes.reduce((sum, scope) => sum + scope.review_count, 0) || "";
   const busy = data.busy.includes(selectedScope);
   $("#learn").disabled = pending || !data.scope || !!data.busy.length || !data.settings.enabled || !data.settings.learning_enabled || !data.scope.profile.learning_enabled || data.scope.pending < data.settings.min_evidence;
   $("#learn").textContent = busy ? "正在学习…" : "开始学习";
@@ -68,7 +77,7 @@ function render() {
   for (const button of document.querySelectorAll("[data-tab]")) {
     if (button.dataset.tab === tab) button.setAttribute("aria-current", "page"); else button.removeAttribute("aria-current");
   }
-  if (!data.scope && tab !== "settings") {
+  if (!data.scope && tab !== "settings" && tab !== "library") {
     $("#content").innerHTML = empty("从一段真实的对话开始", "在已启用的 AstrBot 会话中聊几句，工坊会自动积累文字素材。也可以先打开学习设置，选择学习对象与生效方式。");
     return;
   }
@@ -100,28 +109,47 @@ function renderProfile() {
 }
 
 function renderLibrary() {
-  const traits = data.traits.filter(t => (category === "all" || t.kind === category) && (status === "all" || t.status === status));
+  const library = data.library;
+  const traits = (library?.traits || data.traits).filter(t => (category === "all" || t.kind === category) && (status === "all" || t.status === status));
   if (!traits.some(t => t.id === selectedTrait)) selectedTrait = traits[0]?.id;
   const trait = traits.find(t => t.id === selectedTrait);
-  const review = trait && (data.runs || []).flatMap(run => run.review?.candidates || []).find(candidate => candidate.kind === trait.kind && candidate.situation === trait.situation && candidate.content === trait.content);
+  const review = trait && (trait.review || (library ? [] : data.runs || []).filter(run => !run.scope || run.scope === trait.scope).flatMap(run => run.review?.candidates || []).find(candidate => candidate.kind === trait.kind && candidate.situation === trait.situation && candidate.content === trait.content));
   const reviewHint = review?.approved === false ? `<p class="muted" role="note">学习自检提示：${escape(review.reason)}。${trait.manual ? "已有人工作出决定；保留这条历史提示供参考。" : "请结合下方原始证据检查；人工审核可以覆盖模型判断。"}</p>` : "";
-  $("#content").innerHTML = `<div class="filter-row"><label for="kind-filter">类别</label><select id="kind-filter"><option value="all">全部类别</option>${Object.entries(kinds).map(([value, name]) => `<option value="${value}" ${category === value ? "selected" : ""}>${name}</option>`).join("")}</select><label for="status-filter">状态</label><select id="status-filter">${Object.entries({pending:"待审核", active:"已生效", disabled:"已停用", rejected:"已拒绝", all:"全部状态"}).map(([value, name]) => `<option value="${value}" ${status === value ? "selected" : ""}>${name}</option>`).join("")}</select><span class="muted">${traits.length} 条结果</span></div>
-    ${traits.length ? `<div class="library"><div class="trait-list" aria-label="学习条目">${traits.map(t => `<button type="button" class="trait-row" data-trait="${t.id}" aria-pressed="${selectedTrait === t.id}"><span class="row-meta"><span>${kinds[t.kind]}</span><span class="badge ${t.status}">${statuses[t.status]}</span></span><strong>${escape(t.situation)}</strong><p>${escape(t.content)}</p><span class="row-meta">${t.evidence_count || t.evidence.length} 条证据 / ${t.support_count || 1} 批 · 置信度 ${Math.round(t.confidence * 100)}%</span></button>`).join("")}</div><article class="detail"><h2>${kinds[trait.kind]}</h2>${reviewHint}<form id="trait-form">${field("situation", "适用情境", trait.situation, "只在适合的情境里使用，不必每次重复。", {maxlength:160})}${field("content", "习惯内容", trait.content, "你可以在生效前调整表达；编辑不会自动改变审核状态。", {maxlength:350})}<button type="submit">保存编辑</button></form><div class="actions">${trait.status !== "active" ? '<button class="primary" data-review="active">批准生效</button>' : '<button data-review="disabled">停用这条</button>'}${trait.status === "pending" ? '<button class="danger" data-review="rejected">拒绝学习</button>' : '<button data-review="pending">移回待审核</button>'}</div><section class="evidence"><h3>积累与应用</h3><p class="muted">${trait.support_count || 1} 批独立素材，累计 ${trait.evidence_count || trait.evidence.length} 条证据。引用 ${trait.use_count || 0} 次；引用次数不代表模型采用或消息送达。${trait.manual ? " 人工决定已锁定，后续学习只补充证据。" : ""}</p><p class="muted">当前评价：${trait.rating === 1 ? "更合适" : trait.rating === -1 ? "不太合适" : "尚未评价"}</p><div class="actions" aria-label="习惯效果评价">${[[1,"更合适"],[-1,"不太合适"],[0,"清除评价"]].map(([value,label]) => `<button type="button" data-feedback="${value}" aria-pressed="${(trait.rating || 0) === value}">${label}</button>`).join("")}</div><p class="muted">评价调整后续排序；不合适的习惯也可直接停用。</p></section><div class="evidence"><h3>最近的学习来源</h3><p class="muted">最多展示最近 32 条摘录，累计证据数保留。</p>${trait.evidence.map(e => `<blockquote><p>${escape(e.text)}</p><small>${escape(e.sender)} · ${date(e.created)}</small></blockquote>`).join("")}</div></article></div>` : empty(status === "pending" ? "这里等待下一次发现" : "还没有这类学习结果", "素材积累后会自动批量学习，也可以点击「开始学习」。自动生效模式下，高置信度结果会进入「已生效」，其余结果仍等待审核。")}`;
-  $("#kind-filter").onchange = async event => {
-    const next = event.target.value; event.target.value = category;
-    if (dirty && !await confirmAction("切换类别会放弃未保存的编辑，继续？")) return;
-    dirty = false; category = next; renderLibrary();
-  };
-  $("#status-filter").onchange = async event => {
-    const next = event.target.value; event.target.value = status;
-    if (dirty && !await confirmAction("切换状态会放弃未保存的编辑，继续？")) return;
-    dirty = false; status = next; renderLibrary();
-  };
+  $("#content").innerHTML = `<div class="filter-row"><div class="filter-field"><label for="library-scope">会话</label><select id="library-scope"><option value="all">全部会话</option>${(data.scopes || []).map(s => `<option value="${escape(s.id)}" ${libraryScope === s.id ? "selected" : ""}>${escape(s.label)} / ${escape(s.persona === "[%None]" ? "未设置人格" : s.persona)}</option>`).join("")}</select></div><div class="filter-field"><label for="kind-filter">类别</label><select id="kind-filter"><option value="all">全部类别</option>${Object.entries(kinds).map(([value, name]) => `<option value="${value}" ${category === value ? "selected" : ""}>${name}</option>`).join("")}</select></div><div class="filter-field"><label for="status-filter">状态</label><select id="status-filter">${Object.entries({pending:"待审核", active:"已生效", disabled:"已停用", rejected:"已拒绝", all:"全部状态"}).map(([value, name]) => `<option value="${value}" ${status === value ? "selected" : ""}>${name}</option>`).join("")}</select></div><span class="muted">${library?.total ?? traits.length} 条结果</span></div>
+    ${traits.length ? `<div class="library"><div class="trait-list" aria-label="学习条目">${traits.map(t => `<button type="button" class="trait-row" data-trait="${t.id}" aria-pressed="${selectedTrait === t.id}"><span class="row-meta"><span>${kinds[t.kind]}</span><span class="badge ${t.status}">${statuses[t.status]}</span></span><small class="trait-owner">${escape(t.label || data.scope?.label || "")} / ${escape((t.persona || data.scope?.persona) === "[%None]" ? "未设置人格" : (t.persona || data.scope?.persona || ""))}</small><strong>${escape(t.situation)}</strong><p>${escape(t.content)}</p><span class="row-meta">${t.evidence_count || t.evidence.length} 条证据 / ${t.support_count || 1} 批 · 置信度 ${Math.round(t.confidence * 100)}%</span></button>`).join("")}</div><article class="detail"><h2>${kinds[trait.kind]}</h2><p class="muted">所属会话：${escape(trait.label || data.scope?.label || "")} / ${escape((trait.persona || data.scope?.persona) === "[%None]" ? "未设置人格" : (trait.persona || data.scope?.persona || ""))}</p>${reviewHint}<form id="trait-form">${field("situation", "适用情境", trait.situation, "只在适合的情境里使用，不必每次重复。", {maxlength:160})}${field("content", "习惯内容", trait.content, "你可以在生效前调整表达；编辑不会自动改变审核状态。", {maxlength:350})}<button type="submit">保存编辑</button></form><div class="actions">${trait.status !== "active" ? '<button class="primary" data-review="active">批准生效</button>' : '<button data-review="disabled">停用这条</button>'}${trait.status === "pending" ? '<button class="danger" data-review="rejected">拒绝学习</button>' : '<button data-review="pending">移回待审核</button>'}</div><section class="evidence"><h3>积累与应用</h3><p class="muted">${trait.support_count || 1} 批独立素材，累计 ${trait.evidence_count || trait.evidence.length} 条证据。引用 ${trait.use_count || 0} 次；引用次数不代表模型采用或消息送达。${trait.manual ? " 人工决定已锁定，后续学习只补充证据。" : ""}</p><p class="muted">当前评价：${trait.rating === 1 ? "更合适" : trait.rating === -1 ? "不太合适" : "尚未评价"}</p><div class="actions" aria-label="习惯效果评价">${[[1,"更合适"],[-1,"不太合适"],[0,"清除评价"]].map(([value,label]) => `<button type="button" data-feedback="${value}" aria-pressed="${(trait.rating || 0) === value}">${label}</button>`).join("")}</div><p class="muted">评价调整后续排序；不合适的习惯也可直接停用。</p></section><div class="evidence"><h3>最近的学习来源</h3><p class="muted">最多展示最近 32 条摘录，累计证据数保留。</p>${trait.evidence.map(e => `<blockquote><p>${escape(e.text)}</p><small>${escape(e.sender)} · ${date(e.created)}</small></blockquote>`).join("")}</div></article></div>` : empty(status === "pending" ? "这里等待下一次发现" : "还没有这类学习结果", "素材积累后会自动批量学习，也可以点击「开始学习」。自动生效模式下，高置信度结果会进入「已生效」，其余结果仍等待审核。")}`;
+  $("#library-scope").value = libraryScope;
+  for (const [selector, current] of [["#library-scope", libraryScope], ["#kind-filter", category], ["#status-filter", status]]) {
+    $(selector).onchange = async event => {
+      const next = event.target.value; event.target.value = current;
+      if (dirty && !await confirmAction("切换筛选会放弃未保存的编辑，继续？")) return;
+      await guarded(async () => {
+        const previous = [libraryScope, category, status, libraryOffset];
+        dirty = false;
+        if (selector === "#library-scope") libraryScope = next;
+        else if (selector === "#kind-filter") category = next;
+        else status = next;
+        libraryOffset = 0;
+        try { await load(); }
+        catch (error) { [libraryScope, category, status, libraryOffset] = previous; renderLibrary(); throw error; }
+      });
+    };
+  }
+  if (library && library.total > 100) {
+    $("#content").insertAdjacentHTML("beforeend", `<div class="actions library-pages"><button id="library-prev" ${library.offset === 0 ? "disabled" : ""}>上一页</button><span class="muted">第 ${library.offset / 100 + 1} / ${Math.ceil(library.total / 100)} 页 · 每页最多 100 条</span><button id="library-next" ${library.offset + 100 >= library.total ? "disabled" : ""}>下一页</button></div>`);
+    for (const [id, step] of [["#library-prev", -100], ["#library-next", 100]]) $(id).onclick = async () => {
+      if (dirty && !await confirmAction("翻页会放弃未保存的编辑，继续？")) return;
+      await guarded(async () => {
+        const previous = libraryOffset; dirty = false; libraryOffset += step;
+        try { await load(); }
+        catch (error) { libraryOffset = previous; throw error; }
+      });
+    };
+  }
   for (const button of document.querySelectorAll("[data-trait]")) button.onclick = async () => { if (dirty && !await confirmAction("放弃当前未保存的编辑？")) return; dirty = false; selectedTrait = Number(button.dataset.trait); renderLibrary(); };
   if (trait) {
-    for (const button of document.querySelectorAll("[data-feedback]")) button.onclick = async () => { if (dirty && !await confirmAction("评价会放弃未保存的编辑，继续？")) return; mutate("feedback", {id:trait.id, rating:Number(button.dataset.feedback)}); };
-    $("#trait-form").onsubmit = async event => { event.preventDefault(); const form = event.currentTarget; await mutate("trait", {id:trait.id, situation:form.situation.value, content:form.content.value}); };
-    for (const button of document.querySelectorAll("[data-review]")) button.onclick = () => mutate("trait", {id:trait.id, status:button.dataset.review, situation:$("#field-situation").value, content:$("#field-content").value});
+    for (const button of document.querySelectorAll("[data-feedback]")) button.onclick = async () => { if (dirty && !await confirmAction("评价会放弃未保存的编辑，继续？")) return; mutate("feedback", {id:trait.id, rating:Number(button.dataset.feedback)}, trait.scope); };
+    $("#trait-form").onsubmit = async event => { event.preventDefault(); const form = event.currentTarget; await mutate("trait", {id:trait.id, situation:form.situation.value, content:form.content.value}, trait.scope); };
+    for (const button of document.querySelectorAll("[data-review]")) button.onclick = () => mutate("trait", {id:trait.id, status:button.dataset.review, situation:$("#field-situation").value, content:$("#field-content").value}, trait.scope);
   }
 }
 
@@ -136,6 +164,7 @@ function renderHistory() {
 function renderSettings() {
   const s = data.settings;
   $("#content").innerHTML = `<form id="settings-form"><div class="settings-grid">
+    <section class="settings-group debug-settings"><h2>调试日志</h2><p>在 AstrBot 日志中搜索「OvenHeart debug」查看本插件的处理过程。</p>${switchField("debug_enabled", "启用 Debug 模式", "完整输出实际注入内容、学习请求与响应、自检和检索筛选结果。包含聊天、人格和记忆摘录；仅在调试时开启。不会输出模型配置密钥或 HTTP 鉴权头。", s.debug_enabled)}</section>
     <section class="settings-group participation-settings"><h2>自主参与群聊</h2><p>根据最近聊天与已生效的习惯，决定参与、等待或旁观。直接唤醒、私聊和命令继续按宿主原有规则处理。自动回复使用 AstrBot 本地 Agent 运行器。</p><div class="two-col"><div>
       <div class="field"><label for="participation_mode">参与方式</label><select id="participation_mode" name="participation_mode"><option value="off" ${s.participation_mode === "off" ? "selected" : ""}>关闭自主参与</option><option value="observe" ${s.participation_mode === "observe" ? "selected" : ""}>仅观察，记录决策</option><option value="auto" ${s.participation_mode === "auto" ? "selected" : ""}>自动参与，交由宿主回复</option></select><small>建议先用「仅观察」检查决策。记录在「学习与参与」中。</small></div>
       <div class="number-fields">${field("participation_min_messages","最少新消息",s.participation_min_messages,"条；十分钟内保留最多 30 条上下文",{type:"number",min:1,max:30})}${field("participation_debounce","连续输入等待",s.participation_debounce,"秒；新输入会取消旧决策",{type:"number",min:0,max:10})}${field("participation_cooldown","回复冷却",s.participation_cooldown,"秒；直接唤醒的回复也会推迟自主参与",{type:"number",min:5,max:3600})}${field("participation_hourly_limit","每小时参与上限",s.participation_hourly_limit,"次；同群的隔离会话共享限额",{type:"number",min:1,max:120})}</div>
@@ -154,6 +183,7 @@ function renderSettings() {
     </section>
     <section class="settings-group"><h2>学习范围</h2><p>每个会话与人格单独积累。AstrBot 的会话开关、插件开关与白名单始终有效。</p>
       ${field("target_senders", "只向这些用户学习", s.target_senders.join("\n"), "每行一个用户 ID。留空学习所有人；指定后，旁人的邻近发言仅短暂用于理解语境，不入素材库或证据。", {maxlength:16000})}
+      ${field("blocked_senders", "不学习的用户（QQ 号）", (s.blocked_senders || []).join("\n"), "直接填写 QQ 号即可，每行一个，也支持空格、逗号分隔。黑名单优先于学习对象；不采集、不学习，也不作为学习上下文。已学到的习惯保留，可在学习库手动停用。", {maxlength:128000})}
       ${field("allowed_sessions", "允许学习与应用的会话", s.allowed_sessions.join("\n"), "每行一个完整 unified_msg_origin，可通过 AstrBot 的 /sid 获取。留空允许全部已启用会话。", {maxlength:32000})}
     </section>
     <section class="settings-group"><h2>记忆与表达</h2><p>记忆帮助理解来龙去脉；人格工坊只学习有原始聊天证据的习惯。</p>
@@ -177,7 +207,7 @@ function renderSettings() {
     for (const [key, value] of Object.entries(s)) {
       const input = form.elements.namedItem(key);
       if (!input) continue;
-      patch[key] = typeof value === "boolean" ? input.checked : typeof value === "number" ? Number(input.value) : Array.isArray(value) ? input.value.split("\n").map(v => v.trim()).filter(Boolean) : input.value.trim();
+      patch[key] = typeof value === "boolean" ? input.checked : typeof value === "number" ? Number(input.value) : Array.isArray(value) ? input.value.split(key === "blocked_senders" ? /[\s,，;；]+/ : "\n").map(v => v.trim()).filter(Boolean) : input.value.trim();
     }
     mutate("settings", patch);
   };
@@ -195,9 +225,9 @@ async function guarded(work, event) {
   finally { pending = false; controls.forEach(el => { if (el.isConnected) el.disabled = false; }); if (data) await load(false).catch(() => {}); }
 }
 
-async function mutate(action, payload = {}) {
+async function mutate(action, payload = {}, scope = selectedScope) {
   return guarded(async () => {
-    const result = await api("action", {action, scope:selectedScope, payload});
+    const result = await api("action", {action, scope, payload});
     notify(result.message || "已保存。");
     dirty = false;
     await load();
@@ -215,7 +245,7 @@ $("#refresh").onclick = async () => { if (!dirty || await confirmAction("刷新�
 $("#learn").onclick = async () => { if (!dirty || await confirmAction("开始学习会放弃当前未保存的编辑，继续？")) mutate("learn"); };
 for (const button of document.querySelectorAll("[data-tab]")) button.onclick = async () => {
   if (dirty && !await confirmAction("离开此页会放弃未保存的编辑，继续？")) return;
-  dirty = false; tab = button.dataset.tab; render();
+  dirty = false; tab = button.dataset.tab; if (tab === "library") await guarded(() => load()); else render();
 };
 window.addEventListener("beforeunload", event => { if (dirty) { event.preventDefault(); event.returnValue = ""; } });
 
@@ -237,7 +267,7 @@ async function start() {
   setInterval(async () => {
     if (pending || polling || document.hidden || !data) return;
     polling = true;
-    try { await load(!dirty && (tab === "history" || !!data.busy.length)); }
+    try { await load(!dirty && (tab === "history" || tab === "library" || !!data.busy.length)); }
     catch (error) { notify(error.message || "连接已中断，请刷新。", true); }
     finally { polling = false; }
   }, 5000);

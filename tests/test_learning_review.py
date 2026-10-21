@@ -768,3 +768,47 @@ async def test_relevance_ranking_preserves_an_older_human_rejection_outside_rece
     after = next(t for t in state["traits"] if t["id"] == target["id"])
     assert after["status"] == "rejected" and len(state["traits"]) == 49
     assert after["support_count"] == target["support_count"]
+
+
+async def test_debug_review_logs_actual_self_check_input_and_output(
+    plugin, monkeypatch
+):
+    from astrbot_plugin_ovenheart.main import logger
+
+    records = []
+    monkeypatch.setattr(logger, "info", lambda *args: records.append(args))
+    plugin.settings.update(debug_enabled=True, learning_review_enabled=True)
+
+    async def generate(**kwargs):
+        if kwargs.get("system_prompt") != LEARNING_REVIEW_SYSTEM:
+            return await completion(**kwargs)
+        payload = json.loads(kwargs["prompt"])
+        return SimpleNamespace(
+            completion_text=json.dumps(
+                {
+                    "approved_ids": [c["candidate_id"] for c in payload["candidates"]],
+                    "flagged": [],
+                }
+            )
+        )
+
+    plugin.context.llm_generate.side_effect = generate
+    scope = await sources(plugin)
+    assert (await plugin.learn(scope))["status"] == "success"
+    entries = [
+        (args[1], json.loads(args[2]))
+        for args in records
+        if args[0].startswith("OvenHeart debug")
+    ]
+    review = next(body for stage, body in entries if stage == "review_request")
+    actual = next(
+        call.kwargs
+        for call in plugin.context.llm_generate.await_args_list
+        if call.kwargs["system_prompt"] == LEARNING_REVIEW_SYSTEM
+    )
+    assert review["prompt"] == json.loads(actual["prompt"])
+    assert review["system"] == actual["system_prompt"]
+    assert any(
+        stage == "review_response" and json.loads(body["completion"])["approved_ids"]
+        for stage, body in entries
+    )
