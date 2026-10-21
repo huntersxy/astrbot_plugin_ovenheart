@@ -506,24 +506,23 @@ async def test_ungrounded_word_aborts_the_entire_batch_without_format_repair(plu
 
 async def test_schema_drift_gets_one_correction_with_original_evidence(plugin):
     scope = await sources(plugin)
-    valid = await completion(
-        **{
-            "prompt": json.dumps(
-                {"observations": await plugin.store.call("batch", scope, 30)}
+
+    async def generated(**kwargs):
+        payload = json.loads(kwargs["prompt"])
+        if payload["enabled_kinds"] != ["jargon"] and "format_error" not in payload:
+            return SimpleNamespace(
+                completion_text='说明：```json\n{"profile_updates": []}\n```'
             )
-        }
-    )
-    plugin.context.llm_generate.side_effect = [
-        SimpleNamespace(completion_text='说明：```json\n{"profile_updates": []}\n```'),
-        valid,
-        valid,
-    ]
+        return await completion(**kwargs)
+
+    plugin.context.llm_generate.side_effect = generated
     result = await plugin.learn(scope)
     assert result["status"] == "success" and result["count"] == 4
     assert plugin.context.llm_generate.await_count == 3
     first, second = [
         json.loads(call.kwargs["prompt"])
-        for call in plugin.context.llm_generate.await_args_list[:2]
+        for call in plugin.context.llm_generate.await_args_list
+        if json.loads(call.kwargs["prompt"])["enabled_kinds"] != ["jargon"]
     ]
     assert first["task"] and second["observations"] == first["observations"]
     assert "profile_updates" in second["format_error"]
@@ -537,7 +536,15 @@ async def test_repeated_bad_format_is_bounded_and_preserves_material(plugin):
     )
     result = await plugin.learn(scope)
     assert result["status"] == "error" and "自动纠正" in result["message"]
-    assert plugin.context.llm_generate.await_count == 2
+    requests = [
+        json.loads(c.kwargs["prompt"])
+        for c in plugin.context.llm_generate.await_args_list
+    ]
+    assert 2 <= len(requests) <= 4
+    for word_pass in (False, True):
+        phase = [r for r in requests if (r["enabled_kinds"] == ["jargon"]) == word_pass]
+        assert len(phase) <= 2
+        assert sum("format_error" in r for r in phase) <= 1
     assert (await plugin.store.call("state", scope))["scope"]["pending"] == 2
 
 
@@ -549,7 +556,12 @@ async def test_fabricated_evidence_never_triggers_format_repair(plugin):
     )
     result = await plugin.learn(scope)
     assert result["status"] == "error" and "证据" in result["message"]
-    assert plugin.context.llm_generate.await_count == 1
+    requests = [
+        json.loads(c.kwargs["prompt"])
+        for c in plugin.context.llm_generate.await_args_list
+    ]
+    assert 1 <= len(requests) <= 2
+    assert not any("format_error" in r for r in requests)
 
 
 async def test_application_is_not_usage_until_host_send_stage(plugin):

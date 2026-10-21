@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.16.0
+
+- Run the two independent extraction passes concurrently, then review their combined results in stable pass order. Raise the shared background batch budget to 180 seconds after observed review calls exhausted the former 90-second budget; retain per-pass format correction limits and single atomic commit. Disabled categories do not add requests.
+- Cancel and await remaining extraction tasks on failure or caller cancellation before recording the failed batch. Preserve all sources and keep self-check from starting on incomplete extraction.
+- Add phase timing to the isolated native evaluator and expose its provider timeout as a CLI parameter, defaulting to AstrBot's 120 seconds. Retain the previous 45-second failure and a successful sequential baseline using the host timeout; do not attribute timing differences solely to parallelism or claim a general success rate.
+
 ## 0.15.1
 
 - Give the learning reviewer the exact existing target of each explicit merge, including its meaning and conditions, so source-supported but unrelated proposals do not silently reinforce another habit. Preserve compatible paraphrases and evidence-backed local vocabulary refinement.

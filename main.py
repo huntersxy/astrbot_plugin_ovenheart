@@ -36,7 +36,7 @@ from .learning import (
 from .memory_bridge import MemoryBridge
 from .participation import ParticipationController
 from .retrieval import HabitRetriever, rank_traits
-from .settings import DEFAULTS, KINDS, validate_settings
+from .settings import DEFAULTS, KINDS, LEARNING_TIMEOUT_SECONDS, validate_settings
 from .store import Store
 
 PLUGIN_NAME = "astrbot_plugin_ovenheart"
@@ -1114,9 +1114,9 @@ class PersonaPlugin(Star):
             provider_id = settings[
                 "provider_id"
             ] or await self.context.get_current_chat_provider_id(selected["umo"])
-            deadline = time.monotonic() + 90
+            deadline = time.monotonic() + LEARNING_TIMEOUT_SECONDS
             base = json.loads(prompt)
-            traits = []
+            pass_inputs = []
             for word_pass in (False, True):
                 if (
                     not self.settings["enabled"]
@@ -1157,11 +1157,25 @@ class PersonaPlugin(Star):
                     payload["task"] += (
                         "\n本阶段只学习人格、表达与对话行为，不提取词汇；群内词汇将由另一个阶段独立分析。"
                     )
-                traits.extend(
-                    await self._learn_pass(
+                pass_inputs.append((payload, pass_settings, pass_known))
+            pass_tasks = [
+                asyncio.create_task(
+                    self._learn_pass(
                         payload, batch, pass_settings, pass_known, provider_id, deadline
                     )
                 )
+                for payload, pass_settings, pass_known in pass_inputs
+            ]
+            try:
+                results = await asyncio.gather(*pass_tasks)
+            finally:
+                # A failed phase must not leave its peer using the provider in the background.
+                for task in pass_tasks:
+                    if not task.done():
+                        task.cancel()
+                await asyncio.gather(*pass_tasks, return_exceptions=True)
+            # Preserve pass order even when vocabulary finishes before style learning.
+            traits = [trait for result in results for trait in result]
             if (
                 self.settings["learning_review_enabled"]
                 != settings["learning_review_enabled"]
@@ -1254,9 +1268,7 @@ class PersonaPlugin(Star):
             if isinstance(exc, ValueError):
                 message = str(exc)
             elif isinstance(exc, asyncio.TimeoutError):
-                message = (
-                    "学习模型请求超时（90 秒），素材已保留；请检查模型连接后重试。"
-                )
+                message = f"学习模型请求超时（{LEARNING_TIMEOUT_SECONDS} 秒），素材已保留；请检查模型连接后重试。"
             else:
                 message = "学习模型调用失败，素材已保留；请检查 AstrBot 模型配置、余额与网络连接。"
             logger.warning("Persona learning failed (%s)", type(exc).__name__)

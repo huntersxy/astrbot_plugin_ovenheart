@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+LEARNING_TIMEOUT_SECONDS = 180
+
 DEFAULTS = {
     "enabled": True,
     "learning_enabled": True,

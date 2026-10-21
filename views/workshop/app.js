@@ -144,7 +144,7 @@ function renderSettings() {
     <section class="settings-group"><h2>学习与生效</h2><p>可以先审核，也可以让证据充足的结果自动加入习惯。</p>
       ${switchField("enabled", "启用人格工坊", "关闭后停止采集、学习和应用", s.enabled)}${switchField("learning_enabled", "启用素材采集与后台学习", "关闭后继续保留并应用已生效的习惯", s.learning_enabled)}${switchField("apply_enabled", "应用人格与学习结果", "可先积累，准备好后再启用", s.apply_enabled)}
       <div class="field"><label for="activation_mode">新结果的生效方式</label><select id="activation_mode" name="activation_mode"><option value="review" ${s.activation_mode === "review" ? "selected" : ""}>先审核后生效</option><option value="auto" ${s.activation_mode === "auto" ? "selected" : ""}>高置信度自动生效</option></select><small>影响新结果与尚未人工决定的条目；人工审核、拒绝和停用状态保持不变。</small></div>
-      ${switchField("learning_review_enabled", "学习结果入库自检", "用学习模型核对原文与使用条件。未通过的新候选转待审，未通过的更新不改旧条目；自检失败保留整批素材。通常增加一次后台调用，共享原有90秒预算。", s.learning_review_enabled)}
+      ${switchField("learning_review_enabled", "学习结果入库自检", "用学习模型核对原文与使用条件。未通过的新候选转待审，未通过的更新不改旧条目；自检失败保留整批素材。通常增加一次后台调用，提取与自检合计最多180秒。", s.learning_review_enabled)}
       <div class="number-fields">${field("auto_confidence", "自动生效置信度", s.auto_confidence, "由模型评估，不等同于统计概率。", {type:"number", min:.5, max:1, step:.01})}${field("min_evidence", "每条最少证据数", s.min_evidence, "不足时不保存学习条目。", {type:"number", min:1, max:10})}</div>
       ${Object.entries(kinds).map(([key, label]) => switchField(`learn_${key}`, `学习${label}`, "", s[`learn_${key}`])).join("")}
     </section>
