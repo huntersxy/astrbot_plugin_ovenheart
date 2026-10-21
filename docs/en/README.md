@@ -41,6 +41,8 @@ Library ratings are reversible choices (helpful, less helpful, clear), not infer
 
 ## Local native-core simulation (0.9)
 
+A [local comparison with MaiBot's native expression selector](../evaluation/maibot.md) now covers both its no-embedding sampling path and a genuinely built vector index. Both hosts use the same synthetic, preloaded bank and chat model. MaiBot's requests included its system selection instructions, but this endpoint returned conversational text instead of IDs. OvenHeart produced valid ID selections and met 11 of 12 applicability checks; one inappropriate listening habit remained selected during invited game banter. This primarily demonstrates endpoint compatibility, not whole-bot personality quality. Learning and final replies are outside that comparison.
+
 `scripts/evaluate_native.py` boots a real AstrBot core in a temporary data directory, loads a byte-checked copy of this plugin and keeps the nine native pipeline stages, permissions and conversation services. Only the platform send method collects results locally. It does not connect QQ, open a Dashboard HTTP port or change the user's host data.
 
 `--smoke` needs no keys. It checks stripped native commands stay out of learning and exercises the actual Panel ASGI routes for authentication, settings, View assets and scoped page tokens. Full mode reads chat/SiliconFlow credentials from environment variables and runs learning, autonomous generation, a direct wake and a disabled-session check. The scheduled learning worker is cancelled only to trigger explicit, bounded batches; actual learning and generation remain native. Current acceptance follows the user's choice to use local simulation.
