@@ -39,6 +39,14 @@ For SiliconFlow, configure native `openai_embedding` with `embedding_api_base=ht
 
 Library ratings are reversible choices (helpful, less helpful, clear), not inferred user approval. History records prompt references reaching the host send stage, which does not establish delivery or model compliance. Usage counts do not increase confidence. Old habits gradually lose ranking weight without automatic deletion.
 
+## Consolidation and independent batches (0.7)
+
+Similar spelling does not establish the same meaning or compatible conditions. Consolidation uses exact aliases or an explicit `merge_id` pointing to a same-kind habit offered to the learning model. Text similarity no longer merges entries automatically. Model semantic judgments can still be wrong; review and human edits remain authoritative. Without a supported merge, separate candidates can remain for review.
+
+Each successful run adds at most one independent support to a habit. Distinct evidence still accumulates. Same-run candidate confidence is averaged before combining it with previous independent batches. Automatic activation uses the final aggregate; an early high-scoring candidate cannot prematurely activate an otherwise pending result. Existing active states and human decisions are preserved.
+
+Jargon refinement still occurs at independent-batch counts 2, 4, 8 and 16, without advancing multiple stages for repeated candidates in one response. No schema migration or historical recount is performed: legacy records do not contain enough information to reconstruct any past overcount reliably. See [multi-batch verification](../evaluation/evolution.md) for deterministic regressions and actual-provider replay.
+
 ## Coordination across isolated group sessions (0.6)
 
 AstrBot may assign each group member a separate native session. Learning, persona and model context remain scoped to that session. OvenHeart shares only cooldown, rolling quota and the latest event marker for the same platform instance, bot account and physical group. Other sessions’ message bodies and habits are not transferred.

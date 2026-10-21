@@ -175,6 +175,96 @@ async def test_jargon_evidence_excerpts_stay_bounded(store):
     assert habit["support_count"] == 20
 
 
+@pytest.mark.parametrize("field", ["situation", "content"])
+async def test_similar_text_does_not_merge_opposite_conditions_or_actions(store, field):
+    first = "对方明确表示当前需要建议并愿意继续讨论时"
+    opposite = "对方明确表示当前不需要建议并愿意继续讨论时"
+    await batch(store, 1, **{field: first})
+    state = await batch(store, 2, **{field: opposite})
+    assert len(state["traits"]) == 2
+    assert {t[field] for t in state["traits"]} == {first, opposite}
+    assert all(t["support_count"] == 1 for t in state["traits"])
+
+
+@pytest.mark.parametrize("existing", [False, True])
+@pytest.mark.parametrize("auto", [False, True])
+async def test_duplicate_candidates_in_one_run_count_as_one_independent_batch(
+    store, existing, auto
+):
+    if existing:
+        await batch(store, 1)
+    for number in range(4):
+        await store.call(
+            "capture",
+            SCOPE,
+            "qq:GroupMessage:1",
+            "default",
+            "测试",
+            f"new:{number}",
+            "user",
+            "好家伙，又被你发现了",
+            DEFAULTS,
+        )
+    sources = await store.call("batch", SCOPE, 30)
+    traits = [
+        {
+            "kind": "expression",
+            "situation": "轻松接话时",
+            "content": "简短反问接住玩笑",
+            "confidence": confidence,
+            "evidence": sources[index : index + 2],
+        }
+        for index, confidence in ((0, 0.99), (2, 0.61))
+    ]
+    run = await store.call("start_run", SCOPE)
+    settings = DEFAULTS | {"activation_mode": "auto" if auto else "review"}
+    await store.call("finish_run", run, SCOPE, sources, traits, settings, "")
+    habit = (await store.call("state", SCOPE))["traits"][0]
+    assert habit["support_count"] == 1 + existing
+    assert habit["evidence_count"] == 4 + 2 * existing
+    assert habit["confidence"] == pytest.approx(
+        (0.95 * existing + 0.8) / (1 + existing)
+    )
+    assert habit["status"] == "pending"
+
+
+async def test_duplicate_jargon_candidates_do_not_advance_multiple_refinement_stages(
+    store,
+):
+    state = await batch(store, 1, kind="jargon", content="鸽子灯：约定延后")
+    identifier = state["traits"][0]["id"]
+    for number in range(6):
+        await store.call(
+            "capture",
+            SCOPE,
+            "qq:GroupMessage:1",
+            "default",
+            "测试",
+            f"jargon:{number}",
+            "user",
+            "鸽子灯亮了，这次约定又延后了",
+            DEFAULTS,
+        )
+    sources = await store.call("batch", SCOPE, 30)
+    traits = [
+        {
+            "kind": "jargon",
+            "situation": "约好的活动推迟时",
+            "content": f"鸽子灯：约定延后，同批释义{number}",
+            "confidence": 0.95,
+            "merge_id": identifier,
+            "evidence": sources[number * 2 : number * 2 + 2],
+        }
+        for number in range(3)
+    ]
+    run = await store.call("start_run", SCOPE)
+    await store.call("finish_run", run, SCOPE, sources, traits, DEFAULTS, "")
+    habit = (await store.call("state", SCOPE))["traits"][0]
+    assert habit["support_count"] == 2 and habit["meaning_stage"] == 1
+    assert habit["evidence_count"] == 8
+    assert habit["content"].endswith("同批释义0")
+
+
 async def test_legacy_import_includes_uncheckpointed_wal(tmp_path):
     legacy = Store(tmp_path / "old.sqlite3")
     await legacy.call("initialize")

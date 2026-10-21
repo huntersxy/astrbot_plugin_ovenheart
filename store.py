@@ -7,7 +7,6 @@ import hashlib
 import json
 import sqlite3
 import time
-from difflib import SequenceMatcher
 from pathlib import Path
 
 from .settings import PROFILE_DEFAULTS
@@ -526,7 +525,8 @@ class Store:
         """
         now = time.time()
         added = 0
-        reinforced = 0
+        reinforced = set()
+        batch_support = {}
         run = db.execute(
             "SELECT status FROM runs WHERE id=? AND scope=?", (run_id, scope)
         ).fetchone()
@@ -598,27 +598,8 @@ class Store:
                     ).fetchone()
                     if target is None:
                         raise ValueError("合并目标已不存在，素材保留，请重新学习。")
-                if target is None:
-                    for existing in db.execute(
-                        "SELECT * FROM traits WHERE scope=? AND kind=? ORDER BY updated DESC LIMIT 1000",
-                        (scope, trait["kind"]),
-                    ):
-                        if (
-                            SequenceMatcher(
-                                None,
-                                existing["content"].casefold(),
-                                trait["content"].casefold(),
-                            ).ratio()
-                            >= 0.92
-                            and SequenceMatcher(
-                                None,
-                                existing["situation"].casefold(),
-                                trait["situation"].casefold(),
-                            ).ratio()
-                            >= 0.88
-                        ):
-                            target = existing
-                            break
+                # Similar spelling cannot establish compatible conditions or meaning.
+                # Only exact aliases or an explicitly offered model merge may consolidate.
                 if target is not None:
                     db.execute(
                         "INSERT OR IGNORE INTO trait_aliases VALUES (?, ?, ?)",
@@ -640,16 +621,28 @@ class Store:
                             new_evidence.append(item)
                     if not new_evidence:
                         continue
-                    count = target["support_count"] + 1
+                    # Multiple candidates from one response are one independent batch.
+                    support = batch_support.setdefault(
+                        target["id"],
+                        {
+                            "count": target["support_count"],
+                            "confidence": target["confidence"],
+                            "scores": [],
+                            "status": target["status"],
+                        },
+                    )
+                    scores = support["scores"]
+                    scores.append(trait["confidence"])
+                    count = support["count"] + 1
                     confidence = (
-                        target["confidence"] * target["support_count"]
-                        + trait["confidence"]
+                        support["confidence"] * support["count"]
+                        + sum(scores) / len(scores)
                     ) / count
                     stage = target["meaning_stage"]
                     situation, content, status = (
                         target["situation"],
                         target["content"],
-                        target["status"],
+                        support["status"],
                     )
                     # Refine jargon only as independent batches accumulate: 2, 4, 8, 16.
                     if (
@@ -679,6 +672,7 @@ class Store:
                                 or situation != target["situation"]
                             ):
                                 status = "pending"
+                                support["status"] = status
                     if (
                         not target["manual"]
                         and status == "pending"
@@ -704,7 +698,7 @@ class Store:
                             target["id"],
                         ),
                     )
-                    reinforced += 1
+                    reinforced.add(target["id"])
                     continue
                 status = (
                     "active"
@@ -730,6 +724,12 @@ class Store:
                 )
                 if cursor.rowcount:
                     added += 1
+                    batch_support[cursor.lastrowid] = {
+                        "count": 0,
+                        "confidence": 0,
+                        "scores": [trait["confidence"]],
+                        "status": "pending",
+                    }
                     db.execute(
                         "UPDATE traits SET evidence_count=?, last_seen=? WHERE id=?",
                         (len(trait["evidence"]), now, cursor.lastrowid),
@@ -749,7 +749,7 @@ class Store:
                 now,
                 added,
                 error
-                or f"分析 {len(messages)} 条素材，新增 {added} 条，补充证据 {reinforced} 条。",
+                or f"分析 {len(messages)} 条素材，新增 {added} 条，补充证据 {len(reinforced)} 条。",
                 memory,
                 run_id,
             ),

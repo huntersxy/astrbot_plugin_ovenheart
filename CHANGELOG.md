@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.7.0
+
+- Consolidate habits only through exact aliases or model-specified scoped targets; remove spelling-based merges that collapsed opposing conditions or meanings.
+- Count one independent support per habit per learning run, retaining distinct evidence and averaging same-run confidence before combining batches. Recheck automatic activation using the final aggregate without overriding prior human decisions.
+- Keep jargon refinement at independent-batch thresholds even when a response repeats the same word. Add multi-batch native-provider replay with configurable corpus and delivery modes.
+
 ## 0.6.0
 
 - Coordinate autonomous admission, cooldown and rolling quota across per-member native sessions in the same physical group. Keep learning, persona and chat bodies isolated.
