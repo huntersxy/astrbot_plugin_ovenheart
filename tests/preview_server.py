@@ -33,6 +33,7 @@ from astrbot_plugin_ovenheart.main import (  # noqa: E402
     SessionPluginManager,
     SessionServiceManager,
 )
+from astrbot_plugin_ovenheart.settings import SHARED_SCOPE  # noqa: E402
 
 
 @asynccontextmanager
@@ -112,7 +113,7 @@ async def lifespan(app):
             )
         await plugin.store.call(
             "mutate",
-            scope,
+            SHARED_SCOPE,
             "profile",
             {
                 "identity": "温和、有自己的主见，喜欢轻松自然的日常聊天。",
@@ -191,6 +192,10 @@ async def lifespan(app):
             None,
             None,
             review,
+            None,
+            None,
+            True,
+            False,
         )
         for i, text in enumerate(observations, start=10):
             await plugin.store.call(
@@ -258,6 +263,11 @@ async def lifespan(app):
                 | {
                     "evidence": [
                         {k: m[k] for k in ("id", "sender", "text", "created")}
+                        | {
+                            "scope": second_scope,
+                            "label": "烘焙讨论",
+                            "persona": "工作时的自己",
+                        }
                         for m in second_batch
                     ],
                     "situation": "讨论烘焙步骤时",
@@ -266,6 +276,14 @@ async def lifespan(app):
             ],
             plugin.settings | {"learning_enabled": True},
             "演示数据",
+            "",
+            None,
+            None,
+            None,
+            None,
+            None,
+            True,
+            False,
         )
         try:
             yield

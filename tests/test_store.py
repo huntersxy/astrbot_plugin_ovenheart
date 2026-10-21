@@ -4,8 +4,10 @@ import asyncio
 
 import pytest
 
-from astrbot_plugin_ovenheart.settings import DEFAULTS
+from astrbot_plugin_ovenheart.settings import DEFAULTS as BASE_DEFAULTS
 from astrbot_plugin_ovenheart.store import Store
+
+DEFAULTS = BASE_DEFAULTS | {"session_isolation": True}
 
 
 @pytest.fixture

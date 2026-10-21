@@ -8,7 +8,7 @@ from astrbot.api import logger
 from astrbot.api.web import request
 
 from .learning import build_guidance
-from .settings import PROFILE_DEFAULTS, validate_settings
+from .settings import PROFILE_DEFAULTS, SHARED_SCOPE, validate_settings
 
 
 class PageAPI:
@@ -45,13 +45,16 @@ class PageAPI:
             request.query.get("scope"),
             self.plugin.settings["target_senders"],
             self.plugin.settings["blocked_senders"],
+            not self.plugin.settings["session_isolation"],
         )
         state.update(
             settings=self.plugin.settings,
             memory=self.plugin.memory.status(),
             busy=list(self.plugin.busy),
             retrieval=self.plugin.retriever.status.get(
-                request.query.get("scope"),
+                request.query.get("scope")
+                if self.plugin.settings["session_isolation"]
+                else SHARED_SCOPE,
                 {
                     "mode": "idle",
                     "message": "真实回复后显示检索状态；免费预览使用文字相关性。",
@@ -115,13 +118,27 @@ class PageAPI:
                 self.plugin.learning_context.clear()
                 self.plugin.participation.close()
                 return {"status": "ok", "data": {"message": "学习设置已保存。"}}
-            scope = body.get("scope")
+            scope = (
+                SHARED_SCOPE
+                if operation == "profile"
+                and not self.plugin.settings["session_isolation"]
+                else body.get("scope")
+            )
+            if operation == "profile" and (
+                ("effect_scope" in body and body["effect_scope"] != scope)
+                or (self.plugin.settings["session_isolation"] and scope == SHARED_SCOPE)
+            ):
+                raise ValueError("人格作用范围已改变，请刷新底稿后重新编辑。")
             if not isinstance(scope, str) or len(scope) != 24:
                 raise ValueError("请先选择会话。")
             state = await self.plugin.store.call("state", scope)
             if not state["scope"]:
                 raise ValueError("当前会话不存在。")
             if operation == "learn":
+                if scope == SHARED_SCOPE:
+                    raise ValueError(
+                        "请选择实际来源会话后开始学习；学习结果会按当前模式生效。"
+                    )
                 if self.plugin.busy:
                     raise ValueError("已有学习任务正在执行，请等待完成。")
                 self.plugin.track(self.plugin.learn(scope))
@@ -175,7 +192,10 @@ class PageAPI:
             else:
                 raise ValueError("不支持的操作，请刷新页面后重试。")
             await self.plugin.store.call("mutate", scope, operation, payload)
-            if operation in ("clear_messages", "profile", "restore"):
+            if scope == SHARED_SCOPE and operation in ("profile", "restore"):
+                self.plugin.learning_context.clear()
+                self.plugin.participation.close()
+            elif operation in ("clear_messages", "profile", "restore"):
                 self.plugin.learning_context.pop(scope, None)
             if operation in ("profile", "restore"):
                 window = self.plugin.participation.windows.get(scope)
@@ -208,11 +228,15 @@ class PageAPI:
                 or not isinstance(body.get("query", ""), str)
             ):
                 raise ValueError("请选择会话并输入有效的预览文本。")
-            state = await self.plugin.store.call("guidance", body["scope"])
+            state = await self.plugin.store.call(
+                "guidance", body["scope"], not self.plugin.settings["session_isolation"]
+            )
             if not state["scope"]:
                 raise ValueError("请先选择已有会话。")
             selection = await self.plugin.retriever.select(
-                body["scope"],
+                body["scope"]
+                if self.plugin.settings["session_isolation"]
+                else SHARED_SCOPE,
                 state["traits"],
                 body.get("query", "")[:1200],
                 self.plugin.settings,

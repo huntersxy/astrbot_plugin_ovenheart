@@ -403,11 +403,12 @@ class HabitRetriever:
         payload = {
             "task": SELECTION_SYSTEM,
             "identity_anchor": identity[:6000],
-            "conversation": query[:2400],
             "max_selected": maximum,
             "candidates": [
-                {k: t[k] for k in ("id", "kind", "situation", "content")} for t in pool
+                {k: t[k] for k in ("id", "kind", "situation", "content")}
+                for t in sorted(pool, key=lambda t: t["id"])
             ],
+            "conversation": query[:2400],
         }
         response = await asyncio.wait_for(
             self.context.llm_generate(

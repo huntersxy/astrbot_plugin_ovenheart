@@ -9,7 +9,7 @@ import sqlite3
 import time
 from pathlib import Path
 
-from .settings import PROFILE_DEFAULTS
+from .settings import KINDS, PROFILE_DEFAULTS, SHARED_SCOPE
 
 
 class Store:
@@ -132,6 +132,10 @@ class Store:
                 scope TEXT PRIMARY KEY, last_reply REAL NOT NULL DEFAULT 0
             );
         """)
+        db.execute(
+            "INSERT OR IGNORE INTO scopes VALUES (?, '', '所有人格', '全会话共用', ?, ?)",
+            (SHARED_SCOPE, json.dumps(PROFILE_DEFAULTS), time.time()),
+        )
         if "room" not in {r[1] for r in db.execute("PRAGMA table_info(decisions)")}:
             db.execute("ALTER TABLE decisions ADD COLUMN room TEXT NOT NULL DEFAULT ''")
         db.execute(
@@ -243,9 +247,10 @@ class Store:
             return False
         if sender in settings["blocked_senders"]:
             return False
+        profile_scope = scope if settings["session_isolation"] else SHARED_SCOPE
         if context_only:
             row = db.execute(
-                "SELECT profile FROM scopes WHERE id=?", (scope,)
+                "SELECT profile FROM scopes WHERE id=?", (profile_scope,)
             ).fetchone()
             return not row or json.loads(row[0])["learning_enabled"]
         db.execute(
@@ -253,7 +258,9 @@ class Store:
             (scope, umo, persona, label, json.dumps(PROFILE_DEFAULTS), now),
         )
         profile = json.loads(
-            db.execute("SELECT profile FROM scopes WHERE id=?", (scope,)).fetchone()[0]
+            db.execute(
+                "SELECT profile FROM scopes WHERE id=?", (profile_scope,)
+            ).fetchone()[0]
         )
         if not profile["learning_enabled"]:
             return False
@@ -271,7 +278,9 @@ class Store:
         )
         return cursor.rowcount == 1
 
-    def state(self, db, scope=None, target_senders=None, blocked_senders=None):
+    def state(
+        self, db, scope=None, target_senders=None, blocked_senders=None, shared=False
+    ):
         """Load the bounded dashboard state or one scope's detail.
 
         Args:
@@ -279,6 +288,7 @@ class Store:
             scope: Optional selected scope.
             target_senders: Current learning targets for pending-material counts.
             blocked_senders: Excluded users, overriding learning targets.
+            shared: Read the shared profile and learning space for this source.
 
         Returns:
             A serializable dashboard state.
@@ -310,8 +320,20 @@ class Store:
         ]
         for item in scopes:
             item["profile"] = json.loads(item["profile"])
+        common = next(item for item in scopes if item["id"] == SHARED_SCOPE)
+        all_scopes = scopes
+        scopes = [item for item in scopes if item["id"] != SHARED_SCOPE]
+        if shared:
+            scopes = [item | {"profile": common["profile"]} for item in scopes]
         result = {
             "scopes": scopes,
+            "shared_scope": common,
+            "effect_scope": SHARED_SCOPE if shared else scope,
+            "active_count": db.execute(
+                "SELECT COUNT(*) FROM traits WHERE status='active' AND (scope=? OR ?)",
+                (scope, shared),
+            ).fetchone()[0],
+            "review_count": sum(item["review_count"] for item in all_scopes),
             "scope": None,
             "traits": [],
             "runs": [],
@@ -320,13 +342,18 @@ class Store:
             "decisions": [],
         }
         selected = next((s for s in scopes if s["id"] == scope), None)
+        if scope == SHARED_SCOPE or (shared and not scopes):
+            selected = common
+        trait_scope = SHARED_SCOPE if shared else scope
+        if shared and selected:
+            selected = selected | {"profile": common["profile"]}
         if selected:
             result["scope"] = selected
             result["traits"] = [
                 dict(row)
                 for row in db.execute(
                     "SELECT * FROM traits WHERE scope=? ORDER BY updated DESC LIMIT 1000",
-                    (scope,),
+                    (trait_scope,),
                 )
             ]
             for trait in result["traits"]:
@@ -341,8 +368,8 @@ class Store:
             result["revisions"] = [
                 dict(row)
                 for row in db.execute(
-                    "SELECT id, action, created FROM revisions WHERE scope=? ORDER BY id DESC LIMIT 30",
-                    (scope,),
+                    "SELECT id, scope, action, created FROM revisions WHERE scope=? ORDER BY id DESC LIMIT 30",
+                    (trait_scope,),
                 )
             ]
             result["applications"] = [
@@ -408,8 +435,8 @@ class Store:
             candidates = [
                 candidate
                 for row in db.execute(
-                    "SELECT review FROM runs WHERE scope=? ORDER BY id DESC LIMIT 30",
-                    (owner,),
+                    "SELECT review FROM runs WHERE scope=? OR ?=? ORDER BY id DESC LIMIT 30",
+                    (owner, owner, SHARED_SCOPE),
                 )
                 for candidate in json.loads(row["review"]).get("candidates", [])
             ]
@@ -592,24 +619,28 @@ class Store:
             )
         ]
 
-    def guidance(self, db, scope):
+    def guidance(self, db, scope, shared=False):
         """Load only the fields needed on the reply path, excluding evidence bodies.
 
         Args:
             db: Open database connection.
-            scope: Session/persona key.
+            scope: Source session/persona key.
+            shared: Use the common profile and all existing active habits.
 
         Returns:
             Profile and compact ranking records, without dashboard history.
         """
-        row = db.execute("SELECT profile FROM scopes WHERE id=?", (scope,)).fetchone()
+        row = db.execute(
+            "SELECT profile FROM scopes WHERE id=?",
+            (SHARED_SCOPE if shared else scope,),
+        ).fetchone()
         return {
             "scope": {"profile": json.loads(row[0])} if row else None,
             "traits": [
                 dict(t)
                 for t in db.execute(
-                    "SELECT id,kind,situation,content,confidence,status,created,updated,support_count,evidence_count,last_seen,use_count,rating FROM traits WHERE scope=? AND status='active' ORDER BY updated DESC LIMIT 1000",
-                    (scope,),
+                    "SELECT id,kind,situation,content,confidence,status,created,updated,support_count,evidence_count,last_seen,use_count,rating FROM traits WHERE (scope=? OR ?) AND status='active' ORDER BY updated DESC LIMIT 1000",
+                    (scope, shared),
                 )
             ],
         }
@@ -644,6 +675,8 @@ class Store:
         review=None,
         expected_review_enabled=None,
         expected_blocked=None,
+        shared=False,
+        expected_isolation=None,
     ):
         """Commit candidates and consume exactly the successful batch atomically.
 
@@ -661,10 +694,13 @@ class Store:
             review: Server-assembled semantic review audit, without provider secrets.
             expected_review_enabled: Review switch captured before generation.
             expected_blocked: Blacklist captured before generation.
+            shared: Commit traits into the common space, keeping source rows isolated.
+            expected_isolation: Mode captured before generation.
 
         Returns:
             Count of newly inserted candidates.
         """
+        trait_scope = SHARED_SCOPE if shared else scope
         now = time.time()
         added = 0
         reinforced = set()
@@ -678,6 +714,13 @@ class Store:
             return 0
         if not error:
             settings = settings | self.settings(db)
+            if (
+                expected_isolation is not None
+                and settings["session_isolation"] != expected_isolation
+            ):
+                raise ValueError("会话隔离模式在学习期间已修改，结果未保存，素材保留。")
+            if not any(settings[f"learn_{kind}"] for kind in KINDS):
+                raise ValueError("全部学习类别已关闭，结果未保存，素材保留。")
             if (
                 expected_review_enabled is not None
                 and settings["learning_review_enabled"] != expected_review_enabled
@@ -696,7 +739,7 @@ class Store:
                 raise ValueError("学习黑名单在学习期间已修改，旧结果未保存，素材保留。")
             profile = json.loads(
                 db.execute(
-                    "SELECT profile FROM scopes WHERE id=?", (scope,)
+                    "SELECT profile FROM scopes WHERE id=?", (trait_scope,)
                 ).fetchone()[0]
             )
             if (
@@ -722,7 +765,7 @@ class Store:
                 if expected is not None:
                     current = db.execute(
                         "SELECT * FROM traits WHERE scope=? AND id=?",
-                        (scope, expected["id"]),
+                        (trait_scope, expected["id"]),
                     ).fetchone()
                     if current is None or any(
                         current[key] != value for key, value in expected.items()
@@ -736,17 +779,17 @@ class Store:
                     "traits": [
                         dict(t)
                         for t in db.execute(
-                            "SELECT * FROM traits WHERE scope=?", (scope,)
+                            "SELECT * FROM traits WHERE scope=?", (trait_scope,)
                         )
                     ],
                 }
                 db.execute(
                     "INSERT INTO revisions(scope, action, snapshot, created) VALUES (?, 'learning', ?, ?)",
-                    (scope, json.dumps(snapshot, ensure_ascii=False), now),
+                    (trait_scope, json.dumps(snapshot, ensure_ascii=False), now),
                 )
                 db.execute(
                     "DELETE FROM revisions WHERE scope=? AND id NOT IN (SELECT id FROM revisions WHERE scope=? ORDER BY id DESC LIMIT 30)",
-                    (scope, scope),
+                    (trait_scope, trait_scope),
                 )
             for trait in traits:
                 fingerprint = hashlib.sha256(
@@ -761,12 +804,12 @@ class Store:
                 ).hexdigest()
                 target = db.execute(
                     "SELECT t.* FROM traits t JOIN trait_aliases a ON a.trait_id=t.id WHERE a.scope=? AND a.fingerprint=?",
-                    (scope, fingerprint),
+                    (trait_scope, fingerprint),
                 ).fetchone()
                 if target is None and trait.get("merge_id") is not None:
                     target = db.execute(
                         "SELECT * FROM traits WHERE scope=? AND id=? AND kind=?",
-                        (scope, trait["merge_id"], trait["kind"]),
+                        (trait_scope, trait["merge_id"], trait["kind"]),
                     ).fetchone()
                     if target is None:
                         raise ValueError("合并目标已不存在，素材保留，请重新学习。")
@@ -787,19 +830,25 @@ class Store:
                         continue
                     db.execute(
                         "INSERT OR IGNORE INTO trait_aliases VALUES (?, ?, ?)",
-                        (scope, fingerprint, target["id"]),
+                        (trait_scope, fingerprint, target["id"]),
                     )
                     # Human decisions are authoritative, even for paraphrased candidates.
                     if target["status"] in ("rejected", "disabled"):
                         continue
                     evidence = json.loads(target["evidence"])
                     keys = {
-                        e.get("source_id") or f"{e['id']}:{e['created']}"
+                        (
+                            e.get("scope") or target["scope"],
+                            e.get("source_id") or f"{e['id']}:{e['created']}",
+                        )
                         for e in evidence
                     }
                     new_evidence = []
                     for item in trait["evidence"]:
-                        key = item.get("source_id") or f"{item['id']}:{item['created']}"
+                        key = (
+                            item.get("scope") or scope,
+                            item.get("source_id") or f"{item['id']}:{item['created']}",
+                        )
                         if key not in keys:
                             keys.add(key)
                             new_evidence.append(item)
@@ -895,7 +944,7 @@ class Store:
                 cursor = db.execute(
                     "INSERT OR IGNORE INTO traits(scope, kind, situation, content, confidence, evidence, status, fingerprint, created, updated) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     (
-                        scope,
+                        trait_scope,
                         trait["kind"],
                         trait["situation"],
                         trait["content"],
@@ -921,7 +970,7 @@ class Store:
                     )
                     db.execute(
                         "INSERT OR IGNORE INTO trait_aliases VALUES (?, ?, ?)",
-                        (scope, fingerprint, cursor.lastrowid),
+                        (trait_scope, fingerprint, cursor.lastrowid),
                     )
             db.executemany(
                 "UPDATE messages SET consumed=1 WHERE scope=? AND id=?",
@@ -971,12 +1020,12 @@ class Store:
         return {
             r["trait_id"]: {"digest": r["digest"], "vector": json.loads(r["vector"])}
             for r in db.execute(
-                "SELECT e.* FROM embeddings e JOIN traits t ON t.id=e.trait_id WHERE provider=? AND t.scope=?",
-                (provider, scope),
+                "SELECT e.* FROM embeddings e JOIN traits t ON t.id=e.trait_id WHERE provider=? AND (t.scope=? OR ?=?)",
+                (provider, scope, scope, SHARED_SCOPE),
             )
         }
 
-    def applied(self, db, scope, event_key, ids, mode):
+    def applied(self, db, scope, event_key, ids, mode, shared=False):
         """Record delivery once, without treating exposure as positive feedback.
 
         Args:
@@ -985,6 +1034,7 @@ class Store:
             event_key: Unique delivery identity shared by repeated hooks.
             ids: Habits that fit the actual prompt budget.
             mode: Retrieval mode used for selection.
+            shared: Whether the actual injected habits came from the common pool.
 
         Returns:
             Whether a new delivery was recorded.
@@ -993,7 +1043,8 @@ class Store:
         valid = [
             r[0]
             for r in db.execute(
-                "SELECT id FROM traits WHERE scope=? AND status='active'", (scope,)
+                "SELECT id FROM traits WHERE (scope=? OR ?) AND status='active'",
+                (scope, shared),
             )
             if r[0] in ids
         ]

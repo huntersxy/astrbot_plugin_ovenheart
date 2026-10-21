@@ -23,12 +23,13 @@
   "guidance_delivery": {
     "description": "提示投递方式",
     "type": "string",
-    "default": "system",
+    "default": "cached",
     "options": [
+      "cached",
       "system",
       "dual"
     ],
-    "hint": "system 仅补充系统提示词；dual 同时把当前角色与已选习惯作为临时用户上下文，适合 system 不生效的接口。不会复制整段宿主系统提示词。"
+    "hint": "cached 为默认缓存友好模式：稳定人格补充放在 system，每轮习惯与参与目标放在历史之后的临时用户上下文。system 保留传统系统注入；dual 为系统不生效的接口复制角色与习惯。临时内容不存入原生历史；缓存收益由提供商决定。"
   },
   "activation_mode": {
     "description": "新结果生效方式",
@@ -247,5 +248,11 @@
     "type": "bool",
     "default": false,
     "hint": "开启后在 AstrBot INFO 日志中完整输出本插件注入内容、学习请求/响应、自检和检索结果。包含聊天、人格和记忆摘录；调试结束后建议关闭。不会读取或输出模型配置密钥、HTTP 鉴权头或原始供应商异常。"
+  },
+  "session_isolation": {
+    "description": "启用会话隔离",
+    "type": "bool",
+    "default": false,
+    "hint": "默认统一人格底稿与学习结果，所有允许的会话共用。开启后按会话和人格分别设置、学习与应用；两种模式的数据分别保留。聊天历史、临时上下文及权限始终按真实会话隔离。"
   }
 }

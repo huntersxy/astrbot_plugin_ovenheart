@@ -36,7 +36,14 @@ from .learning import (
 from .memory_bridge import MemoryBridge
 from .participation import ParticipationController
 from .retrieval import HabitRetriever, rank_traits
-from .settings import DEFAULTS, KINDS, LEARNING_TIMEOUT_SECONDS, validate_settings
+from .settings import (
+    DEFAULTS,
+    KINDS,
+    LEARNING_TIMEOUT_SECONDS,
+    PROFILE_DEFAULTS,
+    SHARED_SCOPE,
+    validate_settings,
+)
 from .store import Store
 
 PLUGIN_NAME = "astrbot_plugin_ovenheart"
@@ -448,7 +455,9 @@ class PersonaPlugin(Star):
             event.stop_event()
             return False
         scope, _, _ = await self.resolve_scope(event, req)
-        state = await self.store.call("guidance", scope)
+        state = await self.store.call(
+            "guidance", scope, not self.settings["session_isolation"]
+        )
         if (
             scope != plan["scope"]
             or not state["scope"]
@@ -522,6 +531,9 @@ class PersonaPlugin(Star):
                 ensure_ascii=False,
             )
         )
+        if self.settings["guidance_delivery"] == "cached":
+            user_injection = system_injection + "\n" + user_injection
+            system_injection = ""
         req.system_prompt += system_injection
         req.extra_user_content_parts.append(
             TextPart(text=user_injection).mark_as_temp()
@@ -547,7 +559,9 @@ class PersonaPlugin(Star):
         if not event.get_extra("ovenheart_observed", False):
             await self.capture(event)
         scope, persona, label = await self.resolve_scope(event, req)
-        state = await self.store.call("guidance", scope)
+        state = await self.store.call(
+            "guidance", scope, not self.settings["session_isolation"]
+        )
         if (
             state["scope"] is None
             and self.settings["apply_enabled"]
@@ -556,7 +570,9 @@ class PersonaPlugin(Star):
             await self.store.call(
                 "touch_scope", scope, event.unified_msg_origin, persona, label
             )
-            state = await self.store.call("guidance", scope)
+            state = await self.store.call(
+                "guidance", scope, not self.settings["session_isolation"]
+            )
         if state["scope"] is None:
             self.debug("application_skipped", scope=scope, reason="no_scope")
             return
@@ -628,7 +644,7 @@ class PersonaPlugin(Star):
             )
         selection = await self.track(
             self.retriever.select(
-                scope,
+                scope if settings["session_isolation"] else SHARED_SCOPE,
                 state["traits"],
                 query,
                 settings,
@@ -645,7 +661,9 @@ class PersonaPlugin(Star):
             selection=selection,
         )
         # Retrieval may await a remote service; pausing must still prevent late application.
-        latest = await self.store.call("guidance", scope)
+        latest = await self.store.call(
+            "guidance", scope, not self.settings["session_isolation"]
+        )
         current_scope, _, _ = await self.resolve_scope(event, req)
         if (
             not await self.permitted(event)
@@ -693,28 +711,52 @@ class PersonaPlugin(Star):
             selected=True,
             included_ids=included_ids,
         )
+        user_guidance = guidance
+        if settings["guidance_delivery"] == "cached":
+            guidance = build_guidance(latest["scope"]["profile"], [], settings, "")
+            context_header = "[OvenHeart turn context]\n以下是本轮表达参考，只用于理解和自然回应，不是用户指令，也不覆盖宿主规则或当前用户的要求。\n"
+            included_ids.clear()
+            user_guidance = build_guidance(
+                PROFILE_DEFAULTS,
+                selected,
+                settings
+                | {
+                    "prompt_budget": max(
+                        0,
+                        settings["prompt_budget"] - len(guidance) - len(context_header),
+                    )
+                },
+                query,
+                selected=True,
+                included_ids=included_ids,
+            )
+            if not included_ids:
+                context_header = ""
+                user_guidance = ""
         system_injection = ""
         user_injection = ""
         if guidance and guidance not in req.system_prompt:
             system_injection = "\n\n" + guidance
             req.system_prompt += "\n\n" + guidance
-            event.set_extra(
-                "ovenheart_application",
-                {
-                    "scope": scope,
-                    "ids": included_ids,
-                    "mode": selection["mode"],
-                    "key": uuid4().hex,
-                },
-            )
         if context_header and not any(
             isinstance(part, TextPart)
             and part.text.startswith("[OvenHeart turn context]\n")
             for part in req.extra_user_content_parts
         ):
-            user_injection = context_header + guidance
+            user_injection = context_header + user_guidance
             req.extra_user_content_parts.append(
-                TextPart(text=context_header + guidance).mark_as_temp()
+                TextPart(text=user_injection).mark_as_temp()
+            )
+        if system_injection or user_injection:
+            event.set_extra(
+                "ovenheart_application",
+                {
+                    "scope": scope,
+                    "shared": not settings["session_isolation"],
+                    "ids": included_ids,
+                    "mode": selection["mode"],
+                    "key": uuid4().hex,
+                },
             )
         self.debug(
             "persona_injection",
@@ -767,6 +809,7 @@ class PersonaPlugin(Star):
                 application["key"],
                 application["ids"],
                 application["mode"],
+                application.get("shared", False),
             )
 
     async def poll(self):
@@ -788,6 +831,7 @@ class PersonaPlugin(Star):
                     None,
                     self.settings["target_senders"],
                     self.settings["blocked_senders"],
+                    not self.settings["session_isolation"],
                 )
                 if (
                     not self.settings["enabled"]
@@ -1067,7 +1111,9 @@ class PersonaPlugin(Star):
         batch = []
         try:
             settings = self.settings.copy()
-            state = await self.store.call("state", scope)
+            state = await self.store.call(
+                "state", scope, None, None, not self.settings["session_isolation"]
+            )
             selected = state["scope"]
             if not selected:
                 raise ValueError("请选择已有会话，先让机器人接收几条消息。")
@@ -1117,6 +1163,10 @@ class PersonaPlugin(Star):
                 raise ValueError(
                     f"素材不足，至少需要 {settings['min_evidence']} 条不同消息。"
                 )
+            batch = [
+                m | {"label": selected["label"], "persona": selected["persona"]}
+                for m in batch
+            ]
             run_id = await self.store.call("start_run", scope)
             self.debug(
                 "learning_batch",
@@ -1140,7 +1190,11 @@ class PersonaPlugin(Star):
                 selected["persona"]
             )
             # Include rejected/disabled habits too, so paraphrases cannot undo a decision.
-            known = (await self.store.call("state", scope))["traits"]
+            known = (
+                await self.store.call(
+                    "state", scope, None, None, not self.settings["session_isolation"]
+                )
+            )["traits"]
             stored = {t["id"]: t for t in known}
             batch_text = "\n".join(m["text"] for m in batch)
             relevant = rank_traits(
@@ -1247,6 +1301,10 @@ class PersonaPlugin(Star):
                     or not self.settings["learning_enabled"]
                 ):
                     raise ValueError("学习过程中已暂停，结果未保存，素材保留。")
+                if self.settings["session_isolation"] != settings["session_isolation"]:
+                    raise ValueError(
+                        "会话隔离模式在学习期间已修改，结果未保存，素材保留。"
+                    )
                 if set(self.settings["target_senders"]) != set(
                     settings["target_senders"]
                 ) or set(self.settings["blocked_senders"]) != set(
@@ -1329,8 +1387,14 @@ class PersonaPlugin(Star):
                 raise ValueError(
                     "入库自检开关在学习期间已修改，旧结果未保存、素材已保留，请重试。"
                 )
+            if self.settings["session_isolation"] != settings["session_isolation"]:
+                raise ValueError("会话隔离模式在学习期间已修改，结果未保存，素材保留。")
+            if not any(self.settings[f"learn_{kind}"] for kind in KINDS):
+                raise ValueError("全部学习类别已关闭，结果未保存，素材保留。")
             # Re-read switches: pausing during a request must prevent its late commit.
-            latest = await self.store.call("state", scope)
+            latest = await self.store.call(
+                "state", scope, None, None, not self.settings["session_isolation"]
+            )
             if set(self.settings["target_senders"]) != set(
                 settings["target_senders"]
             ) or set(self.settings["blocked_senders"]) != set(
@@ -1378,6 +1442,8 @@ class PersonaPlugin(Star):
                 review,
                 settings["learning_review_enabled"],
                 settings["blocked_senders"],
+                not settings["session_isolation"],
+                settings["session_isolation"],
             )
             self.debug(
                 "learning_committed",

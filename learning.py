@@ -320,6 +320,11 @@ def parse_candidates(
                         "text": sources[i]["text"][:300],
                         "created": sources[i]["created"],
                         "source_id": sources[i].get("source_id", ""),
+                        **{
+                            key: sources[i][key]
+                            for key in ("scope", "label", "persona")
+                            if key in sources[i]
+                        },
                     }
                     for i in evidence_ids
                 ],
@@ -341,7 +346,7 @@ def build_guidance(
 
     Args:
         profile: Manually authored anchor and application switches.
-        traits: Learned entries for this session/persona only.
+        traits: Learned entries eligible for the configured shared or isolated space.
         settings: Global application and budget settings.
         query: Current user text for relevance selection.
         selected: Whether traits have already been ordered by the retrieval service.
@@ -363,7 +368,12 @@ def build_guidance(
     budget = settings["prompt_budget"]
     lines = [
         "[Persona supplementary guidance]",
-        "以下是会话专属的表达参考，服从现有系统规则与核心人格。保留原有身份与事实，不把观察样本当成自身经历；仅在适合情境时自然使用，不逐条复述。",
+        (
+            "以下是会话专属的表达参考，"
+            if settings.get("session_isolation", True)
+            else "以下是机器人的表达参考，"
+        )
+        + "服从现有系统规则与核心人格。保留原有身份与事实，不把观察样本当成自身经历；仅在适合情境时自然使用，不逐条复述。",
         APPLICATION_STYLE,
     ]
     for key, title in (

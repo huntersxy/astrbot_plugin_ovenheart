@@ -478,3 +478,15 @@ async def test_debug_planner_and_participation_injections_match_native_request(
         "planner_response",
         "participation_plan",
     }
+
+
+async def test_cached_participation_keeps_goal_out_of_system_prefix(participant):
+    participant.settings["guidance_delivery"] = "cached"
+    incoming = event(text="请安慰一下我")
+    request = (await requests(participant, incoming))[0]
+    request.system_prompt = "稳定宿主系统提示词"
+    await participant.apply_participation(incoming, request)
+    assert request.system_prompt == "稳定宿主系统提示词"
+    assert "OvenHeart participation" in request.extra_user_content_parts[-1].text
+    assert "reply_goal" in request.extra_user_content_parts[-1].text
+    assert request.extra_user_content_parts[-1].model_dump_for_context()["_no_save"]

@@ -1,5 +1,27 @@
 # OvenHeart workshop guide
 
+
+## Shared effects, optional isolation and cache-friendly delivery (0.18)
+
+The default `session_isolation=false` uses one common profile and writes newly learned habits into a shared space for all permitted conversations. The header becomes **学习素材来源 / Learning source**: it chooses the pending source batch and source history, while Profile edits the shared anchor. The common profile is editable before any messages arrive. Raw materials, nearby learning context, native histories and participation decisions remain source-scoped. Learning never concatenates different groups into one raw batch. Evidence deduplication includes the source scope, so matching platform message IDs from different conversations remain independent.
+
+Enable **Settings → Learning scope → 启用会话隔离** to read, learn and apply separately per complete session/persona. Both spaces survive mode changes. Late learning commits recheck the mode in memory and within the transaction. Disabling isolation restores the common profile and habits.
+
+Existing local profiles are preserved without combining potentially conflicting identities; enable isolation to use them. Existing active local habits can also be recalled in shared mode, retaining their original owners and decisions. New learning accumulates or consolidates within the common space. Common entries are labelled **全会话共用 / 所有人格** in Library; evidence excerpts retain their source labels. Isolation does not automatically clone common entries into local spaces.
+
+| Previous behavior | 0.18 behavior |
+| --- | --- |
+| Header always selects the profile being edited | Common profile by default; header selects local profiles only with isolation enabled |
+| Session/persona learning and application isolated by default | Common learning space by default; raw contexts and participation remain isolated |
+| New installations default to `guidance_delivery=system` | New installations default to `cached`; existing explicit `system`/`dual` values remain configurable |
+
+**Memory and expression → Guidance delivery → 缓存友好（推荐）** keeps authored persona supplements in a stable system prefix and places changing selected habits after history in temporary user content. Autonomous goals and live excerpts also go at the tail. Selector candidates serialize in stable ID order before the changing dialogue. Native Agent history excludes temporary parts. No unsupported provider cache flags are sent. Cache hits and billing depend on the provider and runner; third-party runners must support temporary parts. Traditional `system` and compatibility `dual` delivery remain available.
+
+[Verification and provider observations](../evaluation/sharing-cache.md) distinguish stable local prefixes from actual provider-reported cached tokens.
+
+![Common profile using illustrative local data](../assets/shared-profile-v0.18.jpg)
+![Isolation and cache settings using illustrative local data](../assets/shared-cache-settings-v0.18.jpg)
+
 ## Install and open
 
 Requires AstrBot `>=4.29.1,<5` and a configured chat provider. Install the release ZIP through the local plugin installer, or copy the plugin directory to the host's `data/plugins/astrbot_plugin_ovenheart` and reload it. Open the native plugin View named **人格工坊** (Persona workshop).
@@ -27,7 +49,7 @@ Existing habits and evidence are preserved; inspect and disable them manually in
 
 ## Learning and activation
 
-Configure the core persona in AstrBot first. After ordinary text messages arrive, the conversation appears in the scope selector. Each complete unified message origin and effective host persona has a separate learning space. Human-readable conversation names take priority over IDs.
+Configure the core persona in AstrBot first. After ordinary text messages arrive, the conversation appears in the scope selector. Raw materials and live contexts retain a separate complete unified message origin/persona scope. Effects use the common learning space unless isolation is enabled. Human-readable conversation names take priority over IDs.
 
 Four categories are supported: stable personality tendencies, conditional expression styles, local vocabulary, and conversational behavior such as listening, clarification and empathy. Source evidence comes from real messages in the current immutable batch. Memory excerpts cannot substitute for source evidence. Human identities and personal histories must not become the bot's biography.
 
@@ -119,7 +141,7 @@ Fresh-message thresholds still apply within each isolated session. Use a shared 
 
 ## Provider prompt compatibility
 
-Settings → Memory and Expression offers `guidance_delivery=system` (default) or `dual`. Dual keeps the original system prompt and adds a temporary user-context part containing the current bound host persona and selected guidance. It does not copy the complete system prompt, modify user text or expand tool permissions. The extra context shares `prompt_budget`, with the host role text capped at one third of that budget. Application switches and scope isolation still apply, even when learning is paused.
+Settings → Memory and Expression offers `guidance_delivery=cached` (default), `system` or `dual`. Dual keeps the original system prompt and adds a temporary user-context part containing the current bound host persona and selected guidance. It does not copy the complete system prompt, modify user text or expand tool permissions. The extra context shares `prompt_budget`, with the host role text capped at one third of that budget. Application switches and scope isolation still apply, even when learning is paused.
 
 AstrBot's native Agent history serializer removes the temporary persona/guidance parts. Autonomous recent messages and reply goals now use the same temporary marking. External runners must implement their own support. Free lexical previews do not include the extra role context.
 

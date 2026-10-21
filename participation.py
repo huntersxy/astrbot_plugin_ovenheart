@@ -212,7 +212,9 @@ class ParticipationController:
                 settings,
             )
             return None
-        state = await plugin.store.call("guidance", scope)
+        state = await plugin.store.call(
+            "guidance", scope, not plugin.settings["session_isolation"]
+        )
         if (
             not settings["apply_enabled"]
             or not state["scope"]["profile"]["apply_enabled"]
@@ -348,7 +350,9 @@ class ParticipationController:
                 ):
                     return None
                 current_scope, _, _ = await plugin.resolve_scope(event)
-                latest = await plugin.store.call("guidance", scope)
+                latest = await plugin.store.call(
+                    "guidance", scope, not plugin.settings["session_isolation"]
+                )
                 if (
                     current_scope != scope
                     or not plugin.settings["apply_enabled"]

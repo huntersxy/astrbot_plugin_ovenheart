@@ -69,7 +69,7 @@ test('all participation controls are available with host schema defaults', () =>
   const settings=Object.fromEntries(Object.entries(schema).map(([key,value])=>[key,value.default]));
   runInContext(`data={settings:${JSON.stringify(settings)},memory:{message:'未启用'},scope:null}; renderSettings();`,context);
   const html=element('#content').innerHTML;
-  for (const name of ['participation_mode','participation_min_messages','participation_debounce','participation_cooldown','participation_hourly_limit','planner_provider_id','planner_timeout','planner_reply_threshold','planner_max_wait','autonomous_tools','debug_enabled']) {
+  for (const name of ['participation_mode','participation_min_messages','participation_debounce','participation_cooldown','participation_hourly_limit','planner_provider_id','planner_timeout','planner_reply_threshold','planner_max_wait','autonomous_tools','debug_enabled','session_isolation']) {
     assert.ok(html.includes('name="'+name+'"'),name);
   }
   assert.ok(html.includes('value="off" selected'));
@@ -77,7 +77,7 @@ test('all participation controls are available with host schema defaults', () =>
   assert.ok(html.includes('name="rerank_provider_id"'));
   assert.ok(html.includes('name="selector_timeout"'));
   assert.ok(html.includes('name="guidance_delivery"'));
-  assert.ok(html.includes('value="system" selected'));
+  assert.ok(html.includes('value="cached" selected'));
   assert.ok(html.includes('value="dual"'));
   assert.ok(html.includes('第三方运行器需自行支持'));
   assert.ok(html.includes('仍保留当前输入直接命中的本地词义'));

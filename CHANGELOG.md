@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.18.0
+
+- Default to a common authored profile and learning space across permitted conversations. Add opt-in session/persona isolation, retain both spaces and legacy records, and keep raw batches, native histories, volatile context and participation admissions source-scoped. The header selects learning sources in shared mode and local profiles in isolated mode.
+- Namespace evidence by its source scope, keep source labels, and recheck mode changes at generation and atomic commit. Preserve sources if all learning categories are disabled during an in-flight batch.
+- Default new installations to cache-friendly delivery: keep authored supplements stable in system, append selected habits and participation goals only after history in temporary user content, and place stable-ID selector candidates before changing dialogue. Preserve explicitly configured legacy system/dual modes.
+- Add native SDK regression coverage and illustrative desktop/mobile verification. Record a real synthetic provider replay with an identical system/history hash across different selected habits; the second reply reported 1,408 cached tokens out of 1,778 input tokens. This is one observation, not a general cache-hit or quality claim.
+
 ## 0.17.0
 
 - Add opt-in Debug mode in Panel and host configuration. Log full plugin system/temporary-context injections, retrieval results, learning and correction requests/completions, self-check audits and participation plans at INFO level. Keep it off by default; never collect provider credentials, headers or arbitrary provider exception messages. Verify exact request/log equality and immediate disabling.
