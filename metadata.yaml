@@ -1,0 +1,9 @@
+name: astrbot_plugin_persona
+display_name: Persona 人格工坊
+desc: 借鉴 MaiBot 的表达学习机制，学习人格倾向、语言风格、群聊词汇与行为准则，联动 LivingMemory，提供原生 Panel 管理页。
+version: 0.1.0
+author: rytte
+astrbot_version: ">=4.29.1,<5"
+views:
+  - name: workshop
+    title: 人格工坊
