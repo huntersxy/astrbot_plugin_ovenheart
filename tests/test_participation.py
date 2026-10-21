@@ -236,6 +236,56 @@ async def test_burst_is_coalesced_onto_latest_live_event(participant):
     assert outputs[2][0].prompt == inputs[2].get_message_str()
 
 
+async def test_delayed_older_scope_resolution_does_not_cancel_latest_burst(
+    participant, monkeypatch
+):
+    participant.settings.update(
+        participation_min_messages=2, participation_debounce=0.5
+    )
+    older, latest = event("delayed-old", "较早的一条"), event("latest", "后发的一条")
+    # Native wall-clock timestamps can tie when fixtures are created in one tick.
+    latest.created_at = older.created_at + 0.01
+    entered, release = asyncio.Event(), asyncio.Event()
+    resolve = participant.resolve_scope
+
+    async def delayed(event, req=None):
+        result = await resolve(event, req)
+        if event is older:
+            entered.set()
+            await release.wait()
+        return result
+
+    monkeypatch.setattr(participant, "resolve_scope", delayed)
+    first = asyncio.create_task(requests(participant, older))
+    await entered.wait()
+    last = asyncio.create_task(requests(participant, latest))
+    try:
+        for _ in range(500):
+            if any(
+                any(m["source"] == "latest" for m in w["messages"])
+                for w in participant.participation.windows.values()
+            ):
+                break
+            await asyncio.sleep(0.001)
+        else:
+            pytest.fail("The latest native turn did not reach its debounce window")
+        release.set()
+        one, two = await asyncio.gather(first, last)
+        assert one == [] and len(two) == 1
+        payload = json.loads(
+            participant.context.llm_generate.await_args.kwargs["prompt"]
+        )
+        assert [m["source"] for m in payload["recent_messages"]] == [
+            "delayed-old",
+            "latest",
+        ]
+    finally:
+        release.set()
+        for task in (first, last):
+            task.cancel()
+        await asyncio.gather(first, last, return_exceptions=True)
+
+
 async def test_new_message_cancels_obsolete_inflight_planner(participant):
     entered, cancelled = asyncio.Event(), asyncio.Event()
 

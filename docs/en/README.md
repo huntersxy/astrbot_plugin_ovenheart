@@ -39,6 +39,16 @@ For SiliconFlow, configure native `openai_embedding` with `embedding_api_base=ht
 
 Library ratings are reversible choices (helpful, less helpful, clear), not inferred user approval. History records prompt references reaching the host send stage, which does not establish delivery or model compliance. Usage counts do not increase confidence. Old habits gradually lose ranking weight without automatic deletion.
 
+## Local native-core simulation (0.9)
+
+`scripts/evaluate_native.py` boots a real AstrBot core in a temporary data directory, loads a byte-checked copy of this plugin and keeps the nine native pipeline stages, permissions and conversation services. Only the platform send method collects results locally. It does not connect QQ, open a Dashboard HTTP port or change the user's host data.
+
+`--smoke` needs no keys. It checks stripped native commands stay out of learning and exercises the actual Panel ASGI routes for authentication, settings, View assets and scoped page tokens. Full mode reads chat/SiliconFlow credentials from environment variables and runs learning, autonomous generation, a direct wake and a disabled-session check. The scheduled learning worker is cancelled only to trigger explicit, bounded batches; actual learning and generation remain native. Current acceptance follows the user's choice to use local simulation.
+
+Native waking strips prefixes before passive filters execute. Capture now checks both the original platform `message_obj.message_str` and processed text, preventing `/sid` from becoming a learned `sid` utterance. Configured wake prefixes receive the same treatment. See [native-core verification](../evaluation/native.md) for reproduction and limits.
+
+Asynchronous permission/persona reads may complete out of order. Older inputs still contribute same-scope context, but only the newest room event can supersede the debounce window. Fresh-input counting and the context snapshot happen after debounce. Context follows native arrival timestamps, retaining collection order for ties; platform message IDs are not interpreted as timestamps. Existing interruption, shared limits and pre-send checks remain in effect.
+
 ## Recent conversation for selection (0.8)
 
 Retrieval and contextual selection read ordinary user/assistant text in the last six native history records, supporting both string content and `type=text` blocks. Tool/system/checkpoint messages, thinking/media blocks and temporary text are excluded from the selector's conversational input. The host's final request still retains its own tool results, rules and original context.

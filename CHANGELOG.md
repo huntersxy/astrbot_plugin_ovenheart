@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.9.0
+
+- Keep native command prefixes out of learning after AstrBot's waking stage strips them, by checking both original platform text and processed pipeline text.
+- Retain late-arriving context without letting older asynchronous permission/persona work cancel the newest debounce window. Count the complete burst after debounce and keep native arrival ordering.
+- Add an isolated real-core acceptance runner using native plugin loading, all nine pipeline stages, authenticated Panel routes, real providers and persistent session history. Replace only platform transport with a local collector.
+- Cover stripped-command capture through a subprocess regression and retain native-model replay evidence without credentials or provider reasoning blocks.
+
 ## 0.8.0
 
 - Give contextual habit selection the native text blocks from recent user/assistant turns and the current scope's admitted live group conversation. Preserve the current input and reply goal within the existing query budget.

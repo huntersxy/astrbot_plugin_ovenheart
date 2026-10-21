@@ -280,7 +280,13 @@ class PersonaPlugin(Star):
             else self.context.get_config(event.unified_msg_origin)
         )
         prefixes = ["/", *cfg.get("wake_prefix", [])]
-        if any(p and text.startswith(p) for p in prefixes) or "[CQ:forward" in text:
+        # Native waking removes prefixes before passive filters are evaluated.
+        original = (event.message_obj.message_str or text).strip()
+        if (
+            any(p and (text.startswith(p) or original.startswith(p)) for p in prefixes)
+            or "[CQ:forward" in text
+            or "[CQ:forward" in original
+        ):
             return
         scope, persona, label = await self.resolve_scope(event)
         # Platform IDs, not content hashes, deduplicate re-deliveries and hook overlap.

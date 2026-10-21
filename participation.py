@@ -179,7 +179,7 @@ class ParticipationController:
         if settings["participation_mode"] == "off" or not await plugin.permitted(event):
             return None
         room = self.notice(event)
-        if room is None or room["arrival"] > event.created_at:
+        if room is None:
             return None
         room_key = self.room_key(event)
         if not plugin.context.get_config(event.unified_msg_origin).get(
@@ -241,21 +241,34 @@ class ParticipationController:
         )
         if any(m["source"] == source for m in window["messages"]):
             return None
-        window["changed"].set()
-        window["changed"] = room["changed"]
         window["sequence"] += 1
-        sequence, changed = window["sequence"], window["changed"]
         while window["messages"] and window["messages"][0]["time"] < time.time() - 600:
             window["messages"].popleft()
-        window["messages"].append(
-            {
-                "sequence": sequence,
-                "source": source,
-                "sender": event.get_sender_name() or event.get_sender_id(),
-                "text": event.get_message_str()[:1200],
-                "time": time.time(),
-            }
+        window["messages"] = deque(
+            sorted(
+                [
+                    *window["messages"],
+                    {
+                        "sequence": window["sequence"],
+                        "source": source,
+                        "sender": event.get_sender_name() or event.get_sender_id(),
+                        "text": event.get_message_str()[:1200],
+                        "time": event.created_at,
+                    },
+                ],
+                key=lambda message: message["time"],
+            )[-30:],
+            maxlen=30,
         )
+        # Permission/persona awaits may finish out of arrival order. Retain late
+        # context, but only the newest room event may supersede the active wait.
+        room = self.rooms.get(room_key)
+        if room is None or room["source"] != source or room["changed"].is_set():
+            return None
+        if window["changed"] is not room["changed"]:
+            window["changed"].set()
+            window["changed"] = room["changed"]
+        sequence, changed = window["sequence"], window["changed"]
         window["running"] += 1
         reserved = False
         try:
@@ -266,6 +279,8 @@ class ParticipationController:
                 return None
             except asyncio.TimeoutError:
                 pass
+            # Include older arrivals that completed admission during the debounce.
+            sequence = window["sequence"]
             pending = [
                 m for m in window["messages"] if m["sequence"] > window["consumed"]
             ]
