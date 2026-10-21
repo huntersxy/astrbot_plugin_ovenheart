@@ -1,0 +1,390 @@
+"""Native-SDK admission tests for participation, interruption and tool boundaries."""
+
+import asyncio
+import json
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
+
+import pytest
+
+pytest.importorskip("astrbot.api")
+
+from astrbot.api.provider import ProviderRequest  # noqa: E402
+from astrbot.core.agent.tool import FunctionTool, ToolSet  # noqa: E402
+from astrbot.core.db.po import Conversation  # noqa: E402
+
+from astrbot_plugin_ovenheart.main import ParticipationFilter  # noqa: E402
+from astrbot_plugin_ovenheart.participation import parse_plan  # noqa: E402
+from astrbot_plugin_ovenheart.settings import DEFAULTS  # noqa: E402
+from tests.test_runtime import (  # noqa: E402
+    SessionServiceManager,
+    api_call,
+    event,
+)
+
+pytest_plugins = ["tests.test_runtime"]
+
+
+def decision(action="reply", **patch):
+    """Build a valid planner response for a controlled scenario.
+
+    Args:
+        action: Reply, wait or observe.
+        **patch: Fields to replace.
+
+    Returns:
+        Completion-shaped planner output.
+    """
+    return SimpleNamespace(
+        completion_text=json.dumps(
+            {
+                "action": action,
+                "confidence": 0.9,
+                "reason": "对方在向群内寻求安慰，简短参与有帮助。",
+                "intent": "先接住情绪，再问是否愿意说说。",
+                "wait_seconds": 1 if action == "wait" else 0,
+                **patch,
+            }
+        )
+    )
+
+
+@pytest.fixture
+async def participant(plugin, monkeypatch):
+    plugin.settings.update(
+        participation_mode="auto",
+        participation_min_messages=1,
+        participation_debounce=0,
+    )
+    monkeypatch.setattr(
+        SessionServiceManager,
+        "should_process_llm_request",
+        AsyncMock(return_value=True),
+    )
+    plugin.context.llm_generate.side_effect = None
+    plugin.context.llm_generate.return_value = decision()
+    plugin.context.conversation_manager.new_conversation = AsyncMock(
+        return_value="native-conv"
+    )
+    plugin.context.conversation_manager.get_conversation = AsyncMock(
+        return_value=Conversation(
+            platform_id="test",
+            user_id="qq:GroupMessage:test",
+            cid="native-conv",
+            history='[{"role":"assistant","content":"上次聊到这里"}]',
+            persona_id="default",
+        )
+    )
+    return plugin
+
+
+async def requests(plugin, incoming):
+    """Collect only requests actually yielded by the native plugin handler.
+
+    Args:
+        plugin: Initialized plugin.
+        incoming: Real SDK event.
+
+    Returns:
+        Handler outputs without executing a chat or sending platform messages.
+    """
+    return [request async for request in plugin.participate(incoming)]
+
+
+async def test_off_is_passive_and_direct_wakes_are_not_intercepted(participant):
+    incoming = event()
+    participant.settings["participation_mode"] = "off"
+    assert not ParticipationFilter().filter(incoming, {})
+    assert await requests(participant, incoming) == []
+    participant.settings["participation_mode"] = "auto"
+    incoming.is_at_or_wake_command = True
+    assert not ParticipationFilter().filter(incoming, {})
+    assert await requests(participant, incoming) == []
+    assert incoming.is_at_or_wake_command
+    participant.context.llm_generate.assert_not_awaited()
+
+
+async def test_positive_decision_yields_exactly_one_native_request(participant):
+    incoming = event(text="今天又搞砸了，有点难过。")
+    assert ParticipationFilter().filter(incoming, {})
+    output = await requests(participant, incoming)
+    assert len(output) == 1 and isinstance(output[0], ProviderRequest)
+    assert output[0].prompt == incoming.get_message_str()
+    assert output[0].conversation.cid == "native-conv"
+    assert incoming.call_llm and not incoming.is_at_or_wake_command
+    assert not incoming._has_send_oper
+    scope = incoming.get_extra("ovenheart_decision")["scope"]
+    state = await participant.store.call("state", scope)
+    assert state["decisions"][0]["outcome"] == "admitted"
+    assert state["scope"] and state["scope"]["pending"] == 0
+
+
+async def test_observe_mode_records_decisions_but_never_yields_reply(participant):
+    participant.settings["participation_mode"] = "observe"
+    incoming = event()
+    assert await requests(participant, incoming) == []
+    scope = (await participant.store.call("state"))["scopes"][0]["id"]
+    assert (await participant.store.call("state", scope))["decisions"][0][
+        "outcome"
+    ] == "observed"
+    assert not incoming.call_llm and not incoming._has_send_oper
+
+
+async def test_command_handlers_win_but_passive_listeners_can_coexist(participant):
+    from astrbot.core.star.filter.command import CommandFilter
+
+    command = event("command")
+    command.set_extra(
+        "activated_handlers", [SimpleNamespace(event_filters=[CommandFilter("ping")])]
+    )
+    assert await requests(participant, command) == []
+    participant.context.llm_generate.assert_not_awaited()
+    listener = event("listener")
+    listener.set_extra("activated_handlers", [SimpleNamespace(event_filters=[])])
+    assert len(await requests(participant, listener)) == 1
+
+
+async def test_native_process_stage_invokes_agent_once_for_plugin_request(participant):
+    from astrbot.core.pipeline.context_utils import call_handler
+    from astrbot.core.pipeline.process_stage.stage import ProcessStage
+
+    incoming = event()
+    incoming.set_extra("activated_handlers", [SimpleNamespace(event_filters=[])])
+    invoked = []
+
+    class StarStage:
+        async def process(self, event):
+            async for output in call_handler(event, participant.participate):
+                yield output
+
+    class AgentStage:
+        async def process(self, event):
+            invoked.append(event.get_extra("provider_request"))
+            yield None
+
+    stage = ProcessStage()
+    stage.ctx = SimpleNamespace(astrbot_config={"provider_settings": {"enable": True}})
+    stage.star_request_sub_stage = StarStage()
+    stage.agent_sub_stage = AgentStage()
+    async for _ in stage.process(incoming):
+        pass
+    assert len(invoked) == 1 and isinstance(invoked[0], ProviderRequest)
+    assert not incoming.is_at_or_wake_command
+
+
+async def test_native_collection_reloads_bound_history_before_persona_application(
+    participant,
+):
+    from astrbot.core.astr_main_agent import (
+        MainAgentBuildConfig,
+        collect_initial_request,
+    )
+
+    incoming = event()
+    request = (await requests(participant, incoming))[0]
+    participant.context.conversation_manager.get_conversation.return_value.history = (
+        '[{"role":"assistant","content":"等待期间新增的上一轮回复"}]'
+    )
+    incoming.set_extra("provider_request", request)
+    current, _ = await collect_initial_request(
+        incoming, participant.context, MainAgentBuildConfig(tool_call_timeout=30)
+    )
+    assert current.conversation.cid == request.conversation.cid
+    assert current.contexts[-1]["content"] == "等待期间新增的上一轮回复"
+    assert current.conversation.persona_id == "default"
+
+
+async def test_external_agent_runner_never_receives_automatic_request(participant):
+    participant.context.get_config = lambda umo: {
+        "plugin_set": ["*"],
+        "agent_runner": {"runner_type": "dify"},
+    }
+    assert await requests(participant, event()) == []
+    participant.context.llm_generate.assert_not_awaited()
+
+
+@pytest.mark.parametrize(
+    ("response", "failure", "expected"),
+    [
+        (SimpleNamespace(completion_text="not json"), None, "格式不正确"),
+        (None, asyncio.TimeoutError(), "调用超时"),
+        (None, ValueError("provider diagnostic contains credentials"), "调用失败"),
+    ],
+)
+async def test_planner_failures_are_actionable_without_provider_text(
+    participant, response, failure, expected
+):
+    participant.context.llm_generate.return_value = response
+    participant.context.llm_generate.side_effect = failure
+    assert await requests(participant, event()) == []
+    scope = (await participant.store.call("state"))["scopes"][0]["id"]
+    record = (await participant.store.call("state", scope))["decisions"][0]
+    assert record["outcome"] == "error" and expected in record["reason"]
+    assert "credentials" not in record["reason"]
+
+
+async def test_burst_is_coalesced_onto_latest_live_event(participant):
+    participant.settings.update(
+        participation_debounce=0.1, participation_min_messages=3
+    )
+    inputs = [event(str(i), f"连着说的第 {i} 句话") for i in range(3)]
+    outputs = await asyncio.gather(*(requests(participant, e) for e in inputs))
+    assert outputs[0] == outputs[1] == [] and len(outputs[2]) == 1
+    participant.context.llm_generate.assert_awaited_once()
+    prompt = json.loads(participant.context.llm_generate.await_args.kwargs["prompt"])
+    assert len(prompt["recent_messages"]) == 3
+    assert outputs[2][0].prompt == inputs[2].get_message_str()
+
+
+async def test_new_message_cancels_obsolete_inflight_planner(participant):
+    entered, cancelled = asyncio.Event(), asyncio.Event()
+
+    async def slow(**kwargs):
+        entered.set()
+        try:
+            await asyncio.sleep(60)
+        finally:
+            cancelled.set()
+
+    participant.context.llm_generate.side_effect = slow
+    old = asyncio.create_task(requests(participant, event("old")))
+    await entered.wait()
+    assert await requests(participant, event("new")) == []
+    assert await old == [] and cancelled.is_set()
+    assert participant.participation.inflight == 0
+
+
+async def test_wait_replans_once_and_keeps_native_event_alive(participant):
+    participant.context.llm_generate.side_effect = [decision("wait"), decision()]
+    incoming = event()
+    assert len(await requests(participant, incoming)) == 1
+    assert participant.context.llm_generate.await_count == 2
+    second = json.loads(participant.context.llm_generate.await_args.kwargs["prompt"])
+    assert second["wait_elapsed"] is True
+    scope = incoming.get_extra("ovenheart_decision")["scope"]
+    decisions = (await participant.store.call("state", scope))["decisions"]
+    assert [d["outcome"] for d in decisions] == ["admitted", "waiting"]
+
+
+async def test_pause_during_planning_cancels_late_admission(participant):
+    entered, release = asyncio.Event(), asyncio.Event()
+
+    async def delayed(**kwargs):
+        entered.set()
+        await release.wait()
+        return decision()
+
+    participant.context.llm_generate.side_effect = delayed
+    work = asyncio.create_task(requests(participant, event()))
+    await entered.wait()
+    await api_call(
+        participant.page_api.action,
+        {"action": "settings", "payload": {"participation_mode": "off"}},
+    )
+    release.set()
+    assert await work == []
+
+
+async def test_native_tools_are_isolated_and_only_explicitly_allowed(participant):
+    incoming = event()
+    request = (await requests(participant, incoming))[0]
+    tools = ToolSet(
+        [
+            FunctionTool(
+                name=name,
+                description=name,
+                parameters={"type": "object", "properties": {}},
+            )
+            for name in ("qq_group_info", "qq_group_member_manage")
+        ]
+    )
+    request.func_tool = tools
+    request.system_prompt = "宿主身份与规则"
+    participant.settings["autonomous_tools"] = ["qq_group_info"]
+    await participant.apply_participation(incoming, request)
+    assert [t.name for t in request.func_tool.tools] == ["qq_group_info"]
+    assert len(tools.tools) == 2
+    assert request.system_prompt.startswith("宿主身份与规则")
+    assert "先接住情绪" in request.system_prompt and request.extra_user_content_parts
+    direct = ProviderRequest(func_tool=tools, system_prompt="宿主")
+    await participant.apply_participation(event("direct"), direct)
+    assert direct.func_tool is tools and direct.system_prompt == "宿主"
+
+
+async def test_new_input_cancels_an_admitted_request_waiting_for_host(participant):
+    incoming = event("first")
+    request = (await requests(participant, incoming))[0]
+    assert await requests(participant, event("new-input")) == []
+    await participant.apply_participation(incoming, request)
+    assert incoming.is_stopped()
+    scope = incoming.get_extra("ovenheart_decision")["scope"]
+    assert (await participant.store.call("state", scope))["decisions"][0][
+        "outcome"
+    ] == "cancelled"
+
+
+async def test_new_input_suppresses_a_generated_result_before_send(participant):
+    incoming = event("generated")
+    await requests(participant, incoming)
+    incoming.set_result(incoming.plain_result("已经生成但还没发送的旧回复"))
+    await requests(participant, event("new-topic"))
+    await participant.guard_participation_result(incoming)
+    assert incoming.is_stopped()
+
+
+async def test_an_own_send_stage_does_not_cancel_its_other_segments(participant):
+    incoming = event("segmented")
+    await requests(participant, incoming)
+    incoming.set_result(incoming.plain_result("第一段回复"))
+    await participant.record_delivery(incoming)
+    await participant.guard_participation_result(incoming)
+    assert not incoming.is_stopped()
+
+
+async def test_persistent_admission_reservation_cannot_race_past_quota(participant):
+    scope, persona, label = await participant.resolve_scope(event())
+    await participant.store.call(
+        "touch_scope", scope, "qq:GroupMessage:test", persona, label
+    )
+    plan = json.loads(decision().completion_text)
+    results = await asyncio.gather(
+        *(
+            participant.store.call(
+                "decide", scope, plan, "auto", "admitted", participant.settings
+            )
+            for _ in range(2)
+        )
+    )
+    assert sorted(r["outcome"] for r in results) == ["admitted", "cancelled"]
+    await participant.store.call("initialize")
+    assert await participant.store.call(
+        "participation_gate", scope, participant.settings
+    )
+
+
+@pytest.mark.parametrize(
+    "patch",
+    [
+        {"action": "send_message"},
+        {"confidence": True},
+        {"confidence": float("nan")},
+        {"reason": ""},
+        {"intent": ""},
+        {"wait_seconds": True},
+        {"wait_seconds": 4},
+    ],
+)
+def test_malformed_plans_do_not_admit_actions(patch):
+    with pytest.raises(ValueError):
+        parse_plan(decision(**patch).completion_text, DEFAULTS)
+
+
+def test_low_confidence_and_repeated_wait_become_observation():
+    assert (
+        parse_plan(decision(confidence=0.6).completion_text, DEFAULTS)["action"]
+        == "observe"
+    )
+    assert (
+        parse_plan(decision("wait").completion_text, DEFAULTS, waited=True)["action"]
+        == "observe"
+    )

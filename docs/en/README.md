@@ -10,7 +10,7 @@ The view uses AstrBot authentication, its native bridge and light/dark themes. N
 | --- | --- |
 | 人格底稿 / Profile | Supplement identity, reply style and behavior; pause learning/application for the selected scope; preview effective guidance |
 | 学习库 / Library | Review source evidence, edit, approve, reject and disable learned habits |
-| 学习记录 / History | Inspect batches, actionable errors, memory integration and restore prior versions |
+| 学习与参与 / Learning and participation (formerly 学习记录) | Inspect batches, participation reasons, waits, cancellations and prior versions |
 | 学习设置 / Settings | Configure activation, evidence, sources, provider, batch timing and retention |
 
 ## Learning and activation
@@ -37,7 +37,7 @@ Library ratings are reversible choices (helpful, less helpful, clear), not infer
 
 LivingMemory is optional. The adapter targets the supplied `2.7.0-beta.3` interface and discovers the active instance at runtime. It respects LivingMemory access control, configured session/user/global scopes, persona filtering and host plugin switches. At most three memory excerpts are retrieved by default, only while learning. Missing, disabled, incompatible, unavailable or timed-out memory integration does not prevent independent learning. After reload, a scope without a new real event uses retained chat material only.
 
-Memory searches may update LivingMemory access times and trigger its existing legacy-scope migration. OvenHeart does not write additional memories or change LivingMemory's database directly. QQ Enhance is independently optional; no automatic QQ tool invocation is added.
+Memory searches may update LivingMemory access times and trigger its existing legacy-scope migration. OvenHeart does not write additional memories or change LivingMemory's database directly. QQ Enhance is independently optional; autonomous tools are disabled by default; explicitly allowed tools remain subject to host and QQ Enhance policies.
 
 ## Data and rollback
 
@@ -47,16 +47,30 @@ Learning, feedback, profile and trait changes retain up to 30 preceding snapshot
 
 Data is stored in the host's `data/plugin_data/astrbot_plugin_ovenheart/persona.sqlite3`. Disable the plugin before backing up the entire data directory so WAL files are not accidentally omitted.
 
-## Scope of behavior learning
+## Autonomous participation
 
-This is structured habit learning applied through supplemental prompts, not model weight training or a reproduction of MaiBot's autonomous scheduler. It affects replies already triggered by AstrBot. It does not independently wake group chats, decide when to send messages or execute QQ tools. Real model quality and real platform behavior need deployment acceptance with your chosen provider and conversations.
+Version 0.3 renames the internal 学习记录 tab to 学习与参与 without changing its View or URL. Participation settings appear first in Settings. The default is off; observe mode records decisions without replying, and auto mode may submit a native request after a reply decision. Direct wakes, private chats, matched commands, existing requests and sent results keep their existing behavior. Automatic replies require AstrBot's local Agent runner; external runners can use observation.
+
+Default gates are three fresh messages, two seconds of input debounce, a 90-second reply cooldown and 12 autonomous admissions per rolling hour per session/persona. Cooldown and quotas survive reload. A native send-stage reply also postpones autonomous participation. Planning starts at most every 30 seconds per scope (or the configured cooldown when shorter), with two global planning slots. Unmet gates wait for a new message rather than running an independent polling reply loop.
+
+The planner chooses reply, observe or one bounded wait followed by one reassessment. New input cancels obsolete work. Provider failure, timeout or invalid plans preserve observation. Plans state reasons and conversational goals; they cannot execute tools. The resulting native request binds a conversation and reloads history through the host's session lock, preserving persona/history. Input, permission, profile and settings changes are checked again before generation.
+
+Autonomous tool access is an exact-name subset of tools already present in the native request. Empty means text-only. Direct-wake tool policy is unaffected. Explicitly allowing a tool permits the host Agent to invoke it autonomously under existing permissions. No model weight training is involved, and this is not a copy of every MaiBot subsystem.
+
+The conversation window holds at most 30 messages from the last ten minutes in memory; at most 12 are passed to the reply request. Decision reasons, goals and timestamps persist separately. The UI shows the latest 30; storage preserves the latest 100 plus admissions needed for the rolling quota. Clearing raw learning material does not clear decision records. An admission records handoff to the host, not successful generation or delivery.
+
+Real cn:deepseek-v4-flash checks on synthetic scenarios selected observation for a completed conversation between others, reply for explicitly requested support, and wait for unfinished input. This is not a long-term MaiBot comparison or real QQ delivery acceptance.
 
 ## Screenshots and verification
 
 Screenshots below use explicitly labeled sample data and a simulated model. Production views contain no sample data or acceptance banner.
 
-![Profile and effective guidance preview](../assets/profile.jpg)
+![Profile entry viewport](../assets/profile.jpg)
 
-![Mobile learning library](../assets/mobile.jpg)
+![Mobile library viewport](../assets/mobile.jpg)
 
 The test suite covers SQLite transactions, evidence validation and native AstrBot SDK contracts. Provider output and platform permissions are controlled test doubles. See the repository README for development commands; SDK tests explicitly skip if AstrBot is not installed. The optional preview fixture is excluded from release ZIPs.
+
+![Participation history with illustrative data](../assets/participation.jpg)
+
+![Mobile participation viewport with illustrative data](../assets/participation-mobile.jpg)

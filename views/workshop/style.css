@@ -133,3 +133,9 @@ button.text { border-color: transparent; background: transparent; }
   footer span { max-width: 24ch; text-align: right; }
 }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; } }
+
+.settings-group details { margin-top: 18px; }
+.settings-group summary { cursor: pointer; padding: 12px 0; font-weight: 550; }
+.settings-group summary:focus-visible { outline: 2px solid var(--focus); outline-offset: 3px; }
+
+.participation-settings { grid-column: 1 / -1; }

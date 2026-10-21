@@ -30,6 +30,16 @@ DEFAULTS = {
     "selection_mode": "hybrid",
     "semantic_threshold": 0.25,
     "habit_half_life": 90,
+    "participation_mode": "off",
+    "participation_min_messages": 3,
+    "participation_debounce": 2,
+    "participation_cooldown": 90,
+    "participation_hourly_limit": 12,
+    "planner_provider_id": "",
+    "planner_timeout": 20,
+    "planner_reply_threshold": 0.7,
+    "planner_max_wait": 30,
+    "autonomous_tools": [],
 }
 KINDS = ("personality", "expression", "jargon", "behavior")
 PROFILE_DEFAULTS = {
@@ -69,6 +79,13 @@ def validate_settings(values: dict) -> dict:
         "retrieval_timeout": (1, 15),
         "semantic_threshold": (0, 1),
         "habit_half_life": (7, 730),
+        "participation_min_messages": (1, 30),
+        "participation_debounce": (0, 10),
+        "participation_cooldown": (5, 3600),
+        "participation_hourly_limit": (1, 120),
+        "planner_timeout": (3, 90),
+        "planner_reply_threshold": (0.5, 1),
+        "planner_max_wait": (1, 120),
     }
     for key, value in values.items():
         default = DEFAULTS[key]
@@ -100,6 +117,9 @@ def validate_settings(values: dict) -> dict:
         elif key == "selection_mode":
             if value not in ("lexical", "hybrid"):
                 raise ValueError("检索方式必须为 lexical 或 hybrid。")
+        elif key == "participation_mode":
+            if value not in ("off", "observe", "auto"):
+                raise ValueError("参与方式必须为 off、observe 或 auto。")
         elif not isinstance(value, str) or len(value) > 256:
             raise ValueError(f"{key} 必须为长度不超过 256 的字符串。")
     return values.copy()

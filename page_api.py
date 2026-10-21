@@ -85,6 +85,7 @@ class PageAPI:
                     raise ValueError("最少证据数量不能大于每批素材数量。")
                 await self.plugin.store.call("settings", patch)
                 self.plugin.settings = merged
+                self.plugin.participation.close()
                 return {"status": "ok", "data": {"message": "学习设置已保存。"}}
             scope = body.get("scope")
             if not isinstance(scope, str) or len(scope) != 24:
@@ -146,6 +147,10 @@ class PageAPI:
             else:
                 raise ValueError("不支持的操作，请刷新页面后重试。")
             await self.plugin.store.call("mutate", scope, operation, payload)
+            if operation in ("profile", "restore"):
+                window = self.plugin.participation.windows.get(scope)
+                if window:
+                    window["changed"].set()
             return {"status": "ok", "data": {"message": "已保存。"}}
         except ValueError as exc:
             return {"status": "error", "message": str(exc)}

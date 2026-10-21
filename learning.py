@@ -32,25 +32,17 @@ class LearningFormatError(ValueError):
     """Identify repairable serialization errors separately from invalid evidence."""
 
 
-def parse_candidates(
-    text: str,
-    messages: list[dict],
-    settings: dict,
-    known_traits: list[dict] | None = None,
-) -> list[dict]:
-    """Validate model output against the exact source batch.
+def decode_model_object(text: str) -> dict:
+    """Decode one complete model JSON object without guessing missing structure.
 
     Args:
-        text: Provider completion text, optionally fenced as JSON.
-        messages: Source messages available to the model.
-        settings: Learning category and evidence settings.
-        known_traits: Existing habits explicitly offered as consolidation targets.
+        text: Provider final text, possibly wrapped in explanation or a JSON fence.
 
     Returns:
-        Validated candidates with server-resolved evidence excerpts.
+        One parsed JSON object.
 
     Raises:
-        ValueError: If the response is malformed or uses fabricated evidence.
+        LearningFormatError: If the response is empty, ambiguous or truncated.
     """
     if not isinstance(text, str) or not text.strip():
         raise LearningFormatError(
@@ -90,6 +82,32 @@ def parse_candidates(
             raise LearningFormatError(
                 "学习模型未返回唯一、完整的 JSON 对象；格式纠正后仍失败时请检查输出上限。"
             ) from None
+    if not isinstance(data, dict):
+        raise LearningFormatError("模型结果必须为一个 JSON 对象。")
+    return data
+
+
+def parse_candidates(
+    text: str,
+    messages: list[dict],
+    settings: dict,
+    known_traits: list[dict] | None = None,
+) -> list[dict]:
+    """Validate model output against the exact source batch.
+
+    Args:
+        text: Provider completion text, optionally fenced as JSON.
+        messages: Source messages available to the model.
+        settings: Learning category and evidence settings.
+        known_traits: Existing habits explicitly offered as consolidation targets.
+
+    Returns:
+        Validated candidates with server-resolved evidence excerpts.
+
+    Raises:
+        ValueError: If the response is malformed or uses fabricated evidence.
+    """
+    data = decode_model_object(text)
     if (
         not isinstance(data, dict)
         or not isinstance(data.get("traits"), list)

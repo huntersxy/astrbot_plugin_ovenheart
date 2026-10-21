@@ -148,5 +148,63 @@
     "type": "int",
     "default": 90,
     "hint": "长期未再观察的习惯逐渐降权，保留条目且不自动删除。"
+  },
+  "participation_mode": {
+    "description": "自主参与方式",
+    "type": "string",
+    "default": "off",
+    "options": [
+      "off",
+      "observe",
+      "auto"
+    ],
+    "hint": "off 关闭；observe 仅记录决策；auto 自主参与群聊。私聊、命令和直接唤醒不受影响。"
+  },
+  "participation_min_messages": {
+    "description": "参与决策最少新消息",
+    "type": "int",
+    "default": 3
+  },
+  "participation_debounce": {
+    "description": "群聊输入合并等待（秒）",
+    "type": "int",
+    "default": 2
+  },
+  "participation_cooldown": {
+    "description": "自主参与冷却（秒）",
+    "type": "int",
+    "default": 90
+  },
+  "participation_hourly_limit": {
+    "description": "每会话每小时自主参与上限",
+    "type": "int",
+    "default": 12
+  },
+  "planner_provider_id": {
+    "description": "参与决策模型 ID",
+    "type": "string",
+    "default": "",
+    "hint": "留空使用学习模型或当前会话模型。"
+  },
+  "planner_timeout": {
+    "description": "参与决策请求超时（秒）",
+    "type": "int",
+    "default": 20
+  },
+  "planner_reply_threshold": {
+    "description": "自主参与最低置信度",
+    "type": "float",
+    "default": 0.7
+  },
+  "planner_max_wait": {
+    "description": "决策最长等待（秒）",
+    "type": "int",
+    "default": 30
+  },
+  "autonomous_tools": {
+    "description": "自主回复允许使用的工具",
+    "type": "list",
+    "default": [],
+    "hint": "工具名称列表；默认仅文字回复。只限制自主参与，直接唤醒仍使用原有工具策略。"
   }
 }

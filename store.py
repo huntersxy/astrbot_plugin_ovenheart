@@ -122,6 +122,15 @@ class Store:
                 id INTEGER PRIMARY KEY, scope TEXT NOT NULL, event_key TEXT NOT NULL UNIQUE,
                 trait_ids TEXT NOT NULL, mode TEXT NOT NULL, created REAL NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS decisions (
+                id INTEGER PRIMARY KEY, scope TEXT NOT NULL, action TEXT NOT NULL,
+                confidence REAL NOT NULL, reason TEXT NOT NULL, intent TEXT NOT NULL,
+                mode TEXT NOT NULL, outcome TEXT NOT NULL, created REAL NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS decisions_scope ON decisions(scope,created);
+            CREATE TABLE IF NOT EXISTS participation_state (
+                scope TEXT PRIMARY KEY, last_reply REAL NOT NULL DEFAULT 0
+            );
         """)
         columns = {r[1] for r in db.execute("PRAGMA table_info(traits)")}
         for column, definition in {
@@ -253,6 +262,7 @@ class Store:
             "runs": [],
             "revisions": [],
             "applications": [],
+            "decisions": [],
         }
         selected = next((s for s in scopes if s["id"] == scope), None)
         if selected:
@@ -287,7 +297,136 @@ class Store:
                     (scope,),
                 )
             ]
+            result["decisions"] = [
+                dict(r)
+                for r in db.execute(
+                    "SELECT * FROM decisions WHERE scope=? ORDER BY id DESC LIMIT 30",
+                    (scope,),
+                )
+            ]
         return result
+
+    def touch_scope(self, db, scope, umo, persona, label):
+        """Create a scope even when raw-message learning is disabled.
+
+        Args:
+            db: Open database connection.
+            scope: Session/persona key.
+            umo: Native message origin.
+            persona: Effective host persona identifier.
+            label: Conversation display name.
+        """
+        db.execute(
+            "INSERT INTO scopes VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET label=excluded.label, updated=excluded.updated",
+            (scope, umo, persona, label, json.dumps(PROFILE_DEFAULTS), time.time()),
+        )
+
+    def participation_gate(self, db, scope, settings):
+        """Check persistent cooldown and rolling autonomous admission limits.
+
+        Args:
+            db: Open database connection.
+            scope: Session/persona key.
+            settings: Effective timing and quota settings.
+
+        Returns:
+            An empty string when another autonomous reply may be admitted.
+        """
+        now = time.time()
+        row = db.execute(
+            "SELECT last_reply FROM participation_state WHERE scope=?", (scope,)
+        ).fetchone()
+        if row and now - row[0] < settings["participation_cooldown"]:
+            return "距离上次回复或参与尝试过近，继续旁观。"
+        count = db.execute(
+            "SELECT COUNT(*) FROM decisions WHERE scope=? AND outcome='admitted' AND created>?",
+            (scope, now - 3600),
+        ).fetchone()[0]
+        if count >= settings["participation_hourly_limit"]:
+            return "已达到本小时自主参与上限，继续旁观。"
+        return ""
+
+    def decide(self, db, scope, plan, mode, outcome, settings):
+        """Log a decision and reserve automatic participation atomically.
+
+        Args:
+            db: Open database connection.
+            scope: Session/persona key.
+            plan: Validated decision and human-readable reason.
+            mode: Observe or auto mode at commit time.
+            outcome: Outcome such as admitted, wait, observed or error.
+            settings: Effective settings for final quota and pause checks.
+
+        Returns:
+            Decision identifier and the actual outcome.
+        """
+        if outcome == "admitted":
+            settings = settings | self.settings(db)
+            profile = db.execute(
+                "SELECT profile FROM scopes WHERE id=?", (scope,)
+            ).fetchone()
+            reason = self.participation_gate(db, scope, settings)
+            if (
+                not settings["enabled"]
+                or settings["participation_mode"] != "auto"
+                or not settings["apply_enabled"]
+                or not profile
+                or not json.loads(profile[0])["apply_enabled"]
+            ):
+                reason = "自主参与已关闭或当前会话暂停应用，取消回复。"
+            if reason:
+                outcome = "cancelled"
+                plan = plan | {"reason": reason}
+            else:
+                db.execute(
+                    "INSERT INTO participation_state VALUES (?, ?) ON CONFLICT(scope) DO UPDATE SET last_reply=excluded.last_reply",
+                    (scope, time.time()),
+                )
+        cursor = db.execute(
+            "INSERT INTO decisions(scope,action,confidence,reason,intent,mode,outcome,created) VALUES (?,?,?,?,?,?,?,?)",
+            (
+                scope,
+                plan["action"],
+                plan["confidence"],
+                plan["reason"],
+                plan.get("intent", ""),
+                mode,
+                outcome,
+                time.time(),
+            ),
+        )
+        # Keep every admission inside the rolling hour even if many decisions arrive.
+        db.execute(
+            "DELETE FROM decisions WHERE scope=? AND id NOT IN (SELECT id FROM decisions WHERE scope=? ORDER BY id DESC LIMIT 100) AND (outcome<>'admitted' OR created<?)",
+            (scope, scope, time.time() - 3600),
+        )
+        return {"id": cursor.lastrowid, "outcome": outcome}
+
+    def cancel_decision(self, db, scope, identifier, reason):
+        """Mark an admission cancelled if its native request became stale in queue.
+
+        Args:
+            db: Open database connection.
+            scope: Session/persona key.
+            identifier: Original admitted decision identifier.
+            reason: Actionable cancellation reason without provider internals.
+        """
+        db.execute(
+            "UPDATE decisions SET outcome='cancelled',reason=? WHERE scope=? AND id=? AND outcome='admitted'",
+            (reason, scope, identifier),
+        )
+
+    def note_reply(self, db, scope):
+        """Update autonomous cooldown after any native host send-stage reply.
+
+        Args:
+            db: Open database connection.
+            scope: Session/persona key.
+        """
+        db.execute(
+            "INSERT INTO participation_state VALUES (?, ?) ON CONFLICT(scope) DO UPDATE SET last_reply=excluded.last_reply",
+            (scope, time.time()),
+        )
 
     def batch(self, db, scope, size):
         """Read the oldest unconsumed messages for a learning batch.

@@ -186,6 +186,28 @@ async def lifespan(app):
                 text,
                 plugin.settings,
             )
+        for action, reason, intent in (
+            ("observe", "朋友们已经商量好周末安排，无需插话。", ""),
+            ("wait", "对方还在整理经过，先等后续输入。", ""),
+            (
+                "reply",
+                "对方向群内寻求陪伴，简短回应有帮助。",
+                "先接住失落情绪，再问是否愿意继续聊。",
+            ),
+        ):
+            await plugin.store.call(
+                "decide",
+                scope,
+                {
+                    "action": action,
+                    "confidence": 0.91,
+                    "reason": reason,
+                    "intent": intent,
+                },
+                "observe",
+                "observed",
+                plugin.settings,
+            )
         try:
             yield
         finally:
