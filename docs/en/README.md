@@ -39,6 +39,12 @@ For SiliconFlow, configure native `openai_embedding` with `embedding_api_base=ht
 
 Library ratings are reversible choices (helpful, less helpful, clear), not inferred user approval. History records prompt references reaching the host send stage, which does not establish delivery or model compliance. Usage counts do not increase confidence. Old habits gradually lose ranking weight without automatic deletion.
 
+## Language rhythm and independent jargon learning (0.11)
+
+Learning now describes each eligible speaker separately once four source messages are available: median/maximum character length, multiline messages, questions and enumerations. These summaries help infer contextual pacing; they are not evidence by themselves or hard reply limits. Other participants' volatile context never contributes to the summaries.
+
+Jargon uses its own category-specific pass so expression/rhythm extraction does not crowd out explicitly defined local terms. With all categories enabled, background learning normally makes two requests; word-only or non-word-only settings make one. Both passes and their one-time schema corrections share a 90-second budget. No partial result or source consumption occurs if either fails, and reply-time model calls are unchanged. Existing identity and style settings are preserved. See [rhythm verification](../evaluation/rhythm.md) for native MaiBot comparison conditions, failures and unscored anonymous samples.
+
 ## Target-only learning with neighbor context (0.10)
 
 Selecting learning targets now retains a bounded, volatile neighborhood from other participants in the same session/persona. Only target messages enter the plugin's SQLite materials, evidence and pending counts. Peer text helps establish the situation; it is not an eligible learning source. Each learning request includes at most 16 excerpts of 400 characters, from within two neighboring positions and five minutes of a target message. Cache limits are 64 messages per scope and 128 scopes. Background cleanup expires entries; restarts do not restore them. Settings changes clear this context, while profile changes and source clearing clear the affected scope.

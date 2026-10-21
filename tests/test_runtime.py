@@ -208,6 +208,12 @@ async def test_full_learning_review_and_request_application(plugin):
     scope = await sources(plugin)
     result = await plugin.learn(scope)
     assert result["status"] == "success" and result["count"] == 4
+    assert not json.loads(plugin.context.llm_generate.await_args.kwargs["prompt"])[
+        "language_features"
+    ]
+    assert not json.loads(
+        plugin.context.llm_generate.await_args_list[0].kwargs["prompt"]
+    )["language_features"]
     state = await plugin.store.call("state", scope)
     assert all(t["status"] == "pending" for t in state["traits"])
     req = ProviderRequest(prompt="好家伙", system_prompt="原有系统人格")
@@ -232,7 +238,7 @@ async def test_full_learning_review_and_request_application(plugin):
         plugin.page_api.preview, {"scope": scope, "query": "好家伙"}
     )
     assert "简短反问" in preview["data"]["guidance"]
-    plugin.context.llm_generate.assert_awaited_once()
+    assert plugin.context.llm_generate.await_count == 2
 
 
 async def test_sessions_and_selected_personas_have_separate_learning(plugin):
@@ -351,6 +357,95 @@ async def test_context_is_bounded_expiring_and_respects_scope_pause(plugin):
     assert scope not in plugin.learning_context
 
 
+async def test_language_features_use_only_eligible_sender_evidence(plugin):
+    plugin.settings["target_senders"] = ["alice"]
+    await plugin.capture(event("peer-question", "旁人长问题？" * 40, "bob"))
+    texts = [
+        "好，我听着。",
+        "那就先缓一缓。",
+        "收到。\n我们慢慢来。",
+        "1. 先喝水\n2. 再休息",
+    ]
+    for index, text in enumerate(texts):
+        await plugin.capture(event(f"rhythm-{index}", text, "alice"))
+    scope = (await plugin.store.call("state"))["scopes"][0]["id"]
+    assert (await plugin.learn(scope))["status"] == "success"
+    payload = json.loads(
+        plugin.context.llm_generate.await_args_list[0].kwargs["prompt"]
+    )
+    assert len(payload["language_features"]) == 1
+    features = payload["language_features"][0]
+    assert features["sender"] == "alice" and features["messages"] == 4
+    assert features["median_chars"] < 20 and features["max_chars"] < 30
+    assert features["multiline_messages"] == 2 and features["numbered_messages"] == 1
+    assert features["question_messages"] == 0
+    assert set(features["evidence_ids"]) == {m["id"] for m in payload["observations"]}
+
+
+async def test_language_features_keep_speakers_separate(plugin):
+    for index in range(4):
+        await plugin.capture(event(f"short-{index}", "好呀，我在听。", "alice"))
+        await plugin.capture(event(f"long-{index}", "请解释这个复杂问题？" * 12, "bob"))
+    scope = (await plugin.store.call("state"))["scopes"][0]["id"]
+    assert (await plugin.learn(scope))["status"] == "success"
+    payload = json.loads(
+        plugin.context.llm_generate.await_args_list[0].kwargs["prompt"]
+    )
+    features = {f["sender"]: f for f in payload["language_features"]}
+    assert features["alice"]["median_chars"] < 20
+    assert features["bob"]["median_chars"] > 100
+    assert features["alice"]["question_messages"] == 0
+    assert features["bob"]["question_messages"] == 4
+    assert not set(features["alice"]["evidence_ids"]) & set(
+        features["bob"]["evidence_ids"]
+    )
+
+
+async def test_word_pass_is_independent_and_failure_rolls_back_whole_batch(plugin):
+    scope = await sources(plugin)
+
+    async def fail_word(**kwargs):
+        payload = json.loads(kwargs["prompt"])
+        if payload["enabled_kinds"] == ["jargon"]:
+            assert not payload["language_features"]
+            raise ValueError("synthetic word phase failure")
+        assert "jargon" not in payload["enabled_kinds"]
+        return await completion(**kwargs)
+
+    plugin.context.llm_generate.side_effect = fail_word
+    outcome = await plugin.learn(scope)
+    assert outcome["status"] == "error"
+    state = await plugin.store.call("state", scope)
+    assert not state["traits"] and state["scope"]["pending"] == 2
+    plugin.context.llm_generate.side_effect = completion
+    assert (await plugin.learn(scope))["count"] == 4
+    state = await plugin.store.call("state", scope)
+    assert all(t["support_count"] == 1 for t in state["traits"])
+
+
+@pytest.mark.parametrize("word_only", [True, False])
+async def test_disabled_category_does_not_add_a_learning_request(plugin, word_only):
+    scope = await sources(plugin)
+    plugin.settings.update(
+        {
+            "learn_personality": not word_only,
+            "learn_expression": not word_only,
+            "learn_behavior": not word_only,
+            "learn_jargon": word_only,
+        }
+    )
+    outcome = await plugin.learn(scope)
+    assert outcome["status"] == "success"
+    assert plugin.context.llm_generate.await_count == 1
+    assert outcome["count"] == (1 if word_only else 3)
+
+
+async def test_expired_learning_budget_never_starts_a_provider_call(plugin):
+    with pytest.raises(asyncio.TimeoutError):
+        await plugin._learn_pass({"task": "synthetic"}, [], {}, [], "test-provider", 0)
+    plugin.context.llm_generate.assert_not_awaited()
+
+
 async def test_provider_errors_do_not_leak_details_or_consume_material(plugin):
     scope = await sources(plugin)
     plugin.context.llm_generate.side_effect = ValueError(
@@ -381,13 +476,14 @@ async def test_schema_drift_gets_one_correction_with_original_evidence(plugin):
     plugin.context.llm_generate.side_effect = [
         SimpleNamespace(completion_text='说明：```json\n{"profile_updates": []}\n```'),
         valid,
+        valid,
     ]
     result = await plugin.learn(scope)
     assert result["status"] == "success" and result["count"] == 4
-    assert plugin.context.llm_generate.await_count == 2
+    assert plugin.context.llm_generate.await_count == 3
     first, second = [
         json.loads(call.kwargs["prompt"])
-        for call in plugin.context.llm_generate.await_args_list
+        for call in plugin.context.llm_generate.await_args_list[:2]
     ]
     assert first["task"] and second["observations"] == first["observations"]
     assert "profile_updates" in second["format_error"]

@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.11.0
+
+- Include per-sender language rhythm summaries from at least four eligible source messages: median/maximum length, paragraph use, questions and enumerated lists, with original evidence IDs. Keep peers and different speakers separate.
+- Learn contextual pacing alongside recognizable expressions without turning sample lengths into fixed reply limits. Keep detailed user requests complete and prevent learned habits alone from adding unrelated advice or checklists.
+- Analyze jargon in its own enabled-category pass so rhythm and expression mining do not crowd out explicitly defined local terms. Share a 90-second budget across both passes and their schema corrections; commit and consume sources only after the complete batch succeeds.
+- Add a native MaiBot learning-to-reply evaluator, explicit endpoint adaptation and a controlled Planner identity. Retain actual learning, vector retrieval, scoped jargon, Planner reply references and native reply generation without predefined habits.
+- Extend fictional replay to diverse expressions and a new local term, with separate detailed-request regressions. Keep whole-bot quality claims outside these limited checks.
+
 ## 0.10.0
 
 - Preserve scoped, volatile neighbor context when learning from selected users, so replies retain their conversational conditions without treating peers as learning sources. Keep peer text out of SQLite, evidence and pending counts.
