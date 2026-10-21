@@ -30,7 +30,7 @@ from astrbot.api.star import StarTools  # noqa: E402
 from astrbot.api.web import PluginRequest, bind_request_context  # noqa: E402
 from starlette.requests import Request  # noqa: E402
 
-from astrbot_plugin_persona.main import (  # noqa: E402
+from astrbot_plugin_ovenheart.main import (  # noqa: E402
     ObservationFilter,
     PersonaPlugin,
     SessionPluginManager,
@@ -183,7 +183,7 @@ async def api_call(handler, body=None, query=""):
     )
     with bind_request_context(
         PluginRequest(
-            request, plugin_name="astrbot_plugin_persona", username="test-admin"
+            request, plugin_name="astrbot_plugin_ovenheart", username="test-admin"
         )
     ):
         return await handler()
@@ -268,6 +268,94 @@ async def test_provider_errors_do_not_leak_details_or_consume_material(plugin):
     assert (await plugin.store.call("state", scope))["scope"]["pending"] == 2
 
 
+async def test_schema_drift_gets_one_correction_with_original_evidence(plugin):
+    scope = await sources(plugin)
+    valid = await completion(
+        **{
+            "prompt": json.dumps(
+                {"observations": await plugin.store.call("batch", scope, 30)}
+            )
+        }
+    )
+    plugin.context.llm_generate.side_effect = [
+        SimpleNamespace(completion_text='说明：```json\n{"profile_updates": []}\n```'),
+        valid,
+    ]
+    result = await plugin.learn(scope)
+    assert result["status"] == "success" and result["count"] == 4
+    assert plugin.context.llm_generate.await_count == 2
+    first, second = [
+        json.loads(call.kwargs["prompt"])
+        for call in plugin.context.llm_generate.await_args_list
+    ]
+    assert first["task"] and second["observations"] == first["observations"]
+    assert "profile_updates" in second["format_error"]
+
+
+async def test_repeated_bad_format_is_bounded_and_preserves_material(plugin):
+    scope = await sources(plugin)
+    plugin.context.llm_generate.side_effect = None
+    plugin.context.llm_generate.return_value = SimpleNamespace(
+        completion_text="无法提供结果"
+    )
+    result = await plugin.learn(scope)
+    assert result["status"] == "error" and "自动纠正" in result["message"]
+    assert plugin.context.llm_generate.await_count == 2
+    assert (await plugin.store.call("state", scope))["scope"]["pending"] == 2
+
+
+async def test_fabricated_evidence_never_triggers_format_repair(plugin):
+    scope = await sources(plugin)
+    plugin.context.llm_generate.side_effect = None
+    plugin.context.llm_generate.return_value = SimpleNamespace(
+        completion_text='{"traits":[{"kind":"expression","situation":"日常","content":"简短","confidence":0.9,"evidence_ids":[999]}]}'
+    )
+    result = await plugin.learn(scope)
+    assert result["status"] == "error" and "证据" in result["message"]
+    assert plugin.context.llm_generate.await_count == 1
+
+
+async def test_application_is_not_usage_until_host_send_stage(plugin):
+    scope = await sources(plugin)
+    await plugin.learn(scope)
+    trait = next(
+        t
+        for t in (await plugin.store.call("state", scope))["traits"]
+        if t["kind"] == "expression"
+    )
+    await plugin.store.call(
+        "mutate", scope, "trait", {"id": trait["id"], "status": "active"}
+    )
+    incoming = event("4")
+    await plugin.apply_persona(
+        incoming, ProviderRequest(prompt="好家伙", system_prompt="")
+    )
+    state = await plugin.store.call("state", scope)
+    assert not state["applications"]
+    await plugin.record_delivery(incoming)
+    await plugin.record_delivery(incoming)
+    state = await plugin.store.call("state", scope)
+    assert len(state["applications"]) == 1
+    assert next(t for t in state["traits"] if t["id"] == trait["id"])["use_count"] == 1
+    result = await api_call(
+        plugin.page_api.action,
+        {
+            "action": "feedback",
+            "scope": scope,
+            "payload": {"id": trait["id"], "rating": -1},
+        },
+    )
+    assert result["status"] == "ok"
+    assert (
+        next(
+            t
+            for t in (await plugin.store.call("state", scope))["traits"]
+            if t["id"] == trait["id"]
+        )["rating"]
+        == -1
+    )
+
+
 async def test_pause_in_flight_rejects_late_output_and_retains_material(plugin):
     scope = await sources(plugin)
     entered, release = asyncio.Event(), asyncio.Event()
@@ -347,7 +435,7 @@ async def test_native_view_discovery_and_localized_title():
 
     manager = SimpleNamespace(plugin_store_path=str(PLUGIN_ROOT.parent))
     metadata = StarMetadata(
-        name="astrbot_plugin_persona", root_dir_name=PLUGIN_ROOT.name
+        name="astrbot_plugin_ovenheart", root_dir_name=PLUGIN_ROOT.name
     )
     service = PluginPageService(manager)
     pages = await service.discover_plugin_pages(metadata)

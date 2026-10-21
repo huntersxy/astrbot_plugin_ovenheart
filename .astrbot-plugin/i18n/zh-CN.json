@@ -1,4 +1,10 @@
 {
-  "metadata": {"display_name": "Persona 人格工坊"},
-  "views": {"workshop": {"title": "人格工坊"}}
+  "metadata": {
+    "display_name": "烤箱之心"
+  },
+  "views": {
+    "workshop": {
+      "title": "人格工坊"
+    }
+  }
 }

@@ -7,6 +7,7 @@ import hashlib
 import json
 import sqlite3
 import time
+from difflib import SequenceMatcher
 from pathlib import Path
 
 from .settings import PROFILE_DEFAULTS
@@ -59,12 +60,27 @@ class Store:
         finally:
             connection.close()
 
-    def initialize(self, db):
+    def initialize(self, db, legacy_path=None):
         """Create schema and mark interrupted runs as retryable failures.
 
         Args:
             db: Open database connection.
+            legacy_path: Old plugin database, copied only into an empty database.
         """
+        if (
+            legacy_path is not None
+            and legacy_path.is_file()
+            and not db.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' LIMIT 1"
+            ).fetchone()
+        ):
+            source = sqlite3.connect(
+                legacy_path.as_uri() + "?mode=ro", uri=True, timeout=10
+            )
+            try:
+                source.backup(db)
+            finally:
+                source.close()
         db.executescript("""
             PRAGMA journal_mode=WAL;
             CREATE TABLE IF NOT EXISTS settings (id INTEGER PRIMARY KEY CHECK(id=1), value TEXT NOT NULL);
@@ -94,7 +110,45 @@ class Store:
                 id INTEGER PRIMARY KEY, scope TEXT NOT NULL, action TEXT NOT NULL,
                 snapshot TEXT NOT NULL, created REAL NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS trait_aliases (
+                scope TEXT NOT NULL, fingerprint TEXT NOT NULL, trait_id INTEGER NOT NULL,
+                PRIMARY KEY(scope, fingerprint)
+            );
+            CREATE TABLE IF NOT EXISTS embeddings (
+                trait_id INTEGER NOT NULL, provider TEXT NOT NULL, digest TEXT NOT NULL,
+                vector TEXT NOT NULL, PRIMARY KEY(trait_id, provider)
+            );
+            CREATE TABLE IF NOT EXISTS applications (
+                id INTEGER PRIMARY KEY, scope TEXT NOT NULL, event_key TEXT NOT NULL UNIQUE,
+                trait_ids TEXT NOT NULL, mode TEXT NOT NULL, created REAL NOT NULL
+            );
         """)
+        columns = {r[1] for r in db.execute("PRAGMA table_info(traits)")}
+        for column, definition in {
+            "support_count": "INTEGER NOT NULL DEFAULT 1",
+            "evidence_count": "INTEGER NOT NULL DEFAULT 0",
+            "last_seen": "REAL NOT NULL DEFAULT 0",
+            "use_count": "INTEGER NOT NULL DEFAULT 0",
+            "last_used": "REAL NOT NULL DEFAULT 0",
+            "rating": "INTEGER NOT NULL DEFAULT 0",
+            "manual": "INTEGER NOT NULL DEFAULT 0",
+            "meaning_stage": "INTEGER NOT NULL DEFAULT 0",
+        }.items():
+            if column not in columns:
+                db.execute(f"ALTER TABLE traits ADD COLUMN {column} {definition}")
+        for row in db.execute(
+            "SELECT id, evidence, created FROM traits WHERE evidence_count=0"
+        ):
+            db.execute(
+                "UPDATE traits SET evidence_count=?, last_seen=? WHERE id=?",
+                (len(json.loads(row["evidence"])), row["created"], row["id"]),
+            )
+        db.execute(
+            "INSERT OR IGNORE INTO trait_aliases SELECT scope, fingerprint, id FROM traits"
+        )
+        if "manual" not in columns:
+            # Previous releases did not distinguish operator edits from model output.
+            db.execute("UPDATE traits SET manual=1")
         db.execute(
             "UPDATE runs SET status='error', finished=?, message=? WHERE status='running'",
             (time.time(), "插件重启中断了学习，素材已保留，可重新学习。"),
@@ -198,6 +252,7 @@ class Store:
             "traits": [],
             "runs": [],
             "revisions": [],
+            "applications": [],
         }
         selected = next((s for s in scopes if s["id"] == scope), None)
         if selected:
@@ -225,6 +280,13 @@ class Store:
                     (scope,),
                 )
             ]
+            result["applications"] = [
+                dict(row) | {"trait_ids": json.loads(row["trait_ids"])}
+                for row in db.execute(
+                    "SELECT * FROM applications WHERE scope=? ORDER BY id DESC LIMIT 30",
+                    (scope,),
+                )
+            ]
         return result
 
     def batch(self, db, scope, size):
@@ -245,6 +307,28 @@ class Store:
                 (scope, size),
             )
         ]
+
+    def guidance(self, db, scope):
+        """Load only the fields needed on the reply path, excluding evidence bodies.
+
+        Args:
+            db: Open database connection.
+            scope: Session/persona key.
+
+        Returns:
+            Profile and compact ranking records, without dashboard history.
+        """
+        row = db.execute("SELECT profile FROM scopes WHERE id=?", (scope,)).fetchone()
+        return {
+            "scope": {"profile": json.loads(row[0])} if row else None,
+            "traits": [
+                dict(t)
+                for t in db.execute(
+                    "SELECT id,kind,situation,content,confidence,status,created,updated,support_count,evidence_count,last_seen,use_count,rating FROM traits WHERE scope=? AND status='active' ORDER BY updated DESC LIMIT 1000",
+                    (scope,),
+                )
+            ],
+        }
 
     def start_run(self, db, scope):
         """Create a running batch record.
@@ -291,6 +375,14 @@ class Store:
         """
         now = time.time()
         added = 0
+        reinforced = 0
+        run = db.execute(
+            "SELECT status FROM runs WHERE id=? AND scope=?", (run_id, scope)
+        ).fetchone()
+        if not run:
+            raise ValueError("学习批次不存在或不属于当前会话。")
+        if run["status"] != "running":
+            return 0
         if not error:
             settings = settings | self.settings(db)
             profile = json.loads(
@@ -315,6 +407,24 @@ class Store:
                 if settings[f"learn_{t['kind']}"]
                 and len(t["evidence"]) >= settings["min_evidence"]
             ]
+            if traits:
+                snapshot = {
+                    "profile": profile,
+                    "traits": [
+                        dict(t)
+                        for t in db.execute(
+                            "SELECT * FROM traits WHERE scope=?", (scope,)
+                        )
+                    ],
+                }
+                db.execute(
+                    "INSERT INTO revisions(scope, action, snapshot, created) VALUES (?, 'learning', ?, ?)",
+                    (scope, json.dumps(snapshot, ensure_ascii=False), now),
+                )
+                db.execute(
+                    "DELETE FROM revisions WHERE scope=? AND id NOT IN (SELECT id FROM revisions WHERE scope=? ORDER BY id DESC LIMIT 30)",
+                    (scope, scope),
+                )
             for trait in traits:
                 fingerprint = hashlib.sha256(
                     json.dumps(
@@ -326,6 +436,125 @@ class Store:
                         ensure_ascii=False,
                     ).encode()
                 ).hexdigest()
+                target = db.execute(
+                    "SELECT t.* FROM traits t JOIN trait_aliases a ON a.trait_id=t.id WHERE a.scope=? AND a.fingerprint=?",
+                    (scope, fingerprint),
+                ).fetchone()
+                if target is None and trait.get("merge_id") is not None:
+                    target = db.execute(
+                        "SELECT * FROM traits WHERE scope=? AND id=? AND kind=?",
+                        (scope, trait["merge_id"], trait["kind"]),
+                    ).fetchone()
+                    if target is None:
+                        raise ValueError("合并目标已不存在，素材保留，请重新学习。")
+                if target is None:
+                    for existing in db.execute(
+                        "SELECT * FROM traits WHERE scope=? AND kind=? ORDER BY updated DESC LIMIT 1000",
+                        (scope, trait["kind"]),
+                    ):
+                        if (
+                            SequenceMatcher(
+                                None,
+                                existing["content"].casefold(),
+                                trait["content"].casefold(),
+                            ).ratio()
+                            >= 0.92
+                            and SequenceMatcher(
+                                None,
+                                existing["situation"].casefold(),
+                                trait["situation"].casefold(),
+                            ).ratio()
+                            >= 0.88
+                        ):
+                            target = existing
+                            break
+                if target is not None:
+                    db.execute(
+                        "INSERT OR IGNORE INTO trait_aliases VALUES (?, ?, ?)",
+                        (scope, fingerprint, target["id"]),
+                    )
+                    # Human decisions are authoritative, even for paraphrased candidates.
+                    if target["status"] in ("rejected", "disabled"):
+                        continue
+                    evidence = json.loads(target["evidence"])
+                    keys = {
+                        e.get("source_id") or f"{e['id']}:{e['created']}"
+                        for e in evidence
+                    }
+                    new_evidence = []
+                    for item in trait["evidence"]:
+                        key = item.get("source_id") or f"{item['id']}:{item['created']}"
+                        if key not in keys:
+                            keys.add(key)
+                            new_evidence.append(item)
+                    if not new_evidence:
+                        continue
+                    count = target["support_count"] + 1
+                    confidence = (
+                        target["confidence"] * target["support_count"]
+                        + trait["confidence"]
+                    ) / count
+                    stage = target["meaning_stage"]
+                    situation, content, status = (
+                        target["situation"],
+                        target["content"],
+                        target["status"],
+                    )
+                    # Refine jargon only as independent batches accumulate: 2, 4, 8, 16.
+                    if (
+                        trait["kind"] == "jargon"
+                        and not target["manual"]
+                        and stage < 4
+                        and count >= 2 ** (stage + 1)
+                    ):
+                        old_term = (
+                            content.replace("：", ":")
+                            .split(":", 1)[0]
+                            .strip()
+                            .casefold()
+                        )
+                        new_term = (
+                            trait["content"]
+                            .replace("：", ":")
+                            .split(":", 1)[0]
+                            .strip()
+                            .casefold()
+                        )
+                        if old_term == new_term:
+                            stage += 1
+                            situation, content = trait["situation"], trait["content"]
+                            if (
+                                content != target["content"]
+                                or situation != target["situation"]
+                            ):
+                                status = "pending"
+                    if (
+                        not target["manual"]
+                        and status == "pending"
+                        and settings["activation_mode"] == "auto"
+                        and confidence >= settings["auto_confidence"]
+                    ):
+                        status = "active"
+                    db.execute(
+                        "UPDATE traits SET evidence=?, evidence_count=evidence_count+?, support_count=?, last_seen=?, confidence=?, situation=?, content=?, status=?, meaning_stage=?, updated=? WHERE id=?",
+                        (
+                            json.dumps(
+                                (evidence + new_evidence)[-32:], ensure_ascii=False
+                            ),
+                            len(new_evidence),
+                            count,
+                            now,
+                            target["confidence"] if target["manual"] else confidence,
+                            situation,
+                            content,
+                            status,
+                            stage,
+                            now,
+                            target["id"],
+                        ),
+                    )
+                    reinforced += 1
+                    continue
                 status = (
                     "active"
                     if settings["activation_mode"] == "auto"
@@ -348,7 +577,16 @@ class Store:
                         now,
                     ),
                 )
-                added += cursor.rowcount
+                if cursor.rowcount:
+                    added += 1
+                    db.execute(
+                        "UPDATE traits SET evidence_count=?, last_seen=? WHERE id=?",
+                        (len(trait["evidence"]), now, cursor.lastrowid),
+                    )
+                    db.execute(
+                        "INSERT OR IGNORE INTO trait_aliases VALUES (?, ?, ?)",
+                        (scope, fingerprint, cursor.lastrowid),
+                    )
             db.executemany(
                 "UPDATE messages SET consumed=1 WHERE scope=? AND id=?",
                 [(scope, m["id"]) for m in messages],
@@ -359,7 +597,8 @@ class Store:
                 "error" if error else "success",
                 now,
                 added,
-                error or f"分析 {len(messages)} 条素材，新增 {added} 条学习结果。",
+                error
+                or f"分析 {len(messages)} 条素材，新增 {added} 条，补充证据 {reinforced} 条。",
                 memory,
                 run_id,
             ),
@@ -369,6 +608,74 @@ class Store:
             (scope, scope),
         )
         return added
+
+    def vectors(self, db, provider, scope, entries=None):
+        """Read or update content-addressed vectors for one model signature.
+
+        Args:
+            db: Open database connection.
+            provider: Non-secret provider/model signature.
+            scope: Session/persona scope to isolate vector reads.
+            entries: Optional validated vector records.
+
+        Returns:
+            Cached vectors indexed by trait identifier.
+        """
+        if entries is not None:
+            for item in entries:
+                db.execute(
+                    "DELETE FROM embeddings WHERE trait_id=? AND provider<>?",
+                    (item["id"], provider),
+                )
+                db.execute(
+                    "INSERT OR REPLACE INTO embeddings VALUES (?, ?, ?, ?)",
+                    (item["id"], provider, item["digest"], json.dumps(item["vector"])),
+                )
+        return {
+            r["trait_id"]: {"digest": r["digest"], "vector": json.loads(r["vector"])}
+            for r in db.execute(
+                "SELECT e.* FROM embeddings e JOIN traits t ON t.id=e.trait_id WHERE provider=? AND t.scope=?",
+                (provider, scope),
+            )
+        }
+
+    def applied(self, db, scope, event_key, ids, mode):
+        """Record delivery once, without treating exposure as positive feedback.
+
+        Args:
+            db: Open database connection.
+            scope: Session/persona key.
+            event_key: Unique delivery identity shared by repeated hooks.
+            ids: Habits that fit the actual prompt budget.
+            mode: Retrieval mode used for selection.
+
+        Returns:
+            Whether a new delivery was recorded.
+        """
+        now = time.time()
+        valid = [
+            r[0]
+            for r in db.execute(
+                "SELECT id FROM traits WHERE scope=? AND status='active'", (scope,)
+            )
+            if r[0] in ids
+        ]
+        if not valid:
+            return False
+        cursor = db.execute(
+            "INSERT OR IGNORE INTO applications(scope, event_key, trait_ids, mode, created) VALUES (?, ?, ?, ?, ?)",
+            (scope, event_key, json.dumps(valid), mode, now),
+        )
+        if cursor.rowcount:
+            db.executemany(
+                "UPDATE traits SET use_count=use_count+1, last_used=? WHERE id=?",
+                [(now, i) for i in valid],
+            )
+        db.execute(
+            "DELETE FROM applications WHERE scope=? AND id NOT IN (SELECT id FROM applications WHERE scope=? ORDER BY id DESC LIMIT 200)",
+            (scope, scope),
+        )
+        return cursor.rowcount == 1
 
     def mutate(self, db, scope, action, payload):
         """Version and mutate a profile or learned entries in one transaction.
@@ -405,7 +712,7 @@ class Store:
                 "UPDATE scopes SET profile=?, updated=? WHERE id=?",
                 (json.dumps(profile, ensure_ascii=False), time.time(), scope),
             )
-        elif action == "trait":
+        elif action in ("trait", "feedback"):
             row = db.execute(
                 "SELECT id FROM traits WHERE scope=? AND id=?", (scope, payload["id"])
             ).fetchone()
@@ -414,12 +721,22 @@ class Store:
             updates = {
                 k: v
                 for k, v in payload.items()
-                if k in ("content", "situation", "status")
+                if k
+                in (
+                    ("rating",)
+                    if action == "feedback"
+                    else ("content", "situation", "status")
+                )
             }
             for key, value in updates.items():
                 db.execute(
                     f"UPDATE traits SET {key}=?, updated=? WHERE scope=? AND id=?",
                     (value, time.time(), scope, payload["id"]),
+                )
+            if action == "trait":
+                db.execute(
+                    "UPDATE traits SET manual=1 WHERE scope=? AND id=?",
+                    (scope, payload["id"]),
                 )
         elif action == "restore":
             revision = db.execute(
@@ -434,7 +751,9 @@ class Store:
                 (json.dumps(data["profile"], ensure_ascii=False), scope),
             )
             # Keep later entries as disabled tombstones so relearning cannot undo rollback.
-            db.execute("UPDATE traits SET status='disabled' WHERE scope=?", (scope,))
+            db.execute(
+                "UPDATE traits SET status='disabled', manual=1 WHERE scope=?", (scope,)
+            )
             for trait in data["traits"]:
                 db.execute(
                     "UPDATE traits SET situation=?, content=?, confidence=?, evidence=?, status=?, updated=? WHERE scope=? AND id=?",
@@ -449,6 +768,19 @@ class Store:
                         trait["id"],
                     ),
                 )
+                for key in (
+                    "support_count",
+                    "evidence_count",
+                    "last_seen",
+                    "rating",
+                    "manual",
+                    "meaning_stage",
+                ):
+                    if key in trait:
+                        db.execute(
+                            f"UPDATE traits SET {key}=? WHERE scope=? AND id=?",
+                            (trait[key], scope, trait["id"]),
+                        )
         elif action == "clear_messages":
             db.execute("DELETE FROM messages WHERE scope=?", (scope,))
         else:

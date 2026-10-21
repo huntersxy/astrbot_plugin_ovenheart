@@ -25,7 +25,7 @@ class PageAPI:
             ("preview", self.preview, "POST"),
         ):
             self.plugin.context.register_web_api(
-                f"/astrbot_plugin_persona/{route}",
+                f"/astrbot_plugin_ovenheart/{route}",
                 handler,
                 [method],
                 f"Persona workshop {route}",
@@ -44,6 +44,13 @@ class PageAPI:
             settings=self.plugin.settings,
             memory=self.plugin.memory.status(),
             busy=list(self.plugin.busy),
+            retrieval=self.plugin.retriever.status.get(
+                request.query.get("scope"),
+                {
+                    "mode": "idle",
+                    "message": "真实回复后显示检索状态；免费预览使用文字相关性。",
+                },
+            ),
         )
         return {"status": "ok", "data": state}
 
@@ -102,6 +109,14 @@ class PageAPI:
                             raise ValueError("学习和应用开关必须为布尔值。")
                     elif not isinstance(value, str) or len(value) > 1000:
                         raise ValueError("每项人格设定最多 1000 字。")
+            elif operation == "feedback":
+                if (
+                    set(payload) != {"id", "rating"}
+                    or type(payload["id"]) is not int
+                    or type(payload["rating"]) is not int
+                    or payload["rating"] not in (-1, 0, 1)
+                ):
+                    raise ValueError("反馈必须包含有效条目与 -1、0、1 评价。")
             elif operation == "trait":
                 if (
                     set(payload) - {"id", "status", "content", "situation"}
@@ -158,18 +173,37 @@ class PageAPI:
                 or not isinstance(body.get("query", ""), str)
             ):
                 raise ValueError("请选择会话并输入有效的预览文本。")
-            state = await self.plugin.store.call("state", body["scope"])
+            state = await self.plugin.store.call("guidance", body["scope"])
             if not state["scope"]:
                 raise ValueError("请先选择已有会话。")
+            selection = await self.plugin.retriever.select(
+                body["scope"],
+                state["traits"],
+                body.get("query", "")[:1200],
+                self.plugin.settings,
+                semantic=False,
+            )
+            included_ids = []
             guidance = build_guidance(
                 state["scope"]["profile"],
-                state["traits"],
+                selection["traits"],
                 self.plugin.settings,
                 body.get("query", "")[:1200],
+                selected=True,
+                included_ids=included_ids,
             )
             return {
                 "status": "ok",
-                "data": {"guidance": guidance, "length": len(guidance)},
+                "data": {
+                    "guidance": guidance,
+                    "length": len(guidance),
+                    "retrieval": selection["message"],
+                    "selected": [
+                        {"id": t["id"], "reason": t["_reason"], "score": t["_score"]}
+                        for t in selection["traits"]
+                        if t["id"] in included_ids
+                    ],
+                },
             }
         except (ValueError, UnicodeDecodeError) as exc:
             return {

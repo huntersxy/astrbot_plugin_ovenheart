@@ -2,7 +2,7 @@ const $ = (selector) => document.querySelector(selector);
 const escape = (value) => String(value ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;"}[c]));
 const kinds = {personality:"人格倾向", expression:"表达方式", jargon:"群聊词汇", behavior:"行为策略"};
 const statuses = {pending:"待审核", active:"已生效", rejected:"已拒绝", disabled:"已停用", success:"学习完成", error:"学习失败", running:"学习中"};
-const actions = {profile:"修改人格底稿", trait:"调整学习条目", restore:"恢复历史版本", clear_messages:"清除原始素材"};
+const actions = {profile:"修改人格底稿", trait:"调整学习条目", restore:"恢复历史版本", clear_messages:"清除原始素材", feedback:"调整习惯评价", learning:"合并学习结果"};
 const date = value => new Date(value * 1000).toLocaleString("zh-CN", {month:"2-digit", day:"2-digit", hour:"2-digit", minute:"2-digit"});
 let bridge, data, selectedScope = "", tab = "profile", selectedTrait = null, category = "all", status = "pending", pending = false, polling = false, dirty = false;
 
@@ -86,7 +86,7 @@ function renderProfile() {
     ${field("behavior", "行为准则", p.behavior, "例如：先倾听；拿不准时先澄清；对方难过时少说教。")}
     <div class="switches">${switchField("learning_enabled", "积累并学习", "仅影响当前会话与人格", p.learning_enabled)}${switchField("apply_enabled", "应用已生效的习惯", "关闭后保留全部学习数据", p.apply_enabled)}</div>
     <button class="primary" type="submit">保存人格底稿</button></form>
-    <aside class="preview"><h2>看看它会带上哪些习惯</h2><p>输入一句可能出现的话，查看本插件会追加给模型的表达参考。这里不会调用模型或发送消息。</p><form id="preview-form"><label for="preview-query">试一句话</label><textarea id="preview-query" placeholder="例如：今天又搞砸了，有点难过。" maxlength="1200"></textarea><button class="tonal" type="submit">预览生效内容</button></form><pre id="preview-output" hidden></pre><p class="muted">仅展示本插件的补充内容，最终回复仍由 AstrBot 的人格、上下文和模型共同决定。</p></aside></div>`;
+    <aside class="preview"><h2>看看它会带上哪些习惯</h2><p>输入一句可能出现的话，查看本插件会追加给模型的表达参考。免费预览使用文字检索，不调用模型或发送消息；真实回复可结合语义检索。</p><form id="preview-form"><label for="preview-query">试一句话</label><textarea id="preview-query" placeholder="例如：今天又搞砸了，有点难过。" maxlength="1200"></textarea><button class="tonal" type="submit">预览生效内容</button></form><pre id="preview-output" hidden></pre><p class="muted">仅展示本插件的补充内容，最终回复仍由 AstrBot 的人格、上下文和模型共同决定。</p></aside></div>`;
   $("#profile-form").addEventListener("submit", async event => {
     event.preventDefault();
     const form = event.currentTarget;
@@ -95,7 +95,7 @@ function renderProfile() {
   $("#preview-form").addEventListener("submit", event => guarded(async () => {
     const result = await api("preview", {scope:selectedScope, query:$("#preview-query").value});
     $("#preview-output").hidden = false;
-    $("#preview-output").textContent = result.guidance || "当前没有生效的补充内容。可审核学习结果，或检查全局与当前会话的应用开关。";
+    $("#preview-output").textContent = `${result.retrieval || ""}\n${(result.selected || []).map(t => `#${t.id} ${t.reason}`).join("；")}\n\n${result.guidance || "当前没有生效的补充内容。可审核学习结果，或检查全局与当前会话的应用开关。"}`.trim();
   }, event));
 }
 
@@ -104,7 +104,7 @@ function renderLibrary() {
   if (!traits.some(t => t.id === selectedTrait)) selectedTrait = traits[0]?.id;
   const trait = traits.find(t => t.id === selectedTrait);
   $("#content").innerHTML = `<div class="filter-row"><label for="kind-filter">类别</label><select id="kind-filter"><option value="all">全部类别</option>${Object.entries(kinds).map(([value, name]) => `<option value="${value}" ${category === value ? "selected" : ""}>${name}</option>`).join("")}</select><label for="status-filter">状态</label><select id="status-filter">${Object.entries({pending:"待审核", active:"已生效", disabled:"已停用", rejected:"已拒绝", all:"全部状态"}).map(([value, name]) => `<option value="${value}" ${status === value ? "selected" : ""}>${name}</option>`).join("")}</select><span class="muted">${traits.length} 条结果</span></div>
-    ${traits.length ? `<div class="library"><div class="trait-list" aria-label="学习条目">${traits.map(t => `<button type="button" class="trait-row" data-trait="${t.id}" aria-pressed="${selectedTrait === t.id}"><span class="row-meta"><span>${kinds[t.kind]}</span><span class="badge ${t.status}">${statuses[t.status]}</span></span><strong>${escape(t.situation)}</strong><p>${escape(t.content)}</p><span class="row-meta">${t.evidence.length} 条来源 · 置信度 ${Math.round(t.confidence * 100)}%</span></button>`).join("")}</div><article class="detail"><h2>${kinds[trait.kind]}</h2><form id="trait-form">${field("situation", "适用情境", trait.situation, "只在适合的情境里使用，不必每次重复。", {maxlength:160})}${field("content", "习惯内容", trait.content, "你可以在生效前调整表达；编辑不会自动改变审核状态。", {maxlength:350})}<button type="submit">保存编辑</button></form><div class="actions">${trait.status !== "active" ? '<button class="primary" data-review="active">批准生效</button>' : '<button data-review="disabled">停用这条</button>'}${trait.status === "pending" ? '<button class="danger" data-review="rejected">拒绝学习</button>' : '<button data-review="pending">移回待审核</button>'}</div><div class="evidence"><h3>学习来源</h3>${trait.evidence.map(e => `<blockquote><p>${escape(e.text)}</p><small>${escape(e.sender)} · ${date(e.created)}</small></blockquote>`).join("")}</div></article></div>` : empty(status === "pending" ? "这里等待下一次发现" : "还没有这类学习结果", "素材积累后会自动批量学习，也可以点击「开始学习」。自动生效模式下，高置信度结果会进入「已生效」，其余结果仍等待审核。")}`;
+    ${traits.length ? `<div class="library"><div class="trait-list" aria-label="学习条目">${traits.map(t => `<button type="button" class="trait-row" data-trait="${t.id}" aria-pressed="${selectedTrait === t.id}"><span class="row-meta"><span>${kinds[t.kind]}</span><span class="badge ${t.status}">${statuses[t.status]}</span></span><strong>${escape(t.situation)}</strong><p>${escape(t.content)}</p><span class="row-meta">${t.evidence_count || t.evidence.length} 条证据 / ${t.support_count || 1} 批 · 置信度 ${Math.round(t.confidence * 100)}%</span></button>`).join("")}</div><article class="detail"><h2>${kinds[trait.kind]}</h2><form id="trait-form">${field("situation", "适用情境", trait.situation, "只在适合的情境里使用，不必每次重复。", {maxlength:160})}${field("content", "习惯内容", trait.content, "你可以在生效前调整表达；编辑不会自动改变审核状态。", {maxlength:350})}<button type="submit">保存编辑</button></form><div class="actions">${trait.status !== "active" ? '<button class="primary" data-review="active">批准生效</button>' : '<button data-review="disabled">停用这条</button>'}${trait.status === "pending" ? '<button class="danger" data-review="rejected">拒绝学习</button>' : '<button data-review="pending">移回待审核</button>'}</div><section class="evidence"><h3>积累与应用</h3><p class="muted">${trait.support_count || 1} 批独立素材，累计 ${trait.evidence_count || trait.evidence.length} 条证据。引用 ${trait.use_count || 0} 次；引用次数不代表模型采用或消息送达。${trait.manual ? " 人工决定已锁定，后续学习只补充证据。" : ""}</p><p class="muted">当前评价：${trait.rating === 1 ? "更合适" : trait.rating === -1 ? "不太合适" : "尚未评价"}</p><div class="actions" aria-label="习惯效果评价">${[[1,"更合适"],[-1,"不太合适"],[0,"清除评价"]].map(([value,label]) => `<button type="button" data-feedback="${value}" aria-pressed="${(trait.rating || 0) === value}">${label}</button>`).join("")}</div><p class="muted">评价调整后续排序；不合适的习惯也可直接停用。</p></section><div class="evidence"><h3>最近的学习来源</h3><p class="muted">最多展示最近 32 条摘录，累计证据数保留。</p>${trait.evidence.map(e => `<blockquote><p>${escape(e.text)}</p><small>${escape(e.sender)} · ${date(e.created)}</small></blockquote>`).join("")}</div></article></div>` : empty(status === "pending" ? "这里等待下一次发现" : "还没有这类学习结果", "素材积累后会自动批量学习，也可以点击「开始学习」。自动生效模式下，高置信度结果会进入「已生效」，其余结果仍等待审核。")}`;
   $("#kind-filter").onchange = async event => {
     const next = event.target.value; event.target.value = category;
     if (dirty && !await confirmAction("切换类别会放弃未保存的编辑，继续？")) return;
@@ -117,6 +117,7 @@ function renderLibrary() {
   };
   for (const button of document.querySelectorAll("[data-trait]")) button.onclick = async () => { if (dirty && !await confirmAction("放弃当前未保存的编辑？")) return; dirty = false; selectedTrait = Number(button.dataset.trait); renderLibrary(); };
   if (trait) {
+    for (const button of document.querySelectorAll("[data-feedback]")) button.onclick = async () => { if (dirty && !await confirmAction("评价会放弃未保存的编辑，继续？")) return; mutate("feedback", {id:trait.id, rating:Number(button.dataset.feedback)}); };
     $("#trait-form").onsubmit = async event => { event.preventDefault(); const form = event.currentTarget; await mutate("trait", {id:trait.id, situation:form.situation.value, content:form.content.value}); };
     for (const button of document.querySelectorAll("[data-review]")) button.onclick = () => mutate("trait", {id:trait.id, status:button.dataset.review, situation:$("#field-situation").value, content:$("#field-content").value});
   }
@@ -124,7 +125,7 @@ function renderLibrary() {
 
 function renderHistory() {
   $("#content").innerHTML = `<h2>每一次学习，都有迹可循</h2><p class="section-intro">成功批次才会消耗素材；失败批次保留素材，修复原因后可以重新学习。</p>${data.runs.length ? data.runs.map(run => `<article class="history-row"><time>${date(run.started)}</time><span class="badge ${run.status}">${statuses[run.status]}</span><div><p>${escape(run.message || "正在分析本批素材…")}</p><small>${escape(run.memory)}</small></div></article>`).join("") : empty("还没有学习记录", "完成一次自动或手动学习后，这里会展示结果和记忆联动情况。")}
-    <section class="versions"><h2>修改前的版本</h2><p class="section-intro">每次编辑、审核或恢复前都会留存快照，最多保留 30 个版本。恢复只影响人格底稿与学习条目，不恢复原始素材。</p>${data.revisions.length ? data.revisions.map(r => `<div class="version-row"><span>${actions[r.action] || escape(r.action)} <small>之前 · ${date(r.created)}</small></span><button data-restore="${r.id}">恢复此版本</button></div>`).join("") : '<p class="muted">首次修改后，将自动保留之前的版本。</p>'}</section>`;
+    <section class="versions"><h2>最近引用的习惯</h2><p class="section-intro">记录进入宿主发送阶段的引用，不推断用户满意度，也不保证消息实际送达。</p>${(data.applications || []).length ? data.applications.map(a => `<div class="version-row"><span>${date(a.created)}<small> ${escape(a.mode === "hybrid" ? "语义与文字检索" : "文字检索")}：${a.trait_ids.map(id => `#${id}`).join("、")}</small></span></div>`).join("") : '<p class="muted">应用习惯并进入宿主发送阶段后，这里会展示引用记录。</p>'}</section><section class="versions"><h2>修改前的版本</h2><p class="section-intro">每次学习、编辑、审核或恢复前都会留存快照，最多保留 30 个版本。恢复只影响人格底稿与学习条目，不恢复原始素材。</p>${data.revisions.length ? data.revisions.map(r => `<div class="version-row"><span>${actions[r.action] || escape(r.action)} <small>之前 · ${date(r.created)}</small></span><button data-restore="${r.id}">恢复此版本</button></div>`).join("") : '<p class="muted">首次修改后，将自动保留之前的版本。</p>'}</section>`;
   for (const button of document.querySelectorAll("[data-restore]")) button.onclick = async () => { if (await confirmAction("恢复这个版本的人格底稿和学习状态？当前版本也会自动保留。")) mutate("restore", {id:Number(button.dataset.restore)}); };
 }
 
@@ -142,12 +143,16 @@ function renderSettings() {
       ${field("provider_id", "学习模型 ID", s.provider_id, "留空使用该会话的当前模型。填写 AstrBot 中已配置的模型提供商 ID。", {type:"text"})}
     </section>
     <section class="settings-group"><h2>学习范围</h2><p>每个会话与人格单独积累。AstrBot 的会话开关、插件开关与白名单始终有效。</p>
-      ${field("target_senders", "只向这些用户学习", s.target_senders.join("\n"), "每行一个用户 ID。留空向会话内所有真人学习。", {maxlength:16000})}
+      ${field("target_senders", "只向这些用户学习", s.target_senders.join("\n"), "每行一个用户 ID。留空向会话内除机器人自身以外的发送者学习。", {maxlength:16000})}
       ${field("allowed_sessions", "允许学习与应用的会话", s.allowed_sessions.join("\n"), "每行一个完整 unified_msg_origin，可通过 AstrBot 的 /sid 获取。留空允许全部已启用会话。", {maxlength:32000})}
     </section>
     <section class="settings-group"><h2>记忆与表达</h2><p>记忆帮助理解来龙去脉；人格工坊只学习有原始聊天证据的习惯。</p>
       ${switchField("memory_enabled", "参考 LivingMemory 长期记忆", data.memory.message, s.memory_enabled)}
       <div class="number-fields">${field("memory_top_k", "最多参考记忆", s.memory_top_k, "条；仅在学习时检索", {type:"number", min:1, max:8})}${field("max_traits", "每次最多应用习惯", s.max_traits, "条；优先匹配当前对话", {type:"number", min:1, max:24})}${field("prompt_budget", "补充内容字数上限", s.prompt_budget, "字符；包含人工底稿", {type:"number", min:500, max:8000})}</div>
+      <div class="field"><label for="selection_mode">习惯检索方式</label><select id="selection_mode" name="selection_mode"><option value="hybrid" ${s.selection_mode === "hybrid" ? "selected" : ""}>语义与文字结合</option><option value="lexical" ${s.selection_mode === "lexical" ? "selected" : ""}>仅文字相关性</option></select><small>语义检索需要向量模型；不可用时自动回退文字检索。</small></div>
+      ${field("embedding_provider_id", "向量模型 ID", s.embedding_provider_id, "填写 AstrBot 中已配置的 embedding 提供商 ID。留空使用文字检索。", {type:"text"})}
+      <div class="number-fields">${field("retrieval_timeout", "检索等待上限", s.retrieval_timeout, "秒；超时回退文字检索", {type:"number", min:1, max:15})}${field("semantic_threshold", "语义相关性门槛", s.semantic_threshold, "余弦相似度，按模型效果调整", {type:"number", min:0, max:1, step:.01})}${field("habit_half_life", "习惯新鲜度半衰期", s.habit_half_life, "天；逐渐降权，不自动删除", {type:"number", min:7, max:730})}</div>
+      <p class="muted">${escape(data.retrieval?.message || "真实回复后显示检索状态。")}</p>
       <p class="muted">LivingMemory 检索可能更新访问时间并触发其原有迁移机制。QQ 能力增强插件可并用，无需额外配置。</p>
     </section></div><div class="form-end"><button class="primary" type="submit">保存学习设置</button><span class="muted">保存后立即生效；本页设置优先于插件配置文件。</span></div></form>
     ${data.scope ? '<div class="form-end"><button id="clear-messages" class="danger">清除当前会话的原始素材</button><span class="muted">保留人格与学习证据摘录；清除后无法恢复原始素材。</span></div>' : ""}`;

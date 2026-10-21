@@ -25,6 +25,11 @@ DEFAULTS = {
     "max_traits": 8,
     "retention_days": 14,
     "max_messages_per_scope": 300,
+    "embedding_provider_id": "",
+    "retrieval_timeout": 6,
+    "selection_mode": "hybrid",
+    "semantic_threshold": 0.25,
+    "habit_half_life": 90,
 }
 KINDS = ("personality", "expression", "jargon", "behavior")
 PROFILE_DEFAULTS = {
@@ -61,6 +66,9 @@ def validate_settings(values: dict) -> dict:
         "max_traits": (1, 24),
         "retention_days": (1, 90),
         "max_messages_per_scope": (100, 1000),
+        "retrieval_timeout": (1, 15),
+        "semantic_threshold": (0, 1),
+        "habit_half_life": (7, 730),
     }
     for key, value in values.items():
         default = DEFAULTS[key]
@@ -89,6 +97,9 @@ def validate_settings(values: dict) -> dict:
         elif key == "activation_mode":
             if value not in ("review", "auto"):
                 raise ValueError("生效方式必须为审核或自动。")
+        elif key == "selection_mode":
+            if value not in ("lexical", "hybrid"):
+                raise ValueError("检索方式必须为 lexical 或 hybrid。")
         elif not isinstance(value, str) or len(value) > 256:
             raise ValueError(f"{key} 必须为长度不超过 256 的字符串。")
     return values.copy()

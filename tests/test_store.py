@@ -4,8 +4,8 @@ import asyncio
 
 import pytest
 
-from astrbot_plugin_persona.settings import DEFAULTS
-from astrbot_plugin_persona.store import Store
+from astrbot_plugin_ovenheart.settings import DEFAULTS
+from astrbot_plugin_ovenheart.store import Store
 
 
 @pytest.fixture

@@ -1,4 +1,10 @@
 {
-  "metadata": {"display_name": "Persona workshop"},
-  "views": {"workshop": {"title": "Persona workshop"}}
+  "metadata": {
+    "display_name": "OvenHeart"
+  },
+  "views": {
+    "workshop": {
+      "title": "Persona workshop"
+    }
+  }
 }

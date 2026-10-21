@@ -85,6 +85,7 @@ pre { white-space: pre-wrap; overflow-wrap: anywhere; font: 13px/1.8 "Consolas",
 .detail { padding: 22px; background: var(--ground); border-radius: 12px; align-self: start; }
 .detail h2 { margin-bottom: 20px; }
 .detail .actions { margin-top: 18px; }
+[data-feedback][aria-pressed="true"] { color: var(--accent); background: var(--tint); border-color: var(--accent); }
 .evidence { margin-top: 26px; }
 .evidence h3 { margin-bottom: 12px; }
 blockquote { margin: 0 0 12px; padding: 13px 16px; background: var(--paper); border-radius: 8px; }

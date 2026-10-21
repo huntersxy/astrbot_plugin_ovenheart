@@ -1,10 +1,16 @@
 """Build an installable ZIP using an explicit allowlist of release files."""
 
+import re
 from pathlib import Path
 from zipfile import ZIP_DEFLATED, ZipFile
 
 root = Path(__file__).resolve().parents[1]
-destination = root / "dist" / "astrbot_plugin_persona-v0.1.0.zip"
+version = re.search(
+    r"^version:\s*(\S+)",
+    (root / "metadata.yaml").read_text(encoding="utf-8"),
+    re.MULTILINE,
+)[1]
+destination = root / "dist" / f"astrbot_plugin_ovenheart-v{version}.zip"
 destination.parent.mkdir(exist_ok=True)
 files = [
     *root.glob("*.py"),

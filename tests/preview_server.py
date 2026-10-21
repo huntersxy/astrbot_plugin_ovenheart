@@ -28,7 +28,7 @@ from astrbot.api.web import PluginRequest, bind_request_context  # noqa: E402
 from fastapi import FastAPI, Request  # noqa: E402
 from fastapi.responses import FileResponse, HTMLResponse, Response  # noqa: E402
 
-from astrbot_plugin_persona.main import (  # noqa: E402
+from astrbot_plugin_ovenheart.main import (  # noqa: E402
     PersonaPlugin,
     SessionPluginManager,
     SessionServiceManager,
@@ -251,7 +251,9 @@ async def api(endpoint: str, request: Request):
     if endpoint not in ("state", "action", "preview"):
         return {"status": "error", "message": "Unknown test endpoint"}
     with bind_request_context(
-        PluginRequest(request, plugin_name="astrbot_plugin_persona", username="fixture")
+        PluginRequest(
+            request, plugin_name="astrbot_plugin_ovenheart", username="fixture"
+        )
     ):
         return await getattr(app.state.plugin.page_api, endpoint)()
 
@@ -268,4 +270,6 @@ def asset(asset: str):
     """
     if asset not in ("style.css", "app.js"):
         return Response(status_code=404)
-    return FileResponse(ROOT / "views/workshop" / asset)
+    return FileResponse(
+        ROOT / "views/workshop" / asset, headers={"Cache-Control": "no-store"}
+    )

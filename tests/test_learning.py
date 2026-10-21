@@ -4,8 +4,8 @@ import json
 
 import pytest
 
-from astrbot_plugin_persona.learning import build_guidance, parse_candidates
-from astrbot_plugin_persona.settings import (
+from astrbot_plugin_ovenheart.learning import build_guidance, parse_candidates
+from astrbot_plugin_ovenheart.settings import (
     DEFAULTS,
     PROFILE_DEFAULTS,
     validate_settings,
@@ -47,6 +47,64 @@ def test_evidence_is_resolved_from_real_batch():
     result = parse_candidates("```json\n" + candidates() + "\n```", MESSAGES, DEFAULTS)
     assert result[0]["evidence"][0]["text"] == MESSAGES[0]["text"]
     assert result[0]["kind"] == "expression"
+
+
+@pytest.mark.parametrize(
+    "wrapper",
+    [
+        "分析结果如下：\n```json\n%s\n```\n以上来自原始消息。",
+        '<think>先分析证据，示例 {"wrong": true}</think>\n%s',
+        "结果：%s\n分析完毕。",
+    ],
+)
+def test_model_explanations_and_closed_reasoning_are_accepted(wrapper):
+    result = parse_candidates(
+        wrapper % candidates(content="用一句“{好家伙}”接话"), MESSAGES, DEFAULTS
+    )
+    assert result[0]["content"] == "用一句“{好家伙}”接话"
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "",
+        "<think>还没有生成结果",
+        '{"traits": [',
+        '{"profile_updates": [{"kind":"expression", "trait":"简短"}]}',
+        '{"traits":[{"kind":"expression","trait":"简短"}]}',
+        '{"outer": {"traits": []}',
+        '{"traits": []}\n{"traits": []}',
+        '```json\n{"traits":[]}\n```\n```json\n{"traits":[]}\n```',
+    ],
+)
+def test_schema_drift_and_truncation_are_repairable_without_guessing(text):
+    from astrbot_plugin_ovenheart.learning import LearningFormatError
+
+    with pytest.raises(LearningFormatError):
+        parse_candidates(text, MESSAGES, DEFAULTS)
+
+
+def test_consolidation_targets_are_scoped_and_category_checked():
+    known = [{"id": 8, "kind": "expression", "content": "简短", "situation": "日常"}]
+    result = parse_candidates(candidates(merge_id=8), MESSAGES, DEFAULTS, known)
+    assert result[0]["merge_id"] == 8
+    for value in (True, 99, "8"):
+        with pytest.raises(ValueError, match="合并"):
+            parse_candidates(candidates(merge_id=value), MESSAGES, DEFAULTS, known)
+    with pytest.raises(ValueError, match="合并"):
+        parse_candidates(
+            candidates(kind="behavior", merge_id=8), MESSAGES, DEFAULTS, known
+        )
+
+
+def test_different_jargon_words_cannot_be_merged():
+    with pytest.raises(ValueError, match="不同词语"):
+        parse_candidates(
+            candidates(kind="jargon", content="绝绝子：称赞", merge_id=1),
+            MESSAGES,
+            DEFAULTS,
+            [{"id": 1, "kind": "jargon", "content": "好家伙：惊讶"}],
+        )
 
 
 @pytest.mark.parametrize(
