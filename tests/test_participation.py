@@ -15,7 +15,10 @@ from astrbot.core.db.po import Conversation  # noqa: E402
 from astrbot.core.message.components import At, Plain, Reply  # noqa: E402
 
 from astrbot_plugin_ovenheart.main import ParticipationFilter  # noqa: E402
-from astrbot_plugin_ovenheart.participation import parse_plan  # noqa: E402
+from astrbot_plugin_ovenheart.participation import (  # noqa: E402
+    ParticipationFormatError,
+    parse_plan,
+)
 from astrbot_plugin_ovenheart.settings import DEFAULTS  # noqa: E402
 from tests.test_runtime import (  # noqa: E402
     SessionServiceManager,
@@ -167,6 +170,68 @@ async def test_positive_decision_yields_exactly_one_native_request(participant):
     state = await participant.store.call("state", scope)
     assert state["decisions"][0]["outcome"] == "admitted"
     assert state["scope"] and state["scope"]["pending"] == 0
+
+
+@pytest.mark.parametrize("chain_only", [False, True])
+async def test_external_quote_reaches_planner_and_temporary_reply_context(
+    participant, chain_only
+):
+    participant.settings["guidance_delivery"] = "cached"
+    incoming = event("question", text="这句话准确吗？", sender="alice")
+    original = "普通非重入锁允许同一个线程重复获取。" + "原文" * 700
+    incoming.message_obj.message = [
+        Reply(
+            id="9000",
+            sender_id="bob",
+            sender_nickname="被引用者",
+            message_str="" if chain_only else original,
+            chain=[Plain(original)] if chain_only else [],
+        )
+    ]
+    request = (await requests(participant, incoming))[0]
+    payload = json.loads(participant.context.llm_generate.call_args.kwargs["prompt"])
+    messages = payload["recent_messages"]
+    assert len(messages) == 1
+    assert messages[0]["sender_id"] == "alice"
+    assert messages[0]["reply_to"] == {
+        "message_id": "9000",
+        "sender_id": "bob",
+        "sender": "被引用者",
+        "text": original[:1200],
+    }
+    with pytest.raises(ParticipationFormatError):
+        parse_plan(
+            decision(target_sequence=9000).completion_text,
+            participant.settings,
+            messages=messages,
+        )
+    request.system_prompt = "稳定宿主前缀"
+    await participant.apply_participation(incoming, request)
+    assert request.system_prompt == "稳定宿主前缀"
+    temporary = request.extra_user_content_parts[-1]
+    assert json.dumps(messages[0]["reply_to"], ensure_ascii=False) in temporary.text
+    assert temporary.model_dump_for_context()["_no_save"]
+    incoming.set_result(incoming.plain_result("不准确。"))
+    await participant.guard_participation_result(incoming)
+    assert incoming.message_obj.message_id == "question"
+    assert incoming.get_sender_id() == "alice"
+
+
+async def test_quote_prefers_same_scope_live_source_over_component_metadata(
+    participant,
+):
+    participant.settings.update(participation_mode="observe", participation_cooldown=0)
+    await requests(participant, event("old", text="同群原文", sender="bob"))
+    participant.settings["participation_mode"] = "auto"
+    incoming = event("new", text="这句话准确吗？")
+    incoming.message_obj.message = [
+        Reply(id="old", sender_id="mallory", message_str="不一致的引用内容")
+    ]
+    assert len(await requests(participant, incoming)) == 1
+    payload = json.loads(participant.context.llm_generate.call_args.kwargs["prompt"])
+    quoted = payload["recent_messages"][-1]["reply_to"]
+    assert quoted["text"] == "同群原文"
+    assert quoted["sender_id"] == "bob"
 
 
 async def test_observe_mode_records_decisions_but_never_yields_reply(participant):

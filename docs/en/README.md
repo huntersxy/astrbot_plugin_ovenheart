@@ -1,5 +1,7 @@
 # OvenHeart workshop guide
 
+Since 0.23, autonomous participation carries inbound quote text to both the planner and final reply as `reply_to`. It prefers the original message in the same scope's live window, then native `Reply.message_str` or plain-text chain parts, capped at 1,200 characters. Quoted authors remain distinct from current askers; external quote IDs do not become reply-target sequences. Quotes stay in temporary scoped participation context, after history in cache-friendly mode, without becoming separate learning evidence or persistent history. ID-only quotes are not fetched from the platform. Existing custom prompts remain unchanged; compare the current defaults in the prompt editor if adapting them. Production group-chat acceptance remains pending.
+
 
 ## Shared effects, optional isolation and cache-friendly delivery (0.18)
 

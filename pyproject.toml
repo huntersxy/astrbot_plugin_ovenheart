@@ -1,6 +1,6 @@
 [project]
 name = "astrbot-plugin-ovenheart"
-version = "0.22.1"
+version = "0.23.0"
 description = "Evidence-based personality, language and behavior learning for AstrBot"
 requires-python = ">=3.10"
 dependencies = []
@@ -15,6 +15,10 @@ line-length = 88
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "ASYNC"]
 ignore = ["E501"]
+
+[tool.ruff.format]
+# Preserve verbatim provider responses, including fenced Python examples.
+exclude = ["docs/evaluation/*.md"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

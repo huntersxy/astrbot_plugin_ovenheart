@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.23.0
+
+- Carry incoming quote text through autonomous participation planning and final reply injection, including quotes outside the live window. Prefer same-scope live sources, fall back to native text or plain-text chain parts, and cap each quote at 1,200 characters without querying another conversation or platform history.
+- Distinguish quoted authors from current askers in default prompts. External quote IDs remain data and cannot be selected as target sequences. Cache-friendly delivery keeps quote context temporary and out of the stable system prefix.
+- Verify the quote path with three focused SDK checks and Ruff; defer wider effect evaluation to production access. Preserve before-fix synthetic diagnostics, including their harness cleanup errors, without treating them as complete successful runs.
+- Exclude recorded evaluation transcripts from formatter rewrites so fenced provider output remains verbatim.
+
 ## 0.22.1
 
 - Enforce autonomous tool policies at the native dispatch boundary in both schema modes. Remove denied and host-inactive tools from the raw request instead of retaining inactive handlers; a provider hallucinating a hidden name can no longer resolve it through the skills-like raw tool set.
