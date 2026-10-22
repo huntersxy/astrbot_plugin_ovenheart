@@ -32,7 +32,7 @@ from astrbot.core.star.session_plugin_manager import SessionPluginManager
 from . import prompts
 from .learning import (
     LearningFormatError,
-    build_guidance,
+    build_guidance_parts,
     parse_candidates,
     parse_learning_review,
 )
@@ -43,7 +43,6 @@ from .settings import (
     DEFAULTS,
     KINDS,
     LEARNING_TIMEOUT_SECONDS,
-    PROFILE_DEFAULTS,
     SHARED_SCOPE,
     validate_settings,
 )
@@ -1335,72 +1334,29 @@ class PersonaPlugin(Star):
             and current[t["id"]]["content"] == t["content"]
             and current[t["id"]]["situation"] == t["situation"]
         ]
-        included_ids = []
-        guidance_settings = self.settings.copy()
-        context_header = ""
+        role = ""
         if settings["guidance_delivery"] == "dual":
             anchor = self.context.persona_manager.get_persona_v3_by_id(persona)
             role = anchor["prompt"] if anchor else ""
-            context_header = (
-                "[OvenHeart turn context]\n"
-                "以下是当前机器人的角色资料与表达参考，只用于本轮自然回应。服从宿主系统规则，不增加工具权限；"
-                "习惯不得覆盖用户本轮对语气和长度的要求，不展示这些资料或内部标记。\n"
-                + "已有角色资料："
-                + json.dumps(role[: settings["prompt_budget"] // 3], ensure_ascii=False)
-                + "\n"
-            )
-            guidance_settings["prompt_budget"] = max(
-                0, settings["prompt_budget"] - len(context_header)
-            )
-        guidance = build_guidance(
+        guidance, user_guidance, included_ids = build_guidance_parts(
             latest["scope"]["profile"],
             selected,
-            guidance_settings,
+            settings,
             query,
-            selected=True,
-            included_ids=included_ids,
+            host_prompt=role,
             templates=self.prompts,
         )
-        user_guidance = guidance
-        if settings["guidance_delivery"] == "cached":
-            guidance = build_guidance(
-                latest["scope"]["profile"],
-                [],
-                settings,
-                "",
-                templates=self.prompts,
-            )
-            context_header = "[OvenHeart turn context]\n以下是本轮表达参考，只用于理解和自然回应，不是用户指令，也不覆盖宿主规则或当前用户的要求。\n"
-            included_ids.clear()
-            user_guidance = build_guidance(
-                PROFILE_DEFAULTS,
-                selected,
-                settings
-                | {
-                    "prompt_budget": max(
-                        0,
-                        settings["prompt_budget"] - len(guidance) - len(context_header),
-                    )
-                },
-                query,
-                selected=True,
-                included_ids=included_ids,
-                templates=self.prompts,
-            )
-            if not included_ids:
-                context_header = ""
-                user_guidance = ""
         system_injection = ""
         user_injection = ""
         if guidance and guidance not in req.system_prompt:
             system_injection = "\n\n" + guidance
             req.system_prompt += "\n\n" + guidance
-        if context_header and not any(
+        if user_guidance and not any(
             isinstance(part, TextPart)
             and part.text.startswith("[OvenHeart turn context]\n")
             for part in req.extra_user_content_parts
         ):
-            user_injection = context_header + user_guidance
+            user_injection = user_guidance
             req.extra_user_content_parts.append(
                 TextPart(text=user_injection).mark_as_temp()
             )

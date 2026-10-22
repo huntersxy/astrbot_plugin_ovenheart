@@ -59,7 +59,22 @@ async def lifespan(app):
         )
 
         async def generate(**kwargs):
+            if "tools" in kwargs:
+                return SimpleNamespace(
+                    completion_text="先别急着否定自己。愿意的话，和我说说今天最让你难受的那件事，我听着。"
+                )
             body = json.loads(kwargs["prompt"])
+            if "candidates" in body:
+                candidates = body["candidates"]
+                result = (
+                    {
+                        "approved_ids": [item["candidate_id"] for item in candidates],
+                        "flagged": [],
+                    }
+                    if candidates and "candidate_id" in candidates[0]
+                    else {"selected_ids": [item["id"] for item in candidates[:1]]}
+                )
+                return SimpleNamespace(completion_text=json.dumps(result))
             return SimpleNamespace(
                 completion_text=json.dumps(
                     {
@@ -395,6 +410,7 @@ async def api(endpoint: str, request: Request):
         "library": "library",
         "action": "action",
         "preview": "preview",
+        "preview/model": "model_preview",
         "prompts": "prompt_list",
         "prompts/save": "prompt_save",
     }

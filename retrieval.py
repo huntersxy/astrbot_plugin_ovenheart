@@ -186,6 +186,7 @@ class HabitRetriever:
         identity="",
         literal_query="",
         recent_expression_ids=(),
+        record_status=True,
     ):
         """Recall, optionally rerank, then select habits within bounded deadlines.
 
@@ -201,6 +202,7 @@ class HabitRetriever:
                 2,400 characters, excluding unrelated history and planner goals.
             recent_expression_ids: Recently exposed expressions from this native
                 scope only; a soft preference for contextual selection.
+            record_status: Whether this request may replace runtime status.
 
         Returns:
             Habits, retrieval mode and a visible fallback explanation.
@@ -340,9 +342,10 @@ class HabitRetriever:
             result["message"] += (
                 f" 当前输入直接命中 {min(len(literal), maximum)} 条本群词汇，优先提供本地释义。"
             )
-        self.status[scope] = {"mode": result["mode"], "message": result["message"]}
-        if len(self.status) > 128:
-            self.status.pop(next(iter(self.status)))
+        if record_status:
+            self.status[scope] = {"mode": result["mode"], "message": result["message"]}
+            if len(self.status) > 128:
+                self.status.pop(next(iter(self.status)))
         return result
 
     async def rerank_pool(self, pool, query, settings, deadline):

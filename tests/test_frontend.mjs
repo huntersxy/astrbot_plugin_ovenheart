@@ -27,6 +27,23 @@ test('followup switch renders its scope and saves a false value', () => {
   assert.equal(runInContext('saved.participation_followup',context),false);
 });
 
+for (const stale of [false,true]) test(`model preview renders text safely and protects a changed tab (${stale})`, async () => {
+  const {context,element}=fixture();
+  runInContext(`tab='profile';selectedScope='a'.repeat(24);data={scope:{profile:{identity:'',reply_style:'',behavior:'',learning_enabled:true,apply_enabled:true}},settings:{session_isolation:true}};renderProfile();globalThis.sent=null;bridge.apiPost=(endpoint,body)=>{sent={endpoint,body};return new Promise(resolve=>globalThis.finishPreview=resolve);};`,context);
+  assert.ok(element('#content').innerHTML.includes('可能产生费用'));
+  element('#preview-query').value='  你好  ';
+  element('#model-preview-text').textContent='原来的示例';
+  const done=element('#model-preview').onclick({preventDefault(){}});
+  if (stale) runInContext(`tab='library';`,context);
+  runInContext(`finishPreview({reply:'<img src=x onerror=alert(1)>',seconds:1.2,selected_ids:[1],retrieval:'情境筛选'});`,context);
+  await done;
+  assert.equal(runInContext('sent.endpoint',context),'preview/model');
+  assert.equal(runInContext('sent.body.query',context),'你好');
+  assert.equal(element('#model-preview-text').textContent,stale?'原来的示例':'<img src=x onerror=alert(1)>');
+  assert.equal(element('#model-preview-text').innerHTML,'');
+  assert.equal(element('#model-preview').textContent,'生成示例回复');
+});
+
 function fixture() {
   const nodes = new Map();
   let confirmations = [];

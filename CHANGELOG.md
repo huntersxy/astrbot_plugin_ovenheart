@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.31.0
+
+- Add an explicitly requested model example beside the existing free guidance preview. Use the saved profile, active habits, source persona and current conversation provider, with configured retrieval and the same bounded system/dual/cached assembly as runtime replies.
+- Keep examples outside platform sending, tools, real history, learning materials and exposure accounting. Exclude other plugin injections, disclose possible retrieval/model costs, and preserve runtime retrieval status. Examples may populate existing embedding caches.
+- Serialize model previews, bound the generation stage to 90 seconds and discard outputs after relevant settings, persona, provider or selected-habit changes. Render output as plain text and protect drafts from late results; redact raw provider failures.
+- Pass five focused backend checks, two frontend checks and two existing delivery checks. Inspect desktop/mobile layouts with a local simulated model; do not claim production quality or real-provider performance. Update bilingual guides and screenshots.
+
 ## 0.30.0
 
 - Place ID-sorted stable known-habit fields before changing learning-batch context. Move support counts/refinement stages into ID-linked `known_trait_stats`, preserving information and per-category filtering while keeping count updates out of the earlier text prefix.

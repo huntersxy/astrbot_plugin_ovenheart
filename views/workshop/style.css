@@ -154,6 +154,10 @@ button.text { border-color: transparent; background: transparent; }
 
 .debug-settings, .mention-settings { grid-column: 1 / -1; }
 
+.preview-actions { display: flex; flex-wrap: wrap; gap: 12px; margin: 12px 0; }
+.model-preview-result { margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--line); }
+.model-preview-text { white-space: pre-wrap; overflow-wrap: anywhere; }
+
 .prompts { display: grid; grid-template-columns: minmax(220px, .9fr) minmax(0, 1.5fr); gap: 28px; align-items: start; }
 .prompt-editor { min-width: 0; }
 .field textarea.prompt-body { font: 13px/1.8 "Consolas", monospace; min-height: 380px; }

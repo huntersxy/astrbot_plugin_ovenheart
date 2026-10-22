@@ -105,7 +105,7 @@ function renderProfile() {
     ${field("behavior", "行为准则", p.behavior, "例如：先倾听；拿不准时先澄清；对方难过时少说教。")}
     <div class="switches">${switchField("learning_enabled", "积累并学习", data.settings.session_isolation ? "仅影响当前会话与人格" : "影响所有允许的会话", p.learning_enabled)}${switchField("apply_enabled", "应用已生效的习惯", "关闭后保留全部学习数据", p.apply_enabled)}</div>
     <button class="primary" type="submit">保存人格底稿</button></form>
-    <aside class="preview"><h2>看看它会带上哪些习惯</h2><p>输入一句可能出现的话，查看本插件会追加给模型的表达参考。免费预览使用文字检索，不调用模型或发送消息；真实回复还可使用向量、重排序与情境筛选，结果可能不同；兼容模式的角色资料未纳入此预览。实际投递会按所选模式分为系统提示词或本轮临时上下文。</p><form id="preview-form"><label for="preview-query">试一句话</label><textarea id="preview-query" placeholder="例如：今天又搞砸了，有点难过。" maxlength="1200"></textarea><button class="tonal" type="submit">预览生效内容</button></form><pre id="preview-output" hidden></pre><p class="muted">仅展示本插件的补充内容，最终回复仍由 AstrBot 的人格、上下文和模型共同决定。</p></aside></div>`;
+    <aside class="preview"><h2>看看它会带上哪些习惯</h2><p>输入一句可能出现的话，查看本插件会追加给模型的表达参考。免费预览使用文字检索，不调用模型或发送消息；真实回复还可使用向量、重排序与情境筛选，结果可能不同；兼容模式的角色资料未纳入此预览。实际投递会按所选模式分为系统提示词或本轮临时上下文。</p><form id="preview-form"><label for="preview-query">试一句话</label><textarea id="preview-query" placeholder="例如：今天又搞砸了，有点难过。" maxlength="1200"></textarea><div class="preview-actions"><button class="tonal" type="submit">预览生效内容</button><button class="tonal" type="button" id="model-preview" ${!selectedScope || selectedScope === data.shared_scope?.id ? "disabled" : ""}>生成示例回复</button></div><small>生成示例会按设置调用模型，可能产生费用；不调用工具，不发送消息，也不保存为素材或聊天历史。请先选择真实来源会话。</small></form><pre id="preview-output" hidden></pre><div id="model-preview-result" class="model-preview-result" hidden aria-live="polite"><p id="model-preview-meta" class="muted"></p><div id="model-preview-text" class="model-preview-text"></div></div><p class="muted">示例使用已保存底稿和已生效习惯，不含真实聊天历史与其他插件注入；未保存的编辑需先保存。生产回复可能不同。</p></aside></div>`;
   $("#profile-form").addEventListener("submit", async event => {
     event.preventDefault();
     const form = event.currentTarget;
@@ -116,6 +116,20 @@ function renderProfile() {
     $("#preview-output").hidden = false;
     $("#preview-output").textContent = `${result.retrieval || ""}\n${(result.selected || []).map(t => `#${t.id} ${t.reason}`).join("；")}\n\n${result.guidance || "当前没有生效的补充内容。可审核学习结果，或检查全局与当前会话的应用开关。"}`.trim();
   }, event));
+  $("#model-preview").onclick = event => guarded(async () => {
+    const scope = selectedScope;
+    const query = $("#preview-query").value.trim();
+    if (!query) throw new Error("请先输入一句示例。生成会调用模型，可能产生费用。");
+    const button = $("#model-preview"), output = $("#model-preview-result");
+    button.textContent = "正在生成示例…";
+    try {
+      const result = await api("preview/model", {scope, query});
+      if (tab !== "profile" || selectedScope !== scope || $("#model-preview-result") !== output) return;
+      output.hidden = false;
+      $("#model-preview-meta").textContent = `模型示例 · 用时 ${result.seconds} 秒 · ${result.selected_ids.length ? "表达参考 " + result.selected_ids.map(id => "#" + id).join("、") : "沿用人格底稿"}。${result.retrieval || ""}`;
+      $("#model-preview-text").textContent = result.reply;
+    } finally { button.textContent = "生成示例回复"; }
+  }, event);
 }
 
 function renderLibrary() {

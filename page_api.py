@@ -2,14 +2,23 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
+import time
 
 from astrbot.api import logger
 from astrbot.api.web import request
+from astrbot.core.agent.message import TextPart
+from astrbot.core.star.session_llm_manager import SessionServiceManager
+from astrbot.core.star.session_plugin_manager import SessionPluginManager
 
 from . import prompts
-from .learning import build_guidance
+from .learning import build_guidance, build_guidance_parts
 from .settings import PROFILE_DEFAULTS, SHARED_SCOPE
+
+
+class ModelPreviewError(ValueError):
+    """Separate operator-facing preview failures from provider diagnostics."""
 
 
 class PageAPI:
@@ -17,6 +26,7 @@ class PageAPI:
 
     def __init__(self, plugin):
         self.plugin = plugin
+        self.model_preview_running = False
 
     def register(self):
         """Register routes using the same plugin namespace as the Panel view."""
@@ -25,6 +35,7 @@ class PageAPI:
             ("library", self.library, "GET"),
             ("action", self.action, "POST"),
             ("preview", self.preview, "POST"),
+            ("preview/model", self.model_preview, "POST"),
             ("prompts", self.prompt_list, "GET"),
             ("prompts/save", self.prompt_save, "POST"),
         ):
@@ -341,6 +352,7 @@ class PageAPI:
                 body.get("query", "")[:1200],
                 self.plugin.settings,
                 semantic=False,
+                record_status=False,
                 literal_query=body.get("query", "")[:1200],
             )
             included_ids = []
@@ -373,3 +385,201 @@ class PageAPI:
                 if not isinstance(exc, json.JSONDecodeError)
                 else "预览请求不是有效的 JSON。",
             }
+
+    async def model_preview(self):
+        """Generate an explicitly requested example without a chat event or tools.
+
+        Returns:
+            Example text and reference IDs, or a credential-free error. No
+            platform send, conversation write or exposure record is performed.
+        """
+        if not self.plugin.ready or self.plugin.closing:
+            return {"status": "error", "message": "人格工坊尚未就绪，请稍后刷新。"}
+        if self.model_preview_running:
+            return {"status": "error", "message": "已有示例正在生成，请等待本次完成。"}
+        self.model_preview_running = True
+        started = time.monotonic()
+        try:
+            raw = await request.body()
+            if len(raw) > 8192:
+                raise ModelPreviewError("示例输入超过 8 KB。")
+            body = json.loads(raw)
+            if (
+                not isinstance(body, dict)
+                or not isinstance(body.get("scope"), str)
+                or not isinstance(body.get("query"), str)
+                or not body["query"].strip()
+                or len(body["query"]) > 1200
+            ):
+                raise ModelPreviewError("请选择真实来源会话，并输入 1–1200 字的示例。")
+            scope, query = body["scope"], body["query"].strip()
+            settings = self.plugin.settings.copy()
+            revision = self.plugin.prompts_revision
+            if not settings["enabled"] or not settings["apply_enabled"]:
+                raise ModelPreviewError("人格应用已关闭，请先启用后再生成示例。")
+            source = await self.plugin.store.call("state", scope)
+            source = source["scope"]
+            if source is None or scope == SHARED_SCOPE:
+                raise ModelPreviewError(
+                    "请先在顶部选择真实素材来源会话，以确定宿主人格和聊天模型。"
+                )
+            umo, persona = source["umo"], source["persona"]
+            host_config = self.plugin.context.get_config(umo)
+            plugin_set = host_config.get("plugin_set", ["*"])
+            if (
+                (
+                    settings["allowed_sessions"]
+                    and umo not in settings["allowed_sessions"]
+                )
+                or (
+                    plugin_set != ["*"] and "astrbot_plugin_ovenheart" not in plugin_set
+                )
+                or not await SessionServiceManager.is_session_enabled(umo)
+                or not await SessionPluginManager.is_plugin_enabled_for_session(
+                    umo, "astrbot_plugin_ovenheart"
+                )
+            ):
+                raise ModelPreviewError("当前来源会话或插件已停用，请恢复启用后重试。")
+            state = await self.plugin.store.call(
+                "guidance", scope, not settings["session_isolation"]
+            )
+            if not state["scope"] or not state["scope"]["profile"]["apply_enabled"]:
+                raise ModelPreviewError("当前人格已暂停应用，请先启用。")
+            anchor = self.plugin.context.persona_manager.get_persona_v3_by_id(persona)
+            if not anchor and persona != "[%None]":
+                raise ModelPreviewError("所选宿主人格已不存在，请重新选择来源会话。")
+            host_prompt = anchor["prompt"] if anchor else ""
+            provider_id = await self.plugin.context.get_current_chat_provider_id(umo)
+            if not provider_id:
+                raise ModelPreviewError("当前会话没有聊天模型，请先在 AstrBot 配置。")
+            selection = await self.plugin.track(
+                self.plugin.retriever.select(
+                    scope if settings["session_isolation"] else SHARED_SCOPE,
+                    state["traits"],
+                    query,
+                    settings,
+                    provider_id=settings["provider_id"] or provider_id,
+                    identity=json.dumps(
+                        {
+                            "host": host_prompt[:4000],
+                            "profile": state["scope"]["profile"],
+                        },
+                        ensure_ascii=False,
+                    ),
+                    literal_query=query,
+                    recent_expression_ids=state.get("recent_expression_ids", []),
+                    record_status=False,
+                )
+            )
+            latest = await self.plugin.store.call(
+                "guidance", scope, not settings["session_isolation"]
+            )
+            if (
+                self.plugin.settings != settings
+                or self.plugin.prompts_revision != revision
+                or latest["scope"] != state["scope"]
+            ):
+                raise ModelPreviewError("设置或人格已改变，旧预览已取消，请重新生成。")
+            current = {t["id"]: t for t in latest["traits"]}
+            selected = [
+                current[t["id"]]
+                for t in selection["traits"]
+                if t["id"] in current
+                and current[t["id"]]["content"] == t["content"]
+                and current[t["id"]]["situation"] == t["situation"]
+            ]
+            system, temporary, included = build_guidance_parts(
+                latest["scope"]["profile"],
+                selected,
+                settings,
+                query,
+                host_prompt=host_prompt,
+                templates=self.plugin.prompts,
+            )
+            response = await asyncio.wait_for(
+                self.plugin.track(
+                    self.plugin.context.llm_generate(
+                        chat_provider_id=provider_id,
+                        prompt=query,
+                        system_prompt=host_prompt + ("\n\n" + system if system else ""),
+                        contexts=[],
+                        tools=None,
+                        extra_user_content_parts=[
+                            TextPart(text=temporary).mark_as_temp()
+                        ]
+                        if temporary
+                        else [],
+                    )
+                ),
+                timeout=90,
+            )
+            final = await self.plugin.store.call(
+                "guidance", scope, not settings["session_isolation"]
+            )
+            final_traits = {t["id"]: t for t in final["traits"]}
+            final_anchor = self.plugin.context.persona_manager.get_persona_v3_by_id(
+                persona
+            )
+            if (
+                self.plugin.settings != settings
+                or self.plugin.prompts_revision != revision
+                or final["scope"] != state["scope"]
+                or (final_anchor["prompt"] if final_anchor else "") != host_prompt
+                or await self.plugin.context.get_current_chat_provider_id(umo)
+                != provider_id
+                or any(
+                    t["id"] in included
+                    and (
+                        t["id"] not in final_traits
+                        or any(
+                            final_traits[t["id"]][key] != t[key]
+                            for key in ("content", "situation")
+                        )
+                    )
+                    for t in selected
+                )
+            ):
+                raise ModelPreviewError(
+                    "设置、人格或选中习惯已改变，旧预览已取消，请重新生成。"
+                )
+            reply = (response.completion_text or "").strip()
+            if not reply:
+                raise ModelPreviewError("模型没有生成文字，请重试或检查模型输出上限。")
+            seconds = round(time.monotonic() - started, 2)
+            self.plugin.debug(
+                "model_preview",
+                scope=scope,
+                provider=provider_id,
+                query=query,
+                system=system,
+                temporary_user=temporary,
+                included_ids=included,
+                reply=reply,
+                seconds=seconds,
+            )
+            return {
+                "status": "ok",
+                "data": {
+                    "reply": reply,
+                    "seconds": seconds,
+                    "selected_ids": included,
+                    "retrieval": selection["message"],
+                },
+            }
+        except ModelPreviewError as exc:
+            return {"status": "error", "message": str(exc)}
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            return {"status": "error", "message": "示例请求不是有效的 JSON 文本。"}
+        except asyncio.TimeoutError:
+            return {
+                "status": "error",
+                "message": "示例生成超时（生成阶段最多等待 90 秒），请检查模型连接或稍后重试。",
+            }
+        except Exception as exc:
+            logger.warning("OvenHeart model preview failed (%s)", type(exc).__name__)
+            return {
+                "status": "error",
+                "message": "示例生成失败，请检查当前聊天模型、模型接口连接及宿主人格配置。",
+            }
+        finally:
+            self.model_preview_running = False

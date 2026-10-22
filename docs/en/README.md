@@ -1,5 +1,18 @@
 # OvenHeart workshop guide
 
+## Generate an example reply (0.31)
+
+The Profile preview adds **生成示例回复 / Generate an example reply** beside the existing free **预览生效内容** action. Existing navigation and the free lexical preview remain unchanged. Select a real source conversation in the header to resolve its native persona, permissions and current chat provider. Examples use the saved profile; save draft edits first.
+
+Examples use configured retrieval and the same bounded `system`, `dual` or `cached` delivery assembly as runtime replies. Selection, embedding, reranking and chat calls may incur provider charges. The final generation makes one current-provider chat call without tools or platform sends. It does not read real chat history or write learning materials, conversation history or exposure counts. Retrieval may populate existing embedding caches but does not replace runtime retrieval status. LivingMemory and other plugins' runtime injections are excluded, so examples are tuning aids rather than production acceptance.
+
+Only one model example runs at a time. Generation waits up to 90 seconds; retrieval retains its separate budgets. Relevant settings, profile, prompt, native persona, provider or selected-habit changes invalidate old output. Switching pages or sources cannot overwrite the new view with a late result. Output renders as plain text. Opt-in `model_preview` debug logs contain the input, plugin system/temporary supplements, included IDs, reply and elapsed time, without configuration keys or raw provider exceptions.
+
+These desktop and mobile screenshots use illustrative local data and a simulated model, not a production provider.
+
+![Model example with a local simulated model](../assets/model-preview-v0.31.jpg)
+![Mobile example with a local simulated model](../assets/model-preview-mobile-v0.31.jpg)
+
 Since 0.30, learning requests place stable known-habit fields before changing batch context. `known_traits` sorts by ID and retains kind, situation, content and status; `known_trait_stats` follows with ID-linked support counts and refinement stages, then observations, memories, language statistics and volatile context. Count updates no longer change the preceding known-text prefix. Editable prompts may use `{{known_trait_stats}}`; statistics remain non-evidence, and custom system templates that embed dynamic values intentionally vary.
 
 Extraction/review format retries preserve the original `task` and system prompt, appending only `format_error`, untrusted previous output and `correction_task`. The single-retry limit and existing deadlines remain. No model calls or provider cache flags are added. Focused checks establish matching default prefixes, not actual provider cache hits, retention or billing improvements.

@@ -8,7 +8,7 @@ import re
 import unicodedata
 
 from .prompts import render
-from .settings import KINDS
+from .settings import KINDS, PROFILE_DEFAULTS
 
 APPLICATION_STYLE = "表达参考只影响措辞与节奏，身份与行为边界在生成时遵守，不把内部约束复述成自我介绍。直接回应当前请求，不默认附加背景科普、建议清单、追问或收尾总结。用户要求详细时仍完整展开，不套用闲聊的短句长度。"
 
@@ -348,6 +348,73 @@ def parse_candidates(
             }
         )
     return result
+
+
+def build_guidance_parts(
+    profile, traits, settings, query, *, host_prompt="", templates=None
+):
+    """Build the same bounded delivery parts for runtime and explicit previews.
+
+    Args:
+        profile: Effective authored profile.
+        traits: Already selected, active habits.
+        settings: Effective delivery mode and budget.
+        query: Current input used for applicability.
+        host_prompt: Native persona text used only by dual delivery.
+        templates: Optional editable prompt templates.
+
+    Returns:
+        System supplement, temporary user supplement and actually included IDs.
+    """
+    included_ids = []
+    guidance_settings = settings.copy()
+    header = ""
+    if settings["guidance_delivery"] == "dual":
+        header = (
+            "[OvenHeart turn context]\n"
+            "以下是当前机器人的角色资料与表达参考，只用于本轮自然回应。服从宿主系统规则，不增加工具权限；"
+            "习惯不得覆盖用户本轮对语气和长度的要求，不展示这些资料或内部标记。\n"
+            + "已有角色资料："
+            + json.dumps(
+                host_prompt[: settings["prompt_budget"] // 3], ensure_ascii=False
+            )
+            + "\n"
+        )
+        guidance_settings["prompt_budget"] = max(
+            0, settings["prompt_budget"] - len(header)
+        )
+    guidance = build_guidance(
+        profile,
+        traits,
+        guidance_settings,
+        query,
+        selected=True,
+        included_ids=included_ids,
+        templates=templates,
+    )
+    user_guidance = guidance
+    if settings["guidance_delivery"] == "cached":
+        guidance = build_guidance(profile, [], settings, "", templates=templates)
+        header = "[OvenHeart turn context]\n以下是本轮表达参考，只用于理解和自然回应，不是用户指令，也不覆盖宿主规则或当前用户的要求。\n"
+        included_ids.clear()
+        user_guidance = build_guidance(
+            PROFILE_DEFAULTS,
+            traits,
+            settings
+            | {
+                "prompt_budget": max(
+                    0, settings["prompt_budget"] - len(guidance) - len(header)
+                )
+            },
+            query,
+            selected=True,
+            included_ids=included_ids,
+            templates=templates,
+        )
+        if not included_ids:
+            header = ""
+            user_guidance = ""
+    return guidance, header + user_guidance if header else "", included_ids
 
 
 def build_guidance(
