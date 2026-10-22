@@ -1,6 +1,8 @@
 """Verify native tool discovery and both autonomous tool policies."""
 
 import json
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from astrbot.api.provider import ProviderRequest
@@ -11,6 +13,113 @@ from tests.test_participation import build_tools, requests, skills_like_config
 from tests.test_runtime import api_call, event
 
 pytest_plugins = ["tests.test_participation"]
+
+
+@pytest.mark.parametrize("skills_like", [False, True])
+@pytest.mark.parametrize("policy", ["allowlist", "denylist"])
+async def test_native_executor_cannot_resolve_hidden_or_inactive_tools(
+    participant, skills_like, policy
+):
+    from astrbot.core.agent.hooks import BaseAgentRunHooks
+    from astrbot.core.agent.run_context import ContextWrapper
+    from astrbot.core.agent.runners.tool_loop_agent_runner import ToolLoopAgentRunner
+    from astrbot.core.agent.tool import FunctionTool
+    from astrbot.core.provider.entities import LLMResponse
+    from astrbot.core.provider.provider import Provider
+    from mcp.types import CallToolResult, TextContent
+
+    participant.settings.update(
+        autonomous_tool_policy=policy,
+        autonomous_tools=["qq_group_info", "host_disabled"],
+        autonomous_tool_denylist=["qq_group_member_manage"],
+    )
+    if skills_like:
+        participant.context.get_config = lambda umo: skills_like_config()
+    incoming = event("native-tool-dispatch")
+    request = (await requests(participant, incoming))[0]
+    original = build_tools()
+    original.add_tool(
+        FunctionTool(
+            name="host_disabled",
+            description="Disabled by host",
+            parameters={"type": "object", "properties": {}},
+            active=False,
+        )
+    )
+    request.func_tool = original
+    await participant.apply_participation(incoming, request)
+    provider = MagicMock(spec=Provider)
+    provider.provider_config = {}
+    executed = []
+
+    async def execute(tool, run_context, **kwargs):
+        executed.append(tool.name)
+        yield CallToolResult(content=[TextContent(type="text", text="ok")])
+
+    runner = ToolLoopAgentRunner()
+    await runner.reset(
+        provider=provider,
+        request=request,
+        run_context=ContextWrapper(context=SimpleNamespace(event=incoming)),
+        tool_executor=SimpleNamespace(execute=execute),
+        agent_hooks=BaseAgentRunHooks(),
+        tool_schema_mode="skills_like" if skills_like else "full",
+    )
+    assert runner.run_context.messages and runner.stats is not None
+    # The provider may hallucinate names absent from every advertised schema.
+    response = LLMResponse(
+        role="assistant",
+        tools_call_name=["qq_group_info", "qq_group_member_manage", "host_disabled"],
+        tools_call_args=[{}, {}, {}],
+        tools_call_ids=["ok", "blocked", "inactive"],
+    )
+    async for _ in runner._handle_function_tools(request, response):
+        pass
+    assert executed == ["qq_group_info"]
+    assert all(t.active for t in original.tools[:2]) and not original.tools[2].active
+
+
+@pytest.mark.parametrize("empty_source", [None, "empty", "nonempty"])
+async def test_skills_like_text_only_initializes_the_real_runner(empty_source):
+    from astrbot.core.agent.hooks import BaseAgentRunHooks
+    from astrbot.core.agent.run_context import ContextWrapper
+    from astrbot.core.agent.runners.tool_loop_agent_runner import ToolLoopAgentRunner
+    from astrbot.core.agent.tool import ToolSet
+    from astrbot.core.provider.entities import LLMResponse
+    from astrbot.core.provider.provider import Provider
+
+    from astrbot_plugin_ovenheart.main import narrow_toolset
+
+    source = (
+        None
+        if empty_source is None
+        else ToolSet([])
+        if empty_source == "empty"
+        else build_tools()
+    )
+    request = ProviderRequest(
+        prompt="只需要聊聊天", func_tool=narrow_toolset(source, set(), skills_like=True)
+    )
+    provider = MagicMock(spec=Provider)
+    provider.provider_config = {}
+    provider.text_chat = AsyncMock(
+        return_value=LLMResponse(role="assistant", completion_text="收到，我在。")
+    )
+    runner = ToolLoopAgentRunner()
+    await runner.reset(
+        provider=provider,
+        request=request,
+        run_context=ContextWrapper(context=None),
+        tool_executor=SimpleNamespace(),
+        agent_hooks=BaseAgentRunHooks(),
+        tool_schema_mode="skills_like",
+    )
+    assert runner.run_context.messages and runner.stats is not None
+    assert request.func_tool.names() == []
+    async for _ in runner.step():
+        pass
+    assert runner.final_llm_resp.completion_text == "收到，我在。"
+    provider.text_chat.assert_awaited_once()
 
 
 @pytest.mark.parametrize("skills_like", [False, True])

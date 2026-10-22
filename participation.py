@@ -22,11 +22,14 @@ PLANNER_SYSTEM = """你是群聊中的参与决策器，不是最终回复者。
 只有有价值且与自己有关、能自然接住情绪或话题时才 reply。信息不全、对方可能继续输入时可 wait，话题已结束或无必要介入时 observe。
 另一个 AI 或机器人对别人的回应不是对你的邀请，不要把它当作你要接话的人。回复某个人时，target_sequence 指向那个人最近的发言，不要默认指向最新一条；只在泛泛参与当前话题时才选最新一条。
 reply 的 intent 写本次对话目标、要回应的对象和简短应对策略，不写要发送的正文、不下工具指令。工具与权限由宿主决定。
+decoration 决定引用与 @：none 都不加；quote 引用 target_sequence 那条消息；mention 真 @ 那条消息的发送者；quote_mention 两者都加。
+只在回应较早消息、需要让对方看到上下文或收到提醒时才加装饰；普通接话用 none。不要在正文里写 @昵称 或引用标记。
 本轮最多等待一次，wait_elapsed 为 true 后不能再次 wait。不得编造身份、个人经历、关系或消息事实。
 仅输出一个 JSON 对象，不要代码块或解释：
-{"action":"reply","confidence":0.85,"reason":"对方明确在向群内寻求安慰，此时简短回应有帮助","intent":"回应对方的失落，先接住情绪再问是否愿意说说","target_sequence":18,"wait_seconds":0}
+{"action":"reply","confidence":0.85,"reason":"对方明确在向群内寻求安慰，此时简短回应有帮助","intent":"回应对方的失落，先接住情绪再问是否愿意说说","target_sequence":18,"decoration":"quote_mention","wait_seconds":0}
 action 只能为 reply、wait、observe；confidence 是 0 到 1；reason 最多 240 字；intent 最多 240 字；
 target_sequence 是 recent_messages 中某条消息的整数 sequence，必须是你实际要回应的那条；wait 或 observe 时为 0；
+decoration 只能为 none、quote、mention、quote_mention；wait 或 observe 时为 none；
 wait 时 wait_seconds 是 1 到 max_wait 的整数，其他行动为 0；observe 时 intent 留空。
 """
 
@@ -86,10 +89,19 @@ def parse_plan(text: str, settings: dict, waited: bool = False, messages=None) -
     target = plan.get("target_sequence", 0)
     if type(target) is not int or target < 0:
         raise ParticipationFormatError("参与决策的回复目标不正确。")
+    decoration = plan.get("decoration")
+    if decoration is not None and decoration not in (
+        "none",
+        "quote",
+        "mention",
+        "quote_mention",
+    ):
+        raise ParticipationFormatError("参与决策的装饰方式不正确。")
     result = {
         k: plan[k] for k in ("action", "confidence", "reason", "intent", "wait_seconds")
     }
     result["target_sequence"] = 0
+    result["decoration"] = None
     if plan["action"] == "reply" and confidence < settings["planner_reply_threshold"]:
         result.update(
             action="observe",
@@ -111,6 +123,9 @@ def parse_plan(text: str, settings: dict, waited: bool = False, messages=None) -
             if target not in {m["sequence"] for m in targetable}:
                 raise ParticipationFormatError("参与决策的回复目标不在最近消息中。")
         result["target_sequence"] = target
+        # Older custom planner prompts have no decoration field. None keeps the
+        # host's existing quote/mention settings and the 0.20.1 target binding.
+        result["decoration"] = decoration
     return result
 
 
@@ -491,6 +506,15 @@ class ParticipationController:
             task += (
                 "\n回复 JSON 还必须包含整数 target_sequence："
                 "recent_messages 中你实际要回应的消息 sequence；wait 或 observe 填 0。"
+            )
+        if "decoration" not in task:
+            # Same compatibility path for custom planner prompts: the model may
+            # choose real quote/@ decoration instead of the host's fixed settings.
+            task += (
+                "\n回复 JSON 还必须包含 decoration："
+                "none、quote、mention 或 quote_mention；"
+                "quote 引用 target_sequence 那条消息，"
+                "mention 真 @ 那条消息的发送者；wait 或 observe 填 none。"
             )
         prompt = json.dumps(
             {

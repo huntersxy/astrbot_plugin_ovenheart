@@ -12,6 +12,7 @@ pytest.importorskip("astrbot.api")
 from astrbot.api.provider import ProviderRequest  # noqa: E402
 from astrbot.core.agent.tool import FunctionTool, ToolSet  # noqa: E402
 from astrbot.core.db.po import Conversation  # noqa: E402
+from astrbot.core.message.components import At, Plain, Reply  # noqa: E402
 
 from astrbot_plugin_ovenheart.main import ParticipationFilter  # noqa: E402
 from astrbot_plugin_ovenheart.participation import parse_plan  # noqa: E402
@@ -89,6 +90,55 @@ async def requests(plugin, incoming):
         Handler outputs without executing a chat or sending platform messages.
     """
     return [request async for request in plugin.participate(incoming)]
+
+
+def result_decorate_stage(*, mention=False, quote=False):
+    """Build the native result decorator with controlled platform settings.
+
+    Args:
+        mention: Whether the host is configured to add a static At.
+        quote: Whether the host is configured to add a static Reply.
+
+    Returns:
+        Initialized stage without TTS, segmentation or content checks.
+    """
+    from astrbot.core.pipeline.result_decorate.stage import ResultDecorateStage
+
+    stage = ResultDecorateStage()
+    stage.reply_prefix = ""
+    stage.content_safe_check_reply = False
+    stage.enable_segmented_reply = False
+    stage.only_llm_result = True
+    stage.words_count_threshold = 100
+    stage.split_mode = "regex"
+    stage.split_words = []
+    stage.split_words_pattern = None
+    stage.content_cleanup_rule = ""
+    stage.show_reasoning = False
+    stage.tts_trigger_probability = 0
+    stage.reply_with_mention = mention
+    stage.reply_with_quote = quote
+    stage.forward_threshold = 1000
+    stage.t2i_word_threshold = 150
+    stage.t2i_use_network = False
+    stage.t2i_active_template = ""
+    stage.ctx = SimpleNamespace(
+        plugin_manager=SimpleNamespace(
+            context=SimpleNamespace(
+                get_using_tts_provider_async=AsyncMock(return_value=None)
+            )
+        ),
+        astrbot_config={
+            "provider_tts_settings": {
+                "enable": False,
+                "use_file_service": False,
+                "dual_output": False,
+            },
+            "callback_api_base": "",
+            "t2i": False,
+        },
+    )
+    return stage
 
 
 async def test_off_is_passive_and_direct_wakes_are_not_intercepted(participant):
@@ -414,7 +464,7 @@ def test_tool_schema_mode_follows_the_native_default_and_fallback():
     assert tool_schema_mode(skills_like_config()) == "skills_like"
 
 
-async def test_skills_like_host_keeps_entries_but_exposes_only_allowed_tools(
+async def test_skills_like_host_removes_denied_entries_and_exposes_allowed_tools(
     participant, monkeypatch
 ):
     incoming = event()
@@ -427,7 +477,7 @@ async def test_skills_like_host_keeps_entries_but_exposes_only_allowed_tools(
         participant.context, "get_config", lambda umo: skills_like_config()
     )
     await participant.apply_participation(incoming, request)
-    assert len(request.func_tool.tools) == 2
+    assert len(request.func_tool.tools) == 1
     assert bool(request.func_tool)
     assert [t.name for t in request.func_tool.tools if t.active] == ["qq_group_info"]
     assert request.func_tool.get_light_tool_set().names() == ["qq_group_info"]
@@ -449,7 +499,7 @@ async def test_skills_like_empty_allowlist_still_yields_a_truthy_tool_set(
         participant.context, "get_config", lambda umo: skills_like_config()
     )
     await participant.apply_participation(incoming, request)
-    assert len(request.func_tool.tools) == 2
+    assert request.func_tool.tools == []
     assert bool(request.func_tool)
     assert request.func_tool.get_light_tool_set().names() == []
     assert request.func_tool.get_param_only_tool_set().names() == []
@@ -509,43 +559,7 @@ async def test_autonomous_reply_binds_the_planner_target_message_and_sender(
     assert newest.get_sender_id() == "alice"
     assert newest.get_sender_name() == "汐兮雨"
 
-    from astrbot.core.message.components import Reply
-    from astrbot.core.pipeline.result_decorate.stage import ResultDecorateStage
-
-    stage = ResultDecorateStage()
-    stage.reply_prefix = ""
-    stage.content_safe_check_reply = False
-    stage.enable_segmented_reply = False
-    stage.only_llm_result = True
-    stage.words_count_threshold = 100
-    stage.split_mode = "regex"
-    stage.split_words = []
-    stage.split_words_pattern = None
-    stage.content_cleanup_rule = ""
-    stage.show_reasoning = False
-    stage.tts_trigger_probability = 0
-    stage.reply_with_mention = False
-    stage.reply_with_quote = True
-    stage.forward_threshold = 1000
-    stage.t2i_word_threshold = 150
-    stage.t2i_use_network = False
-    stage.t2i_active_template = ""
-    stage.ctx = SimpleNamespace(
-        plugin_manager=SimpleNamespace(
-            context=SimpleNamespace(
-                get_using_tts_provider_async=AsyncMock(return_value=None)
-            )
-        ),
-        astrbot_config={
-            "provider_tts_settings": {
-                "enable": False,
-                "use_file_service": False,
-                "dual_output": False,
-            },
-            "callback_api_base": "",
-            "t2i": False,
-        },
-    )
+    stage = result_decorate_stage(quote=True)
     async for _ in stage.process(newest):
         pass
     assert isinstance(newest.get_result().chain[0], Reply)
@@ -561,6 +575,115 @@ async def test_autonomous_reply_keeps_the_latest_message_as_target_by_default(
     await participant.guard_participation_result(incoming)
     assert incoming.message_obj.message_id == "latest"
     assert incoming.get_sender_id() == "alice"
+
+
+async def test_planner_decoration_inserts_real_quote_and_mention_once(participant):
+    participant.settings["participation_mode"] = "observe"
+    participant.settings["participation_cooldown"] = 0
+    older = event("older", text="我要看你的", sender="alice", sender_name="汐兮雨")
+    await requests(participant, older)
+    participant.settings["participation_mode"] = "auto"
+    participant.context.llm_generate.return_value = decision(
+        target_sequence=1, decoration="quote_mention"
+    )
+    newest = event("newest", text="咕噜？", sender="whale", sender_name="小鲸")
+    request = (await requests(participant, newest))[0]
+    await participant.apply_participation(newest, request)
+    injection = request.system_prompt + "".join(
+        part.text for part in request.extra_user_content_parts
+    )
+    assert '"decoration": "quote_mention"' in injection
+    newest.set_result(newest.plain_result("造物主怎么只盯着鱼片看，@汐兮雨 你说呢"))
+    await participant.guard_participation_result(newest)
+    chain = newest.get_result().chain
+    assert [type(item) for item in chain] == [Reply, At, Plain]
+    assert chain[0].id == "older"
+    assert chain[1].qq == "alice" and chain[1].name == "汐兮雨"
+    assert chain[2].text.startswith(" ")
+    assert "@汐兮雨" not in chain[2].text
+
+    stage = result_decorate_stage(mention=True, quote=True)
+    async for _ in stage.process(newest):
+        pass
+    final = newest.get_result().chain
+    assert sum(isinstance(item, Reply) for item in final) == 1
+    assert sum(isinstance(item, At) for item in final) == 1
+
+
+async def test_plain_text_mentions_become_real_at_without_fake_text(participant):
+    participant.settings["participation_mode"] = "observe"
+    participant.settings["participation_cooldown"] = 0
+    older = event("older", text="我要看你的", sender="alice", sender_name="汐兮雨")
+    await requests(participant, older)
+    participant.settings["participation_mode"] = "auto"
+    participant.context.llm_generate.return_value = decision(target_sequence=1)
+    newest = event("newest", text="咕噜？", sender="whale", sender_name="小鲸")
+    await requests(participant, newest)
+    newest.set_result(newest.plain_result("好的，@汐兮雨 你说"))
+    await participant.guard_participation_result(newest)
+    chain = newest.get_result().chain
+    assert [type(item) for item in chain] == [Plain, At, Plain]
+    assert chain[1].qq == "alice" and chain[1].name == "汐兮雨"
+    assert "@汐兮雨" not in "".join(
+        item.text for item in chain if isinstance(item, Plain)
+    )
+
+
+async def test_direct_guided_reply_realizes_mentions(participant):
+    incoming = event("direct", sender="alice", sender_name="汐兮雨")
+    incoming.set_extra("ovenheart_guided", True)
+    incoming.set_result(incoming.plain_result("@汐兮雨 在吗"))
+    await participant.guard_participation_result(incoming)
+    chain = incoming.get_result().chain
+    assert isinstance(chain[0], At) and chain[0].qq == "alice"
+    assert not any(isinstance(item, Plain) and "@" in item.text for item in chain)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "@小夏天 你好",
+        "user@alice.com",
+        "https://example.test/@alice",
+        "`@alice` 是示例",
+        "```text\n@alice\n``` 是代码",
+    ],
+)
+def test_literal_names_and_code_do_not_create_real_notifications(text):
+    from astrbot_plugin_ovenheart.main import realize_mentions
+
+    chain = realize_mentions([Plain(text)], {"小夏": "bot-friend", "alice": "alice-id"})
+    assert not any(isinstance(item, At) for item in chain)
+    assert "".join(item.text for item in chain) == text
+
+
+async def test_duplicate_display_names_do_not_guess_a_mention_target(participant):
+    from astrbot_plugin_ovenheart.main import realize_mentions, reply_people
+
+    incoming = event(sender="alice", sender_name="小夏")
+    people = reply_people(
+        incoming, {"messages": [{"sender": "小夏", "sender_id": "bob"}]}
+    )
+    chain = realize_mentions([Plain("@小夏 你说呢")], people)
+    assert not any(isinstance(item, At) for item in chain)
+    assert chain[0].text == "@小夏 你说呢"
+
+
+@pytest.mark.parametrize("text", ["@小夏 你说呢", "问问＠小夏，你说呢", "@小夏！"])
+def test_unambiguous_mentions_keep_their_real_component(text):
+    from astrbot_plugin_ovenheart.main import realize_mentions
+
+    chain = realize_mentions([Plain(text)], {"小夏": "alice"})
+    ats = [item for item in chain if isinstance(item, At)]
+    assert len(ats) == 1 and str(ats[0].qq) == "alice"
+
+
+async def test_custom_planner_prompt_requests_the_decoration_field(participant):
+    participant.prompts["planner"] = "自定义决策提示词，只输出一个 JSON。"
+    assert len(await requests(participant, event("custom"))) == 1
+    sent = participant.context.llm_generate.await_args.kwargs
+    assert "target_sequence" in sent["system_prompt"]
+    assert "decoration" in sent["system_prompt"]
 
 
 async def test_an_own_send_stage_does_not_cancel_its_other_segments(participant):
@@ -617,6 +740,37 @@ def test_malformed_reply_targets_are_rejected(target):
             decision(target_sequence=target).completion_text,
             DEFAULTS,
             messages=[{"sequence": 1, "self": False}],
+        )
+
+
+@pytest.mark.parametrize("decoration", [True, 1, "both", ["quote"]])
+def test_malformed_decorations_are_rejected(decoration):
+    with pytest.raises(ValueError):
+        parse_plan(decision(decoration=decoration).completion_text, DEFAULTS)
+
+
+def test_decoration_defaults_to_host_fallback_and_is_cleared_without_reply():
+    messages = [{"sequence": 4, "self": False}]
+    assert (
+        parse_plan(decision().completion_text, DEFAULTS, messages=messages)[
+            "decoration"
+        ]
+        is None
+    )
+    assert (
+        parse_plan(
+            decision(decoration="quote").completion_text, DEFAULTS, messages=messages
+        )["decoration"]
+        == "quote"
+    )
+    for action in ("wait", "observe"):
+        assert (
+            parse_plan(
+                decision(action, decoration="quote_mention").completion_text,
+                DEFAULTS,
+                messages=messages,
+            )["decoration"]
+            is None
         )
 
 
@@ -706,6 +860,7 @@ async def test_cached_participation_keeps_goal_out_of_system_prefix(participant)
     await participant.apply_participation(incoming, request)
     assert request.system_prompt == "稳定宿主系统提示词"
     assert "OvenHeart participation" in request.extra_user_content_parts[-1].text
+    assert "OvenHeart reply decoration" in request.extra_user_content_parts[-1].text
     assert "reply_goal" in request.extra_user_content_parts[-1].text
     assert request.extra_user_content_parts[-1].model_dump_for_context()["_no_save"]
 

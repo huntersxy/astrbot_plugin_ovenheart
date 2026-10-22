@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.22.1
+
+- Enforce autonomous tool policies at the native dispatch boundary in both schema modes. Remove denied and host-inactive tools from the raw request instead of retaining inactive handlers; a provider hallucinating a hidden name can no longer resolve it through the skills-like raw tool set.
+- Keep an actually empty skills-like input tool set truthy only for runner initialization. This preserves text-only replies when the original tool set is absent, empty or entirely excluded, without advertising or retaining blocked tools. Direct-wake tool policy remains owned by the host.
+- Convert plain-text mentions only for unambiguous, complete display names. Preserve longer-name prefixes, email addresses, URL paths and fenced/inline code as text; support full-width mention markers and avoid guessing between members with identical names.
+- Recheck the incoming 0.22 reply-decoration changes with real native runner/decorator regression coverage.
+
+## 0.22.0
+
+- Let the participation planner choose `decoration` together with the reply target: `none`, `quote`, `mention` or `quote_mention`. The pre-send hook inserts a real `Reply` and/or `At` for the answered message and sender; because the chain is no longer plain text, AstrBot's own static decoration skips it and cannot add a second quote or @.
+- Forbid the reply body from writing `@昵称`, full-width ＠, quote markers or message IDs. As a safety net, matched plain-text mentions in the window, the current sender or the inbound quoted message become real `At` components; unmatched names never become fake mentions. Direct guided replies use the same conversion.
+- Keep older custom planner prompts working: the request appends the missing `decoration` field requirement, a missing field falls back to the host settings and the 0.20.1 target binding, and wait/observe plans never carry decoration. Malformed values are rejected.
+- Add a `reply_decoration` prompt template, Debug `reply_mentions` output and regression tests for real components, host non-duplication, plain-text conversion and custom-prompt compatibility.
+
 ## 0.21.1
 
 - Stop a single unusable candidate from failing the whole learning batch. A merge target that is missing, out of range or of another kind, and a jargon candidate merging into a differently named entry, are now dropped like an under-evidenced candidate instead of raising. Because a failed run preserves its sources, the old behavior replayed the same batch on every cycle and a deterministic model answer repeated the warning indefinitely; the remaining candidates now commit and the sources are consumed.

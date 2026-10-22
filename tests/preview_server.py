@@ -385,6 +385,11 @@ async def api(endpoint: str, request: Request):
     Returns:
         Native plugin response.
     """
+    if endpoint == "decoration-simulation":
+        return await decoration_simulation(
+            request.query_params.get("decoration", "quote_mention"),
+            request.query_params.get("body", "好的，@汐兮雨 你说"),
+        )
     handlers = {
         "state": "state",
         "library": "library",
@@ -401,6 +406,123 @@ async def api(endpoint: str, request: Request):
         )
     ):
         return await getattr(app.state.plugin.page_api, handlers[endpoint])()
+
+
+async def decoration_simulation(decoration: str, body: str) -> dict:
+    """Run the real planner parser, delivery hook and host decorator.
+
+    Args:
+        decoration: none, quote, mention or quote_mention.
+        body: Model-generated reply text for the simulated result.
+
+    Returns:
+        The parsed plan choice and the final chain after host decoration.
+    """
+    from astrbot.core.message.components import At, Plain, Reply
+    from astrbot.core.pipeline.result_decorate.stage import ResultDecorateStage
+
+    from astrbot_plugin_ovenheart.participation import parse_plan
+    from tests.test_runtime import event
+
+    messages = [
+        {
+            "sequence": 1,
+            "self": False,
+            "sender": "汐兮雨",
+            "sender_id": "alice",
+            "message_id": "older",
+            "text": "我要看你的",
+        },
+        {
+            "sequence": 2,
+            "self": False,
+            "sender": "小鲸",
+            "sender_id": "whale",
+            "message_id": "newest",
+            "text": "咕噜？",
+        },
+    ]
+    plan = parse_plan(
+        json.dumps(
+            {
+                "action": "reply",
+                "confidence": 0.9,
+                "reason": "对方在等回应。",
+                "intent": "回应汐兮雨。",
+                "target_sequence": 1,
+                "decoration": decoration,
+                "wait_seconds": 0,
+            },
+            ensure_ascii=False,
+        ),
+        DEFAULTS,
+        messages=messages,
+    )
+    target = messages[0]
+    plan = plan | {"scope": "a" * 24, "messages": messages, "target": target}
+    newest = event("newest", text="咕噜？", sender="whale", sender_name="小鲸")
+    newest.set_result(newest.plain_result(body))
+    plugin = app.state.plugin
+    plugin.apply_planned_decoration(newest, plan["decoration"], target)
+    plugin.realize_result_mentions(newest, plan)
+
+    stage = ResultDecorateStage()
+    stage.reply_prefix = ""
+    stage.content_safe_check_reply = False
+    stage.enable_segmented_reply = False
+    stage.only_llm_result = True
+    stage.words_count_threshold = 100
+    stage.split_mode = "regex"
+    stage.split_words = []
+    stage.split_words_pattern = None
+    stage.content_cleanup_rule = ""
+    stage.show_reasoning = False
+    stage.tts_trigger_probability = 0
+    stage.reply_with_mention = True
+    stage.reply_with_quote = True
+    stage.forward_threshold = 1000
+    stage.t2i_word_threshold = 150
+    stage.t2i_use_network = False
+    stage.t2i_active_template = ""
+    stage.ctx = SimpleNamespace(
+        plugin_manager=SimpleNamespace(
+            context=SimpleNamespace(
+                get_using_tts_provider_async=AsyncMock(return_value=None)
+            )
+        ),
+        astrbot_config={
+            "provider_tts_settings": {
+                "enable": False,
+                "use_file_service": False,
+                "dual_output": False,
+            },
+            "callback_api_base": "",
+            "t2i": False,
+        },
+    )
+    async for _ in stage.process(newest):
+        pass
+
+    def render(item) -> dict:
+        if isinstance(item, Reply):
+            return {"type": "Reply", "id": str(item.id)}
+        if isinstance(item, At):
+            return {"type": "At", "qq": str(item.qq), "name": item.name}
+        if isinstance(item, Plain):
+            return {"type": "Plain", "text": item.text}
+        return {"type": type(item).__name__}
+
+    chain = [render(item) for item in newest.get_result().chain]
+    return {
+        "decoration": plan["decoration"],
+        "body": body,
+        "chain": chain,
+        "reply_count": sum(item["type"] == "Reply" for item in chain),
+        "at_count": sum(item["type"] == "At" for item in chain),
+        "plain_has_at": any(
+            item["type"] == "Plain" and "@" in item["text"] for item in chain
+        ),
+    }
 
 
 @app.get("/{asset}")

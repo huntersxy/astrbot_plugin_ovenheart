@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import copy
 import hashlib
 import json
 import re
@@ -20,7 +19,8 @@ from astrbot.api.provider import ProviderRequest
 from astrbot.api.star import Context, Star, StarTools
 from astrbot.core.agent.message import TextPart
 from astrbot.core.agent.tool import ToolSet
-from astrbot.core.message.components import Plain
+from astrbot.core.message.components import At, Plain, Reply
+from astrbot.core.message.message_event_result import ResultContentType
 from astrbot.core.platform.astrbot_message import MessageMember
 from astrbot.core.star.filter.command import CommandFilter
 from astrbot.core.star.filter.command_group import CommandGroupFilter
@@ -69,6 +69,19 @@ def tool_schema_mode(host_config) -> str:
     return mode if mode in TOOL_SCHEMA_MODES else "full"
 
 
+class SkillsLikeToolSet(ToolSet):
+    """Keep the native runner's reset path available for text-only requests."""
+
+    def __bool__(self) -> bool:
+        """Signal initialized input even when its actual tool list is empty.
+
+        Returns:
+            True so AstrBot 4.29.1 assembles messages and initializes stats.
+            Its derived light/parameter schemas remain ordinary empty ToolSets.
+        """
+        return True
+
+
 def narrow_toolset(toolset: ToolSet | None, allowed: set[str], *, skills_like: bool):
     """Restrict a prepared tool set to an exact-name allowlist.
 
@@ -77,27 +90,116 @@ def narrow_toolset(toolset: ToolSet | None, allowed: set[str], *, skills_like: b
         allowed: Exact tool names the autonomous request may still use.
         skills_like: Host schema mode. AstrBot 4.29.1 returns early from its runner
             reset when a skills_like request carries a falsy tool set, leaving stats
-            and the message list unset; keeping the entries and clearing active
-            preserves that branch while still exposing no tools to the provider.
+            and the message list unset. A truthy input wrapper avoids that branch
+            without retaining any denied or host-inactive tool handlers.
 
     Returns:
         The restricted tool set, or None when the request had no tool set.
     """
-    if toolset is None:
+    if toolset is None and not skills_like:
         return None
-    if not skills_like:
-        return ToolSet(
-            [tool for tool in toolset.tools if tool.name in allowed and tool.active]
-        )
-    narrowed = []
-    for tool in toolset.tools:
-        if tool.name in allowed:
-            narrowed.append(tool)
+    selected = [
+        tool
+        for tool in (toolset.tools if toolset is not None else [])
+        if tool.name in allowed and tool.active
+    ]
+    return SkillsLikeToolSet(selected) if skills_like else ToolSet(selected)
+
+
+def reply_people(event: AstrMessageEvent, plan: dict | None) -> dict[str, str]:
+    """Map display names visible to the model onto platform sender IDs.
+
+    Args:
+        event: Native event whose result is about to be sent.
+        plan: Validated participation plan, when this is an autonomous reply.
+
+    Returns:
+        Display name to sender ID for everyone the reply may really mention.
+    """
+    people: dict[str, str] = {}
+    ambiguous: set[str] = set()
+
+    def add(name, sender_id) -> None:
+        name = str(name or "").strip().lstrip("@")
+        sender_id = str(sender_id or "").strip()
+        if not name or not sender_id or sender_id == str(event.get_self_id() or ""):
+            return
+        if name in ambiguous:
+            return
+        if name in people and people[name] != sender_id:
+            people.pop(name)
+            ambiguous.add(name)
+        else:
+            people[name] = sender_id
+
+    add(event.get_sender_name(), event.get_sender_id())
+    if plan:
+        for message in plan.get("messages") or []:
+            if not message.get("self"):
+                add(message.get("sender"), message.get("sender_id"))
+    for component in event.message_obj.message or []:
+        if isinstance(component, Reply):
+            add(component.sender_nickname, component.sender_id)
+    return people
+
+
+def realize_mentions(chain: list, people: dict[str, str]) -> list:
+    """Turn plain-text @name tokens into real At components.
+
+    Args:
+        chain: Final result chain before the host decorates and sends it.
+        people: Display name to sender ID resolved from the live context.
+
+    Returns:
+        The same chain when no known name is addressed; otherwise a chain with
+        real At components. Duplicate mentions of an already-targeted sender are
+        removed instead of being emitted as plain text.
+    """
+    if not people:
+        return chain
+    names = sorted(people, key=len, reverse=True)
+    pattern = re.compile(
+        r"(?<![A-Za-z0-9_@＠./:+-])[@＠]("
+        + "|".join(re.escape(name) for name in names)
+        + r")(?![\w@＠])"
+    )
+    used = {str(component.qq) for component in chain if isinstance(component, At)}
+    output = []
+    for component in chain:
+        if not isinstance(component, Plain) or not any(
+            marker in component.text for marker in ("@", "＠")
+        ):
+            output.append(component)
             continue
-        clone = copy.copy(tool)
-        clone.active = False
-        narrowed.append(clone)
-    return ToolSet(narrowed)
+        text = component.text
+        # Literal examples are content, not an invitation to notify a member.
+        protected = [
+            (match.start(), match.end())
+            for match in re.finditer(
+                r"```[\s\S]*?(?:```|$)|~~~[\s\S]*?(?:~~~|$)|`[^`\n]*(?:`|$)", text
+            )
+        ]
+        start = 0
+        for match in pattern.finditer(text):
+            if any(begin <= match.start() < end for begin, end in protected):
+                continue
+            if match.start() > start:
+                output.append(Plain(text[start : match.start()]))
+            name = match.group(1)
+            sender_id = people[name]
+            if sender_id not in used:
+                output.append(At(qq=sender_id, name=name))
+                used.add(sender_id)
+            start = match.end()
+        if start < len(text):
+            output.append(Plain(text[start:]))
+    merged = []
+    for component in output:
+        if isinstance(component, Plain) and merged and isinstance(merged[-1], Plain):
+            merged[-1] = Plain(merged[-1].text + component.text)
+        else:
+            merged.append(component)
+    return merged
 
 
 class ObservationFilter(filter.CustomFilter):
@@ -232,6 +334,26 @@ class PersonaPlugin(Star):
             Rendered prompt text.
         """
         return prompts.render(self.prompts[key], variables)
+
+    def decorate_request(self, req: ProviderRequest) -> str:
+        """Return the reply-decoration contract when the request lacks it.
+
+        Args:
+            req: Mutable native provider request.
+
+        Returns:
+            The suffix to append through the caller's injection, or an empty
+            string when the contract is already present.
+        """
+        body = self.template("reply_decoration")
+        if not body:
+            return ""
+        if body in req.system_prompt or any(
+            isinstance(part, TextPart) and body in part.text
+            for part in req.extra_user_content_parts
+        ):
+            return ""
+        return "\n\n" + body
 
     async def update_prompts(self, payload: dict, expected_revision=None):
         """Persist operator-edited prompt templates and publish them atomically.
@@ -719,6 +841,68 @@ class PersonaPlugin(Star):
             return False
         return True
 
+    def apply_planned_decoration(self, event, decoration: str, target: dict) -> None:
+        """Insert real quote and mention components selected by the planner.
+
+        Args:
+            event: Native event whose result is about to be decorated.
+            decoration: none, quote, mention or quote_mention.
+            target: Message and sender the planner actually answered.
+        """
+        result = event.get_result()
+        if result is None or not result.chain:
+            return
+        if result.result_content_type in (
+            ResultContentType.STREAMING_RESULT,
+            ResultContentType.STREAMING_FINISH,
+        ):
+            return
+        prefix = []
+        if "quote" in decoration:
+            target_id = str(target.get("message_id") or "")
+            if target_id:
+                prefix.append(Reply(id=target_id))
+        if "mention" in decoration:
+            sender_id = str(target.get("sender_id") or "")
+            if sender_id:
+                prefix.append(At(qq=sender_id, name=target.get("sender") or ""))
+        if not prefix:
+            return
+        result.chain = prefix + result.chain
+        if isinstance(prefix[-1], At):
+            for component in result.chain[len(prefix) :]:
+                if isinstance(component, Plain) and component.text.strip():
+                    component.text = " " + component.text
+                    break
+
+    def realize_result_mentions(self, event, plan: dict | None) -> None:
+        """Convert any plain-text @name left by the model into real At segments.
+
+        Args:
+            event: Native event whose result is about to be decorated.
+            plan: Validated participation plan, when this is an autonomous reply.
+        """
+        result = event.get_result()
+        if result is None or not result.chain:
+            return
+        if result.result_content_type in (
+            ResultContentType.STREAMING_RESULT,
+            ResultContentType.STREAMING_FINISH,
+        ):
+            return
+        people = reply_people(event, plan)
+        if not people:
+            return
+        before = sum(isinstance(component, At) for component in result.chain)
+        result.chain = realize_mentions(list(result.chain), people)
+        added = sum(isinstance(component, At) for component in result.chain) - before
+        if added:
+            self.debug(
+                "reply_mentions",
+                scope=(plan or {}).get("scope"),
+                added=added,
+            )
+
     @filter.on_decorating_result(priority=-100000)
     async def guard_participation_result(self, event: AstrMessageEvent):
         """Suppress an obsolete autonomous result before the native send stage.
@@ -732,10 +916,15 @@ class PersonaPlugin(Star):
             return
         plan = event.get_extra("ovenheart_decision")
         if not plan:
+            if event.get_extra("ovenheart_guided"):
+                self.realize_result_mentions(event, None)
             return
         if await self.check_participation(event):
             target = plan.get("target") or {}
             target_id = str(target.get("message_id") or "")
+            decoration = plan.get("decoration")
+            if decoration and target:
+                self.apply_planned_decoration(event, decoration, target)
             if target_id and target_id != str(event.message_obj.message_id or ""):
                 # The host decorator quotes event.message_obj.message_id after this
                 # hook, so binding it here makes the visible quote match the person
@@ -747,6 +936,7 @@ class PersonaPlugin(Star):
                 event.message_obj.sender = MessageMember(
                     sender_id, target.get("sender") or ""
                 )
+            self.realize_result_mentions(event, plan)
             if target:
                 self.debug(
                     "participation_target",
@@ -754,6 +944,7 @@ class PersonaPlugin(Star):
                     sequence=target.get("sequence"),
                     sender=target.get("sender"),
                     message_id=target_id,
+                    decoration=decoration,
                 )
             return
         # Stopping the event is not enough to drop the chain: the result decorate
@@ -809,6 +1000,7 @@ class PersonaPlugin(Star):
                 "goal": plan["intent"],
                 "reason": plan["reason"],
                 "reply_target": target_label,
+                "decoration": plan.get("decoration"),
             },
             ensure_ascii=False,
         )
@@ -823,6 +1015,7 @@ class PersonaPlugin(Star):
             {
                 "reply_goal": plan["intent"],
                 "reply_target": target_label,
+                "decoration": plan.get("decoration"),
                 "messages": plan["messages"],
             },
             ensure_ascii=False,
@@ -830,6 +1023,13 @@ class PersonaPlugin(Star):
         if self.settings["guidance_delivery"] == "cached":
             user_injection = system_injection + "\n" + user_injection
             system_injection = ""
+        decoration = self.decorate_request(req)
+        if decoration:
+            if self.settings["guidance_delivery"] == "cached":
+                user_injection += decoration
+            else:
+                system_injection += decoration
+        event.set_extra("ovenheart_guided", True)
         req.system_prompt += system_injection
         req.extra_user_content_parts.append(
             TextPart(text=user_injection).mark_as_temp()
@@ -1064,6 +1264,7 @@ class PersonaPlugin(Star):
                 TextPart(text=user_injection).mark_as_temp()
             )
         if system_injection or user_injection:
+            event.set_extra("ovenheart_guided", True)
             event.set_extra(
                 "ovenheart_application",
                 {

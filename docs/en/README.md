@@ -57,7 +57,26 @@ The planner chooses the message it is answering from the recent window and retur
 | Target is outside the window or malformed | The decision is rejected; sources and context are preserved |
 | An older custom planner prompt omits the target | Falls back to the newest non-self message, preserving pre-upgrade behavior |
 
-Binding changes only the host's quote/@ recipient. It does not rewrite generated text, add an @ component, or loosen tool permissions. Wait and observe plans never carry a target.
+Binding changes only the host's quote/@ recipient. It does not rewrite generated text, add an @ component, or loosen tool permissions. Wait and observe plans never carry a target. Since 0.22, the `decoration` field below decides whether real components are inserted.
+
+## Quote and @ decoration (0.22)
+
+Autonomous quote and @ are no longer decided solely by the host's fixed switches. Alongside `target_sequence`, the participation planner returns `decoration`; both point at the same answered message:
+
+| `decoration` | Components inserted before sending |
+| --- | --- |
+| `none` | Nothing extra; the host's existing quote/@ settings may still apply |
+| `quote` | A real `Reply` at the head of the chain, quoting the target message |
+| `mention` | A real `At` at the head of the chain, mentioning the target sender |
+| `quote_mention` | Both `Reply` and `At` |
+
+AstrBot's result-decoration stage only adds its static quote/@ when the whole chain is plain text or images. A real component makes that condition false, so the host adds no second layer and the quote and mention cannot point at different people.
+
+The reply model is explicitly told not to write `@name`, full-width ＠, quote markers or message IDs. Before sending, the plugin still converts any matched plain-text mention from the participation window, the current sender or the inbound quoted message into a real `At`; unmatched names do not become fake mentions. Direct guided replies use the same fallback, while their quote/@ presence still follows host settings and the actual body.
+
+`none` has a limit: the plugin has no public per-message switch to suppress host decoration. If AstrBot's platform settings enable quote replies or mention replies, the host still adds them when the planner chooses `none`. Disable those two settings for full model control.
+
+Older custom planner prompts without `decoration` get an appended field requirement without rewriting their text. If the model still omits it, the 0.20.1 target binding and host settings remain in effect, so old templates keep working. Unknown or malformed decorations are rejected; wait and observe plans never carry decoration.
 
 ## Install and open
 
@@ -205,6 +224,7 @@ Every prompt this plugin sends lives in the 提示词 tab as an editable templat
 | Application style | the preamble inserted before supplementary habits | `{{profile}}` |
 | Participation: system | opening of the system prompt appended to an autonomous reply request | `{{goal}}` `{{reason}}` `{{target}}` `{{profile}}` `{{scope}}` |
 | Participation: temporary context | the chat-context note attached to this turn only | `{{reply_goal}}` `{{target}}` `{{messages}}` `{{profile}}` `{{scope}}` |
+| Reply decoration | appended to an autonomous reply request to forbid fake @ or quote markers | none |
 
 Variables are substituted at call time: text is spliced as-is, while message lists, candidates and profiles are serialized as JSON and booleans become `true`/`false`. A misspelled name is left literal, double braces included, and the editor lists it under unknown references. That is deliberate: silently deleting it would drop a whole constraint without any provider error.
 
@@ -236,7 +256,7 @@ Default gates are three fresh messages, two seconds of input debounce, a 90-seco
 
 The planner chooses reply, observe or one bounded wait followed by one reassessment. New input cancels obsolete work. Provider failure, timeout or invalid plans preserve observation. Plans state reasons, conversational goals and the recent message being answered; they cannot execute tools. The resulting native request binds a conversation and reloads history through the host's session lock, preserving persona/history. Before sending, the plugin points the host's quote and @ decoration at that message and sender instead of the newest message, which may be another bot's answer. Input, permission, profile and settings changes are checked again before generation.
 
-Autonomous tool access is an exact-name subset of tools already present in the native request. An empty allowlist means text-only; an empty denylist adds no restriction. Direct-wake tool policy is unaffected. When the host Agent runner uses the `skills_like` schema mode, an empty allowlist keeps the original tool entries with `active` cleared instead of handing over an empty set: AstrBot 4.29.1 returns early from that runner's reset for a falsy tool set and the reply then fails with `'ToolLoopAgentRunner' object has no attribute 'stats'`. Both modes expose only the allowed names to the provider. Explicitly allowing a tool permits the host Agent to invoke it autonomously under existing permissions. No model weight training is involved, and this is not a copy of every MaiBot subsystem.
+Autonomous tool access is an exact-name subset of tools already present in the native request. An empty allowlist means text-only; an empty denylist adds no restriction. Direct-wake tool policy is unaffected. Since 0.22.1, both schema modes remove denied and host-inactive handlers from the raw tool set, including native name lookup when a provider hallucinates a hidden name. In `skills_like`, a truthy initialization wrapper lets an actually empty input complete AstrBot 4.29.1's runner setup instead of returning before messages and stats exist. Its derived provider schemas are still empty; it retains no blocked handler. Explicitly allowing a tool permits autonomous invocation under existing host permissions. No model weight training is involved, and this is not a copy of every MaiBot subsystem.
 
 The conversation window holds at most 30 messages from the last ten minutes in memory; at most 12 are passed to the reply request. Decision reasons, goals and timestamps persist separately. The UI shows the latest 30; storage preserves the latest 100 plus admissions needed for the rolling quota. Clearing raw learning material does not clear decision records. An admission records handoff to the host, not successful generation or delivery.
 
@@ -265,7 +285,7 @@ The test suite covers SQLite transactions, evidence validation and native AstrBo
 
 Enable **学习设置 → 调试日志 → 启用 Debug 模式** and save, or set `debug_enabled: true` in host plugin configuration. Default: off. Panel and native plugin settings are synchronized. Search AstrBot INFO logs for `OvenHeart debug`; the host must allow INFO logging. Disabling immediately stops subsequent debug events.
 
-`persona_injection` and `participation_injection` contain the exact, untruncated system additions and temporary user context appended by this plugin, with scope, persona, delivery mode, included IDs, reply target or allowed tools. `participation_target` records the message, sender and message ID bound before sending. They do not dump unrelated host prompts or claim to represent later downstream mutations. `retrieval` includes the actual query, selected entries, scores, reasons and fallback messages; `application_skipped` identifies an invalidated or disabled application.
+`persona_injection` and `participation_injection` contain the exact, untruncated system additions and temporary user context appended by this plugin, with scope, persona, delivery mode, included IDs, reply target or allowed tools. `participation_target` records the message, sender, message ID and `decoration` bound before sending, and `reply_mentions` reports how many plain-text mentions became real `At` components. They do not dump unrelated host prompts or claim to represent later downstream mutations. `retrieval` includes the actual query, selected entries, scores, reasons and fallback messages; `application_skipped` identifies an invalidated or disabled application.
 
 Learning diagnostics include batch source IDs, the full extraction/format-correction request and original model completion, self-check request/response and committed audit. Planner request/response and parsed participation plans are also logged. Capture skips, cancellation and safe error/cause class names help explain failures while preserving sources. JSON string newlines use `\n` and round-trip without truncation.
 
@@ -279,3 +299,6 @@ Open Workshop → Learning settings → 提及时马上回复. The existing auto
 A case-sensitive substring match anywhere in the current group message's own plain text starts AstrBot's normal direct-wake reply. Quoted/forwarded contents and other users' @ display names do not match. Avoid short or common names. This works independently of off/observe/auto participation modes and bypasses autonomous message counts, debounce, cooldown, hourly quota and the planner model.
 
 The host still owns permissions, whitelists, rate limits, safety checks, the LLM switch, conversation, persona, history and tool policy. Autonomous tool lists apply only to ordinary autonomous participation. Native @, reply-to-bot and wake-prefix handling does not produce a second reply, and command handlers retain priority. Disabling the switch or removing the matched alias cancels pending mention output before generation/delivery. Immediate means immediate native dispatch; model generation and transport still take time.
+## Runtime boundaries (0.22.1)
+
+Autonomous restrictions also apply at native tool name lookup, including skills-like requests and host-inactive tools. Text-only requests initialize without retaining blocked handlers. Plain-text mention conversion now requires an unambiguous complete display name; longer-name prefixes, emails, URL paths and inline/fenced code remain literal, while full-width `＠` is supported. The 0.22 planner target and real quote/mention behavior is preserved. See [native execution regressions](../evaluation/runtime-boundaries.md).
