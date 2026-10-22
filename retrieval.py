@@ -195,7 +195,8 @@ class HabitRetriever:
             semantic: Whether model calls are permitted (false for free previews).
             provider_id: Effective native chat provider for contextual selection.
             identity: Host persona and manual profile; never learned autobiographies.
-            literal_query: Current human input only, excluding history and planner goals.
+            literal_query: Actual reply-target text and its inbound quote, up to
+                2,400 characters, excluding unrelated history and planner goals.
 
         Returns:
             Habits, retrieval mode and a visible fallback explanation.
@@ -300,16 +301,17 @@ class HabitRetriever:
                 finally:
                     self.selecting -= 1
         # Local definitions are factual context, not optional expression preferences.
-        # Match only current input so an old topic or planner goal cannot pin a word.
+        # Match only the human reply target and its quote. Unrelated history and
+        # planner goals cannot pin a word into the final reply.
         literal = (
             rank_traits(
                 [
                     t
                     for t in active
                     if t["kind"] == "jargon"
-                    and mentions_jargon(t["content"], literal_query[:1200])
+                    and mentions_jargon(t["content"], literal_query[:2400])
                 ],
-                literal_query[:1200],
+                literal_query[:2400],
                 settings,
             )
             if literal_query

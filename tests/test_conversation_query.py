@@ -10,6 +10,7 @@ pytest.importorskip("astrbot.api")
 
 from astrbot.api.provider import ProviderRequest  # noqa: E402
 from astrbot.core.agent.message import TextPart  # noqa: E402
+from astrbot.core.message.components import Plain, Reply  # noqa: E402
 from astrbot.core.pipeline import context_utils  # noqa: E402
 from astrbot.core.star.star_handler import (  # noqa: E402
     EventType,
@@ -104,6 +105,75 @@ async def test_live_context_from_a_different_scope_is_never_queried(selector):
     await selector.apply_persona(incoming, ProviderRequest(prompt="继续吧"))
     payload = json.loads(selector.context.llm_generate.await_args.kwargs["prompt"])
     assert "PRIVATE_OTHER" not in payload["conversation"]
+
+
+@pytest.mark.parametrize("chain_only", [False, True])
+async def test_quoted_word_is_recalled_even_when_selector_chooses_no_style(
+    selector, chain_only
+):
+    incoming = event(
+        "quote-word", text="这个是什么意思？" + ("补充" * 700 if not chain_only else "")
+    )
+    incoming.message_obj.message = [
+        Reply(
+            id="outside-window",
+            sender_nickname="小林",
+            message_str="" if chain_only else "好家伙",
+            chain=[Plain("好家伙")] if chain_only else [],
+        )
+    ]
+    request = ProviderRequest(prompt=incoming.get_message_str())
+    await selector.apply_persona(incoming, request)
+    payload = json.loads(selector.context.llm_generate.await_args.kwargs["prompt"])
+    assert "好家伙" in payload["conversation"]
+    assert len(payload["conversation"]) <= 2400
+    application = incoming.get_extra("ovenheart_application")
+    assert application
+    state = await selector.store.call("state", application["scope"])
+    word = next(t for t in state["traits"] if t["kind"] == "jargon")
+    assert word["id"] in application["ids"]
+
+
+async def test_older_reply_target_pins_its_word_without_pinning_side_chatter(
+    participant, selector
+):
+    participant.settings.update(
+        participation_min_messages=2, guidance_delivery="cached"
+    )
+    participant.context.llm_generate.side_effect = [
+        decision(target_sequence=1),
+        SimpleNamespace(completion_text='{"selected_ids":[]}'),
+    ]
+    earlier = event("earlier-word", text="好家伙在这里是什么意思？", sender="alice")
+    latest = event("side-chatter", text="小林，晚饭想吃什么？", sender="bob")
+    assert await requests(participant, earlier) == []
+    request = (await requests(participant, latest))[0]
+    await participant.apply_persona(latest, request)
+    payload = json.loads(participant.context.llm_generate.await_args.kwargs["prompt"])
+    assert "当前输入：好家伙在这里是什么意思？" in payload["conversation"]
+    assert "回应对象：测试用户" in payload["conversation"]
+    application = latest.get_extra("ovenheart_application")
+    assert application
+    state = await participant.store.call("state", application["scope"])
+    word = next(t for t in state["traits"] if t["kind"] == "jargon")
+    assert word["id"] in application["ids"]
+
+
+async def test_side_chatter_and_planner_intent_cannot_pin_a_word_to_another_target(
+    participant, selector
+):
+    participant.settings["participation_min_messages"] = 2
+    participant.context.llm_generate.side_effect = [
+        decision(target_sequence=1, intent="讨论晚饭，不使用好家伙"),
+        SimpleNamespace(completion_text='{"selected_ids":[]}'),
+    ]
+    earlier = event("dinner", text="晚饭吃什么？", sender="alice")
+    latest = event("other-topic", text="好家伙又来了", sender="bob")
+    latest.message_obj.message = [Reply(id="other-quote", message_str="好家伙")]
+    assert await requests(participant, earlier) == []
+    request = (await requests(participant, latest))[0]
+    await participant.apply_persona(latest, request)
+    assert not (latest.get_extra("ovenheart_application") or {}).get("ids")
 
 
 async def test_native_hook_order_shares_live_context_with_habit_selection(

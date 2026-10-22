@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.23.1
+
+- Ground habit retrieval and literal local-vocabulary matching in the actual autonomous reply target and its inbound quote, rather than the latest unrelated group message. Direct replies also use native quote text or plain-text chain parts.
+- Include quotes in the planner's lexical habit lookup. Prioritize reply-source text, bounded quote text and the reply goal within the existing 2,400-character selector query budget; unrelated history uses the remaining space.
+- Keep literal vocabulary fallback independent of style selection, unrelated chatter and planner-generated intent. Reuse existing retrieval calls and preserve native session/persona vocabulary boundaries.
+
 ## 0.23.0
 
 - Carry incoming quote text through autonomous participation planning and final reply injection, including quotes outside the live window. Prefer same-scope live sources, fall back to native text or plain-text chain parts, and cap each quote at 1,200 characters without querying another conversation or platform history.

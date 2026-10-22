@@ -516,7 +516,11 @@ class ParticipationController:
             A validated participation plan.
         """
         plugin = self.plugin
-        query = "\n".join(m["text"] for m in messages[-6:])
+        # Newest real inputs and their quotes take precedence over older topics.
+        query = "\n".join(
+            m["text"][:300] + "\n" + (m.get("reply_to") or {}).get("text", "")[:300]
+            for m in reversed(messages[-6:])
+        )[:2400]
         habits = rank_traits(state["traits"], query, settings | {"max_traits": 12})
         anchor = plugin.context.persona_manager.get_persona_v3_by_id(persona)
         guidance = build_guidance(
