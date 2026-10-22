@@ -1,5 +1,32 @@
 # OvenHeart workshop guide
 
+## Per-reply expression intent (0.38)
+
+Like the local MaiBot expression selector, participation planning can supply an
+optional `expression_intent` object with `focus`, `reply_act`, `scene`, `tone`,
+`prefer` and `avoid`. Each optional value must be text of at most 80 characters,
+with at most 240 characters in total. Unknown fields, invalid types and excess
+length follow the existing malformed-plan observation path. Missing intent keeps
+legacy completions valid; observation, waiting and low-confidence replies clear
+it. List-valued fields from MaiBot's broader protocol are not accepted here.
+
+The same bounded intent informs existing semantic/rerank recall, contextual habit
+selection and the final reply. Real messages, explicit current requirements,
+identity and permissions take precedence. The recall query stays within 2,400
+characters; reserving intent space can shorten its quote tail. Literal jargon
+matching still uses the independent human target/quote, never planner wording.
+No extra chat call, tool authority, learned evidence, habit or database field is
+introduced. Direct wakes retain their existing behavior.
+
+Selector and participation prompt templates expose `{{expression_intent}}`.
+Customized bodies are preserved; add the optional output instructions or restore
+the planner default to request this information. Cached delivery carries intent
+in temporary user content, preserving system-prefix handling without promising
+provider cache hits. Changed retrieval inputs use their normal cache keys.
+Existing opt-in request/response/injection diagnostics include intent; decision
+history retains the original reply goal. Three simulated focused checks pass;
+production tone and applicability remain unverified.
+
 ## Prewarming active habit vectors (0.37)
 
 Committed learning, manual approval/content edits, snapshot restore and shared

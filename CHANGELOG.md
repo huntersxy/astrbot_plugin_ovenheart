@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.38.0
+
+- Carry optional structured `expression_intent` from participation planning through hybrid/rerank recall, contextual habit selection and the final native reply. Support focus, reply act, scene, tone, preferred expression and expression to avoid, without adding a model call or configuration switch.
+- Validate six optional text fields, at most 80 characters each and 240 in total; clear intent for observation, waiting and low-confidence replies. Older custom planner completions remain valid. Keep actual human input/quote separate for literal jargon matching and retain the 2,400-character recall budget.
+- Expose `expression_intent` in selector and participation prompt placeholders. Cached delivery keeps this per-turn data in temporary user content; it does not become learned evidence, a persistent habit or tool permission. Existing customized prompt bodies are preserved.
+- Pass three focused parser, native planning-to-reply and prompt checks with simulated providers, including unchanged chat-call count and cached system prefix. Production style quality remains pending access.
+
 ## 0.37.0
 
 - Prewarm active habit document vectors after committed learning, manual approval/content edits, snapshot restore and shared-profile startup. Schedule this derived work independently so failures cannot change successful learning/review results.

@@ -1249,6 +1249,7 @@ class PersonaPlugin(Star):
             goal=plan["intent"],
             reason=plan["reason"],
             target=target_label,
+            expression_intent=plan.get("expression_intent", {}),
             profile=profile,
             scope=plan["scope"],
         ) + json.dumps(
@@ -1257,6 +1258,7 @@ class PersonaPlugin(Star):
                 "reason": plan["reason"],
                 "reply_target": target_label,
                 "decoration": plan.get("decoration"),
+                "expression_intent": plan.get("expression_intent", {}),
             },
             ensure_ascii=False,
         )
@@ -1266,6 +1268,7 @@ class PersonaPlugin(Star):
             target=target_label,
             messages=plan["messages"],
             reply_message=target,
+            expression_intent=plan.get("expression_intent", {}),
             profile=profile,
             scope=plan["scope"],
         ) + json.dumps(
@@ -1273,6 +1276,7 @@ class PersonaPlugin(Star):
                 "reply_goal": plan["intent"],
                 "reply_target": target_label,
                 "reply_message": target,
+                "expression_intent": plan.get("expression_intent", {}),
                 "decoration": plan.get("decoration"),
                 "messages": plan["messages"],
             },
@@ -1382,10 +1386,18 @@ class PersonaPlugin(Star):
                 + quoted["text"][:800]
             )
         goal = ""
+        expression_intent = plan.get("expression_intent", {}) if plan else {}
         if plan:
             goal = "\n本轮回复目标：" + plan["intent"][:240]
             if target.get("sender"):
                 goal += "；回应对象：" + str(target["sender"])[:40]
+            if expression_intent:
+                goal += "\n本轮表达意图（参考）：" + json.dumps(
+                    expression_intent, ensure_ascii=False
+                )
+            # Reserve recall space for intent; literal vocabulary still uses
+            # the independent human target and quote, never planner wording.
+            focus = focus[: max(0, 2400 - len(goal) - 1)]
         # Recent turns disambiguate terse replies without persisting another copy of them.
         history = []
         for message in (req.contexts or [])[-6:]:
@@ -1452,6 +1464,7 @@ class PersonaPlugin(Star):
                 identity=identity,
                 literal_query=literal_query[:2400],
                 recent_expression_ids=state.get("recent_expression_ids", []),
+                expression_intent=expression_intent,
             )
         )
         self.debug(
