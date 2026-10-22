@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.34.1
+
+- Cache validated rerank scores in memory for five minutes, with at most 64 entries and access-order eviction. Fingerprint the effective scope, ordered habit IDs/text, actual query and non-secret model/endpoint/options; reset on provider-instance replacement.
+- Rebuild hit results from current habit metadata rather than cached trait copies. Serve warm hits before checking remote capacity/deadlines, while retaining the two-request limit for actual provider calls. Expose `rerank_cache_hit` and a readable reuse message in retrieval diagnostics.
+- Never cache failed, invalid or cancelled outputs, and prevent old in-flight providers from publishing after replacement. Existing native/scoped application rechecks, selector calls, learning and activation rules remain intact.
+- Pass four focused reuse, input/expiry invalidation, failure/cancellation and provider-replacement checks. This is a local rerank-result cache, not evidence of chat-provider KV hits, production latency or billing improvements.
+
 ## 0.34.0
 
 - Integrate the optional LivingMemory reply-source binding API when autonomous replies answer an earlier member. Supply an actual native event anchor after checking source ID/text/sender, effective scope and host permissions; do not rebind the triggering event.

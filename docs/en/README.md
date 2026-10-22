@@ -1,5 +1,30 @@
 # OvenHeart workshop guide
 
+## Reusing repeated reranks (0.34.1)
+
+Validated rerank scores can be reused for five minutes, with at most 64 entries
+and access-order eviction. Replies, planning and model examples share the
+retriever; free lexical previews remain unchanged. No switch is added.
+
+The fingerprint includes effective scope, ordered habit IDs/text, actual query
+and non-secret model/endpoint/request options. Provider-instance replacement
+clears the cache. Changed inputs or expiry require a new call. Hits rebuild
+results from current habit metadata, retaining existing scoped candidate,
+disablement and application checks. Shared mode reuses identical actual score
+inputs without carrying another conversation's text or local vocabulary.
+
+Only hashed fingerprints, timestamps and ID-to-score mappings are cached in
+memory. Queries, candidate text and credentials are not persisted. Failures,
+invalid results and cancellations are not cached; late replaced providers cannot
+publish into the new provider's cache. Warm hits need no remote capacity or
+remaining network budget; misses keep the original two-request and timeout
+limits. Pending simultaneous requests are not coalesced.
+
+Retrieval messages disclose reuse, and Debug results expose `rerank_cache_hit`.
+Chat selection and final generation still run normally. This local result cache
+does not establish chat-provider prefix/KV hits or production billing/latency
+improvements; focused checks used simulated providers only.
+
 ## Target-aware LivingMemory replies (0.34)
 
 Install OvenHeart 0.34 together with the local LivingMemory build

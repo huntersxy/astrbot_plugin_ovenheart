@@ -26,6 +26,10 @@ recent_expression_ids 是本会话最近送到发送阶段的表达参考，不�
 """
 
 
+class RerankBusyError(RuntimeError):
+    """Signal remote rerank capacity exhaustion after checking the local cache."""
+
+
 def parse_selection(text: str, candidates: list[dict], maximum: int) -> list[int]:
     """Accept only distinct identifiers offered to the selector for this request.
 
@@ -170,6 +174,8 @@ class HabitRetriever:
         self.templates = templates or {}
         self.lock = asyncio.Lock()
         self.query_cache: dict[str, tuple[float, list[float]]] = {}
+        self.rerank_cache: dict[str, tuple[float, dict[int, float]]] = {}
+        self.rerank_cache_provider = None
         self.status: dict[str, dict] = {}
         self.selecting = 0
         self.reranking = 0
@@ -249,25 +255,26 @@ class HabitRetriever:
             and settings["selection_mode"] != "lexical"
             and settings["rerank_provider_id"]
         ):
-            if self.reranking >= 2:
+            try:
+                pool = await self.rerank_pool(
+                    pool, query, settings, deadline, scope=scope
+                )
+                cached = bool(pool and pool[0].get("_rerank_cached"))
+                result.update(
+                    traits=pool[: settings["max_traits"]],
+                    mode="rerank",
+                    rerank_cache_hit=cached,
+                    message=("已复用重排序缓存" if cached else "已重排序")
+                    + f" {len(pool)} 条候选；相关性分数不代表情境适用或用户满意。",
+                )
+            except RerankBusyError:
                 result["message"] += " 重排序繁忙，保留召回顺序。"
-            else:
-                self.reranking += 1
-                try:
-                    pool = await self.rerank_pool(pool, query, settings, deadline)
-                    result.update(
-                        traits=pool[: settings["max_traits"]],
-                        mode="rerank",
-                        message=f"已重排序 {len(pool)} 条候选；相关性分数不代表情境适用或用户满意。",
-                    )
-                except asyncio.CancelledError:
-                    raise
-                except Exception:
-                    result["message"] += (
-                        " 重排序不可用、超时或结果无效，保留召回顺序；请检查重排序提供商 ID。"
-                    )
-                finally:
-                    self.reranking -= 1
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                result["message"] += (
+                    " 重排序不可用、超时或结果无效，保留召回顺序；请检查重排序提供商 ID。"
+                )
         if settings["selection_mode"] == "contextual" and semantic and active:
             # Keyword overlap cannot establish applicability after a failed selector.
             result["traits"] = []
@@ -342,13 +349,18 @@ class HabitRetriever:
             result["message"] += (
                 f" 当前输入直接命中 {min(len(literal), maximum)} 条本群词汇，优先提供本地释义。"
             )
+        if (
+            result.get("rerank_cache_hit")
+            and "已复用重排序缓存" not in result["message"]
+        ):
+            result["message"] += " 重排序分数来自五分钟内缓存。"
         if record_status:
             self.status[scope] = {"mode": result["mode"], "message": result["message"]}
             if len(self.status) > 128:
                 self.status.pop(next(iter(self.status)))
         return result
 
-    async def rerank_pool(self, pool, query, settings, deadline):
+    async def rerank_pool(self, pool, query, settings, deadline, *, scope=""):
         """Reorder a bounded candidate pool through the native rerank contract.
 
         Args:
@@ -356,6 +368,7 @@ class HabitRetriever:
             query: Current conversation text.
             settings: Effective provider configuration.
             deadline: Shared vector and rerank monotonic deadline.
+            scope: Effective retrieval scope included in the cache fingerprint.
 
         Returns:
             Original candidates ordered by validated scores.
@@ -363,21 +376,96 @@ class HabitRetriever:
         Raises:
             ValueError: If a provider or response violates the native contract.
             asyncio.TimeoutError: If the shared retrieval budget expires.
+            RerankBusyError: If remote capacity is full and no cached result exists.
         """
         reranker = self.context.get_provider_by_id(settings["rerank_provider_id"])
         if reranker is None or not callable(getattr(reranker, "rerank", None)):
             raise ValueError("Rerank provider is unavailable")
+        if self.rerank_cache_provider is not reranker:
+            self.rerank_cache.clear()
+            self.rerank_cache_provider = reranker
+        config = getattr(reranker, "provider_config", {})
+        cache_key = hashlib.sha256(
+            json.dumps(
+                [
+                    scope,
+                    settings["rerank_provider_id"],
+                    {
+                        key: config.get(key)
+                        for key in (
+                            "type",
+                            "rerank_model",
+                            "rerank_api_base",
+                            "rerank_api_suffix",
+                            "nvidia_rerank_model",
+                            "nvidia_rerank_api_base",
+                            "nvidia_rerank_model_endpoint",
+                            "nvidia_rerank_truncate",
+                            "tei_rerank_truncate",
+                            "tei_rerank_truncation_direction",
+                            "tei_rerank_raw_scores",
+                            "instruct",
+                        )
+                    },
+                    {
+                        key: value
+                        for key in (
+                            "model",
+                            "model_name",
+                            "model_uid",
+                            "base_url",
+                            "api_suffix",
+                            "model_endpoint",
+                            "truncate",
+                            "truncation_direction",
+                            "raw_scores",
+                            "instruct",
+                        )
+                        if isinstance(
+                            value := getattr(reranker, key, None),
+                            (str, int, float, bool, type(None)),
+                        )
+                    },
+                    query[:2400],
+                    [[t["id"], t["situation"], t["content"]] for t in pool],
+                ],
+                ensure_ascii=False,
+                sort_keys=True,
+            ).encode()
+        ).hexdigest()
+        cached = self.rerank_cache.pop(cache_key, None)
+        if cached and cached[0] > time.monotonic() - 300:
+            self.rerank_cache[cache_key] = cached
+            return sorted(
+                [
+                    t
+                    | {
+                        "_rerank": cached[1][t["id"]],
+                        "_reason": "重排序缓存相关性",
+                        "_rerank_cached": True,
+                    }
+                    for t in pool
+                ],
+                key=lambda t: t["_rerank"],
+                reverse=True,
+            )
+        if self.reranking >= 2:
+            raise RerankBusyError
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             raise asyncio.TimeoutError
-        rows = await asyncio.wait_for(
-            reranker.rerank(
-                query=query[:2400],
-                documents=[f"{t['situation']}\n{t['content']}" for t in pool],
-                top_n=len(pool),
-            ),
-            timeout=remaining,
-        )
+        self.reranking += 1
+        try:
+            rows = await asyncio.wait_for(
+                reranker.rerank(
+                    query=query[:2400],
+                    documents=[f"{t['situation']}\n{t['content']}" for t in pool],
+                    top_n=len(pool),
+                ),
+                timeout=remaining,
+            )
+        finally:
+            self.reranking -= 1
         if not isinstance(rows, list) or len(rows) != len(pool):
             raise ValueError("Incomplete rerank results")
         seen = set()
@@ -394,8 +482,20 @@ class HabitRetriever:
                 raise ValueError("Invalid rerank results")
             seen.add(index)
             ordered.append(
-                pool[index] | {"_rerank": score, "_reason": "重排序模型相关性"}
+                pool[index]
+                | {
+                    "_rerank": score,
+                    "_reason": "重排序模型相关性",
+                    "_rerank_cached": False,
+                }
             )
+        if self.rerank_cache_provider is reranker:
+            self.rerank_cache[cache_key] = (
+                time.monotonic(),
+                {t["id"]: t["_rerank"] for t in ordered},
+            )
+            if len(self.rerank_cache) > 64:
+                self.rerank_cache.pop(next(iter(self.rerank_cache)))
         return sorted(ordered, key=lambda t: t["_rerank"], reverse=True)
 
     async def contextual_ids(
