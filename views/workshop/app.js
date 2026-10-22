@@ -5,7 +5,7 @@ const statuses = {pending:"待审核", active:"已生效", rejected:"已拒绝",
 const actions = {profile:"修改人格底稿", trait:"调整学习条目", restore:"恢复历史版本", clear_messages:"清除原始素材", feedback:"调整习惯评价", learning:"合并学习结果", jargon_isolation:"迁回来源词汇"};
 const date = value => new Date(value * 1000).toLocaleString("zh-CN", {month:"2-digit", day:"2-digit", hour:"2-digit", minute:"2-digit"});
 let libraryScope = "all", libraryOffset = 0;
-let bridge, data, selectedScope = "", tab = "profile", selectedTrait = null, category = "all", status = "pending", pending = false, polling = false, dirty = false;
+let bridge, data, selectedScope = "", tab = "profile", selectedTrait = null, selectedPrompt = null, category = "all", status = "pending", pending = false, polling = false, dirty = false;
 
 function confirmAction(message) {
   const dialog = $("#confirmation");
@@ -32,6 +32,7 @@ async function api(endpoint, body, query = {}) {
 
 async function load(renderContent = true) {
   const previousSettingsRevision = data?.settings_revision;
+  const previousPromptsRevision = data?.prompts?.revision;
   const scopeAtStart = selectedScope;
   const viewAtStart = JSON.stringify([tab, libraryScope, category, status, libraryOffset]);
   const next = await api("state");
@@ -40,6 +41,10 @@ async function load(renderContent = true) {
     next.library = await api("library", undefined, {scope:libraryScope, kind:category, status, offset:libraryOffset});
     if (scopeAtStart !== selectedScope || viewAtStart !== JSON.stringify([tab, libraryScope, category, status, libraryOffset])) return;
     libraryOffset = next.library.offset;
+  }
+  if (tab === "prompts") {
+    next.prompts = await api("prompts");
+    if (scopeAtStart !== selectedScope || viewAtStart !== JSON.stringify([tab, libraryScope, category, status, libraryOffset])) return;
   }
   data = next;
   if (!selectedScope && data.scopes.length) {
@@ -59,7 +64,8 @@ async function load(renderContent = true) {
   const busy = data.busy.includes(selectedScope);
   $("#learn").disabled = pending || !data.scope || !!data.busy.length || !data.settings.enabled || !data.settings.learning_enabled || !data.scope.profile.learning_enabled || data.scope.pending < data.settings.min_evidence;
   $("#learn").textContent = busy ? "正在学习…" : "开始学习";
-  if (!dirty && (renderContent || (tab === "settings" && data.settings_revision !== previousSettingsRevision))) render();
+  const promptsChanged = tab === "prompts" && data.prompts?.revision !== previousPromptsRevision;
+  if (!dirty && (renderContent || (tab === "settings" && data.settings_revision !== previousSettingsRevision) || promptsChanged)) render();
 }
 
 function empty(title, description) {
@@ -79,13 +85,14 @@ function render() {
   for (const button of document.querySelectorAll("[data-tab]")) {
     if (button.dataset.tab === tab) button.setAttribute("aria-current", "page"); else button.removeAttribute("aria-current");
   }
-  if (!data.scope && tab !== "settings" && tab !== "library") {
+  if (!data.scope && tab !== "settings" && tab !== "library" && tab !== "prompts") {
     $("#content").innerHTML = empty("从一段真实的对话开始", "在已启用的 AstrBot 会话中聊几句，工坊会自动积累文字素材。也可以先打开学习设置，选择学习对象与生效方式。");
     return;
   }
   if (tab === "profile") renderProfile();
   else if (tab === "library") renderLibrary();
   else if (tab === "history") renderHistory();
+  else if (tab === "prompts") renderPrompts();
   else renderSettings();
 }
 
@@ -219,6 +226,46 @@ function renderSettings() {
   if ($("#clear-messages")) $("#clear-messages").onclick = async () => { if (await confirmAction("永久清除当前会话所有原始聊天素材？学习条目及其证据摘录会保留。")) mutate("clear_messages"); };
 }
 
+function promptPlaceholder(name) {
+  return `{{${name}}}`;
+}
+
+// Prompt bodies live in their own list because a single wording change applies
+// to every conversation; the structured payload is still appended by the plugin.
+function renderPrompts() {
+  const items = data.prompts?.items || [];
+  if (!items.length) {
+    $("#content").innerHTML = empty("没有可编辑的提示词", "提示词列表尚未就绪。确认插件已启用，然后刷新本页。");
+    return;
+  }
+  if (!items.some(entry => entry.key === selectedPrompt)) selectedPrompt = items[0].key;
+  const item = items.find(entry => entry.key === selectedPrompt);
+  const variables = item.placeholders.length ? item.placeholders.map(p => `<li><code>${escape(promptPlaceholder(p.name))}</code> ${escape(p.description)}</li>`).join("") : "<li>这段提示词不接受变量。</li>";
+  const unknown = item.unknown.length ? `<p class="prompt-unknown">未识别的引用：${escape(item.unknown.map(promptPlaceholder).join("、"))}。它们会原样保留，不会被替换。</p>` : "";
+  $("#content").innerHTML = `<h2>提示词</h2><p class="section-intro">这里写的是本插件自己发出的每一条提示词。用两个花括号引用运行时内容，例如 <code>{{persona}}</code> 的宿主人格，或 <code>{{recent_messages}}</code> 的最近群聊。保存后立即生效；正在进行的请求会中止，下一轮使用新措辞。目标、候选与上下文仍由插件按结构追加，模板只改变说明文字。留空的变量保持为空字符串。</p>
+    <div class="prompts"><div class="trait-list">${items.map(entry => `<button type="button" class="trait-row" data-prompt="${escape(entry.key)}" aria-pressed="${entry.key === item.key}"><span class="row-meta"><span>${escape(entry.title)}</span><span class="badge ${entry.customized ? "active" : ""}">${entry.customized ? "已自定义" : "出厂默认"}</span></span><strong>${escape(entry.description)}</strong></button>`).join("")}</div>
+    <div class="prompt-editor"><form id="prompt-form"><div class="field"><label for="field-prompt-body">${escape(item.title)}</label><textarea id="field-prompt-body" name="body" class="large prompt-body" maxlength="8000" spellcheck="false">${escape(item.body)}</textarea><small>${item.body.length} / 8000 字 · 保存后立即生效</small></div>${unknown}<details class="prompt-placeholders"><summary>可用变量</summary><ul>${variables}</ul></details><div class="form-end"><button class="primary" type="submit">保存这段提示词</button><button type="button" class="tonal" id="prompt-reset" ${item.customized ? "" : "disabled"}>恢复默认</button></div></form><details class="prompt-default"><summary>查看出厂默认</summary><pre>${escape(item.default)}</pre></details></div></div>`;
+  for (const button of document.querySelectorAll("[data-prompt]")) button.onclick = () => { selectedPrompt = button.dataset.prompt; renderPrompts(); };
+  $("#prompt-form").onsubmit = event => {
+    event.preventDefault();
+    const body = $("#field-prompt-body").value;
+    if (!body.trim()) return notify("提示词内容不能为空；如需还原，请使用「恢复默认」。", true);
+    if (body.length > 8000) return notify("提示词最多 8000 字，请精简后再保存。", true);
+    return savePrompts({[item.key]: body});
+  };
+  $("#prompt-reset").onclick = async () => {
+    if (await confirmAction(`把「${item.title}」恢复为出厂默认？保存后立即生效，当前措辞不再保留。`)) await savePrompts({[item.key]: null});
+  };
+}
+
+async function savePrompts(patch) {
+  return guarded(async () => {
+    const result = await api("prompts/save", {prompts:patch});
+    notify(result.message || "提示词已保存。");
+    dirty = false;
+    await load();
+  });
+}
 async function guarded(work, event) {
   event?.preventDefault();
   if (pending) return;
@@ -250,7 +297,7 @@ $("#refresh").onclick = async () => { if (!dirty || await confirmAction("刷新�
 $("#learn").onclick = async () => { if (!dirty || await confirmAction("开始学习会放弃当前未保存的编辑，继续？")) mutate("learn"); };
 for (const button of document.querySelectorAll("[data-tab]")) button.onclick = async () => {
   if (dirty && !await confirmAction("离开此页会放弃未保存的编辑，继续？")) return;
-  dirty = false; tab = button.dataset.tab; if (tab === "library") await guarded(() => load()); else render();
+  dirty = false; tab = button.dataset.tab; if (tab === "library" || tab === "prompts") await guarded(() => load()); else render();
 };
 window.addEventListener("beforeunload", event => { if (dirty) { event.preventDefault(); event.returnValue = ""; } });
 

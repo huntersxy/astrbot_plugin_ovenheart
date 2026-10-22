@@ -719,7 +719,7 @@ async def test_background_learning_rechecks_current_host_plugin_set(plugin):
 
 
 async def test_native_page_validation_and_teardown(plugin):
-    assert len(plugin.context.registered_web_apis) == 4
+    assert len(plugin.context.registered_web_apis) == 6
     scope = await sources(plugin)
     assert (await api_call(plugin.page_api.state, query=f"scope={scope}"))[
         "status"

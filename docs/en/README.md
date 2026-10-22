@@ -169,6 +169,26 @@ Synthetic real-provider tests on the user-specified endpoint showed system-only 
 
 Version 0.13 clarifies that identity and behavior boundaries constrain generation internally rather than becoming a recited introduction. Current request scope and detailed answers remain authoritative. No extra model calls or settings are added. The [controlled application comparison](../evaluation/application.md) freezes real learned habits and selections; diagnostic model reviews are not independent ratings or proof of superiority.
 
+## Prompt templates (0.19)
+
+Every prompt this plugin sends lives in the 提示词 tab as an editable template with its shipped text visible, changeable and restorable. The list is on the left, the editor on the right: body, supported variables, and the shipped default in full.
+
+| Template | Used by | Variables |
+| --- | --- | --- |
+| Participation planner | decides reply, wait or observe before autonomous participation | `{{persona}}` `{{profile}}` `{{guidance}}` `{{recent_messages}}` `{{max_wait}}` `{{wait_elapsed}}` `{{scope}}` |
+| Habit selector | picks applicable entries from candidates before a reply | `{{persona}}` `{{conversation}}` `{{max_selected}}` `{{candidates}}` |
+| Learning extractor | extracts personality, expression, jargon and behavior from raw chat | `{{persona}}` `{{profile}}` `{{observations}}` `{{memory}}` `{{context}}` `{{known_traits}}` `{{language_features}}` `{{enabled_kinds}}` `{{min_evidence}}` |
+| Learning reviewer | checks each learned entry against its cited evidence | `{{persona}}` `{{profile}}` `{{observations}}` `{{context}}` `{{memory}}` `{{candidates}}` |
+| Application style | the preamble inserted before supplementary habits | `{{profile}}` |
+| Participation: system | opening of the system prompt appended to an autonomous reply request | `{{goal}}` `{{reason}}` `{{profile}}` `{{scope}}` |
+| Participation: temporary context | the chat-context note attached to this turn only | `{{reply_goal}}` `{{messages}}` `{{profile}}` `{{scope}}` |
+
+Variables are substituted at call time: text is spliced as-is, while message lists, candidates and profiles are serialized as JSON and booleans become `true`/`false`. A misspelled name is left literal, double braces included, and the editor lists it under unknown references. That is deliberate: silently deleting it would drop a whole constraint without any provider error.
+
+A template only changes wording. The structured JSON payload appended after it, the participation goal and reason, permission checks, tool allowlists, cooldown and hourly quota stay under plugin control, so rewriting the planner cannot loosen admission. Saving validates non-empty and the 8000 character limit, republishes the effective map immediately and aborts in-flight learning batches and participation windows; Restore default deletes that override. Overrides live in the `prompts` table, survive a plugin reload and disappear with the plugin database.
+
+The rendered body is also sent as that request's system prompt and recorded under Debug (`planner_request`, `planner_response`, and the learning and retrieval entries), so what you inspect is the wording that actually ran. To give the planner a sense of relationship or mood, put that relationship into the host persona — it reaches the planner through `{{persona}}` — and add the concrete scenario requirement to the planner template itself.
+
 ## LivingMemory and QQ Enhance
 
 LivingMemory is optional. The adapter targets the supplied `2.7.0-beta.3` interface and discovers the active instance at runtime. It respects LivingMemory access control, configured session/user/global scopes, persona filtering and host plugin switches. At most three memory excerpts are retrieved by default, only while learning. Missing, disabled, incompatible, unavailable or timed-out memory integration does not prevent independent learning. After reload, a scope without a new real event uses retained chat material only.
@@ -193,7 +213,7 @@ Default gates are three fresh messages, two seconds of input debounce, a 90-seco
 
 The planner chooses reply, observe or one bounded wait followed by one reassessment. New input cancels obsolete work. Provider failure, timeout or invalid plans preserve observation. Plans state reasons and conversational goals; they cannot execute tools. The resulting native request binds a conversation and reloads history through the host's session lock, preserving persona/history. Input, permission, profile and settings changes are checked again before generation.
 
-Autonomous tool access is an exact-name subset of tools already present in the native request. Empty means text-only. Direct-wake tool policy is unaffected. Explicitly allowing a tool permits the host Agent to invoke it autonomously under existing permissions. No model weight training is involved, and this is not a copy of every MaiBot subsystem.
+Autonomous tool access is an exact-name subset of tools already present in the native request. Empty means text-only. Direct-wake tool policy is unaffected. When the host Agent runner uses the `skills_like` schema mode, an empty allowlist keeps the original tool entries with `active` cleared instead of handing over an empty set: AstrBot 4.29.1 returns early from that runner's reset for a falsy tool set and the reply then fails with `'ToolLoopAgentRunner' object has no attribute 'stats'`. Both modes expose only the allowed names to the provider. Explicitly allowing a tool permits the host Agent to invoke it autonomously under existing permissions. No model weight training is involved, and this is not a copy of every MaiBot subsystem.
 
 The conversation window holds at most 30 messages from the last ten minutes in memory; at most 12 are passed to the reply request. Decision reasons, goals and timestamps persist separately. The UI shows the latest 30; storage preserves the latest 100 plus admissions needed for the rolling quota. Clearing raw learning material does not clear decision records. An admission records handoff to the host, not successful generation or delivery.
 

@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.19.2
+
+- Stop delivering a cancelled autonomous reply twice. The pre-send guard stopped the event but kept the generated chain, and AstrBot's decorate stage returns before the responder when a handler stops the event, so the responder is reached as a sibling stage while the process stage yields more than once — the same chain was sent again. The guard now discards the result before stopping the event, so a reply that lost its admission is not delivered at all and cannot be replayed.
+- Cover the discarded result and a repeated guard entry with regression assertions.
+
+## 0.19.1
+
+- Fix the crash that aborted the first autonomous reply on AstrBot 4.29.1 with a skills_like Agent runner: narrowing the allowlist to nothing produced an empty tool set, the runner's reset returned before initializing its stats, and the reply raised `'ToolLoopAgentRunner' object has no attribute 'stats'`. The plugin now reads the host schema mode and, in skills_like only, keeps every entry while clearing `active` on the tools that were not allowed, so the host branch stays on its normal path and the provider still receives no tool schema.
+- Keep the previous exact-name filtering unchanged for the default `full` schema mode and for hosts that do not configure the key, where an empty set is handled natively. `skills_like` is selected only when the host explicitly configures it; unknown values fall back to `full` exactly like the native stage.
+- Record the effective schema mode and the visible tool names in the `participation_injection` debug payload, and cover the mode resolution, the allowlisted subset and the empty allowlist with regression tests.
+
+## 0.19.0
+
+- Move every prompt this plugin sends into editable templates: participation planner, habit selector, learning extractor, learning reviewer, application style, and both autonomous-participation injections. A dedicated 提示词 Panel tab lists them with a body editor, the shipped default, its accepted variables and a reset action.
+- Reference runtime content with double-brace placeholders (`{{persona}}`, `{{recent_messages}}`, `{{candidates}}`, ...). Known references are substituted at call time and non-string values are serialized as JSON; unknown references stay literal so a typo stays visible instead of silently emptying part of the instruction. Structured JSON payloads and the participation goal/context blocks are still appended by the plugin, so a template changes wording, never permissions, tool scope or quota.
+- Persist overrides in a `prompts` table with a revision; saving validates length and emptiness, republishes the effective map, invalidates in-flight learning context and participation windows, and keeps `system_prompt` byte-identical across schema repairs.
+- Store the rendered planner/selector/learning/review text as the request's system prompt and record it in Debug output, so the audit shows the wording that actually ran. Shipped constants remain the defaults and the fallback, keeping existing module-level names valid.
+- Add prompt rendering, override round-trip, reinitialization and frontend editor regression coverage; the Panel now registers six native routes.
+
 ## 0.18.2
 
 - Use native AstrBot config as the durable settings source. Workshop saves update the same config object/file exposed by the native editor; native saves and normal plugin reloads become visible in the workshop instead of being masked by old SQLite overrides.

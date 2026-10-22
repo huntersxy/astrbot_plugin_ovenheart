@@ -7,6 +7,7 @@ import json
 from astrbot.api import logger
 from astrbot.api.web import request
 
+from . import prompts
 from .learning import build_guidance
 from .settings import PROFILE_DEFAULTS, SHARED_SCOPE
 
@@ -24,6 +25,8 @@ class PageAPI:
             ("library", self.library, "GET"),
             ("action", self.action, "POST"),
             ("preview", self.preview, "POST"),
+            ("prompts", self.prompt_list, "GET"),
+            ("prompts/save", self.prompt_save, "POST"),
         ):
             self.plugin.context.register_web_api(
                 f"/astrbot_plugin_ovenheart/{route}",
@@ -50,6 +53,7 @@ class PageAPI:
         state.update(
             settings=self.plugin.settings,
             settings_revision=self.plugin.settings_revision,
+            prompts_revision=self.plugin.prompts_revision,
             memory=self.plugin.memory.status(),
             busy=list(self.plugin.busy),
             retrieval=self.plugin.retriever.status.get(
@@ -63,6 +67,60 @@ class PageAPI:
             ),
         )
         return {"status": "ok", "data": state}
+
+    async def prompt_list(self):
+        """Return every template with its defaults, placeholders and overrides.
+
+        Returns:
+            A standard response the dedicated prompt list page renders.
+        """
+        if not self.plugin.ready:
+            return {"status": "error", "message": "人格工坊正在初始化，请稍后刷新。"}
+        return {
+            "status": "ok",
+            "data": {
+                "revision": self.plugin.prompts_revision,
+                "items": [
+                    prompts.describe(key, self.plugin.prompts[key])
+                    for key in prompts.KEYS
+                ],
+            },
+        }
+
+    async def prompt_save(self):
+        """Validate and persist edited templates from the prompt list page.
+
+        Returns:
+            A standard response with an actionable validation error.
+        """
+        try:
+            if not self.plugin.ready:
+                raise ValueError("人格工坊正在初始化，请稍后刷新。")
+            raw = await request.body()
+            if len(raw) > 262144:
+                raise ValueError("请求内容超过 256 KB，请缩短提示词。")
+            try:
+                body = json.loads(raw)
+            except (ValueError, UnicodeDecodeError) as exc:
+                raise ValueError("请求不是有效的 JSON。") from exc
+            if not isinstance(body, dict) or not isinstance(body.get("prompts"), dict):
+                raise ValueError("请提交要保存的提示词。")
+            await self.plugin.update_prompts(body["prompts"])
+            return {
+                "status": "ok",
+                "data": {
+                    "message": "提示词已保存并立即生效。",
+                    "revision": self.plugin.prompts_revision,
+                },
+            }
+        except ValueError as exc:
+            return {"status": "error", "message": str(exc)}
+        except Exception as exc:
+            logger.error("Persona prompt save failed (%s)", type(exc).__name__)
+            return {
+                "status": "error",
+                "message": "保存失败，请检查插件数据目录是否可写后重试。",
+            }
 
     async def library(self):
         """Return an authenticated, filtered page of learning entries.
@@ -247,6 +305,7 @@ class PageAPI:
                 body.get("query", "")[:1200],
                 selected=True,
                 included_ids=included_ids,
+                templates=self.plugin.prompts,
             )
             return {
                 "status": "ok",

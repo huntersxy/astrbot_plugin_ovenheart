@@ -1,7 +1,7 @@
 name: astrbot_plugin_ovenheart
 display_name: 烤箱之心
 desc: 借鉴 MaiBot 的表达学习机制，学习人格倾向、语言风格、群聊词汇与行为准则，联动 LivingMemory，提供原生 Panel 管理页。
-version: 0.18.2
+version: 0.19.2
 author: 汐兮雨
 astrbot_version: ">=4.29.1,<5"
 views:

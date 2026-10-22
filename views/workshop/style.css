@@ -153,3 +153,20 @@ button.text { border-color: transparent; background: transparent; }
 }
 
 .debug-settings { grid-column: 1 / -1; }
+
+.prompts { display: grid; grid-template-columns: minmax(220px, .9fr) minmax(0, 1.5fr); gap: 28px; align-items: start; }
+.prompt-editor { min-width: 0; }
+.field textarea.prompt-body { font: 13px/1.8 "Consolas", monospace; min-height: 380px; }
+.prompt-unknown { color: var(--warning); margin-bottom: 16px; overflow-wrap: anywhere; }
+.prompt-placeholders ul, .prompt-placeholders li { margin: 0; }
+.prompt-placeholders ul { padding-left: 20px; margin-top: 10px; }
+.prompt-placeholders li { color: var(--muted); font-size: 13px; line-height: 1.9; }
+.prompt-placeholders code, .section-intro code { background: var(--tint); color: var(--accent); border-radius: 4px; padding: 1px 5px; font: 12px/1.7 "Consolas", monospace; }
+.prompt-default { margin-top: 22px; }
+.prompt-default summary { cursor: pointer; padding: 12px 0; font-weight: 550; }
+.prompt-default pre { max-height: 300px; }
+@media (max-width: 620px) {
+  .prompts { grid-template-columns: 1fr; gap: 22px; }
+  .prompt-body { min-height: 280px; }
+}
+

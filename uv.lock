@@ -41,7 +41,7 @@ wheels = [
 
 [[package]]
 name = "astrbot-plugin-ovenheart"
-version = "0.18.2"
+version = "0.19.2"
 source = { virtual = "." }
 
 [package.dev-dependencies]

@@ -372,6 +372,90 @@ async def test_native_tools_are_isolated_and_only_explicitly_allowed(participant
     assert direct.func_tool is tools and direct.system_prompt == "宿主"
 
 
+def build_tools():
+    """Build a native tool set with two QQ-enhance style tools.
+
+    Returns:
+        Tool set the host would hand to the autonomous request.
+    """
+    return ToolSet(
+        [
+            FunctionTool(
+                name=name,
+                description=name,
+                parameters={"type": "object", "properties": {}},
+            )
+            for name in ("qq_group_info", "qq_group_member_manage")
+        ]
+    )
+
+
+def skills_like_config():
+    """Build the host config shape used by a skills_like Agent runner.
+
+    Returns:
+        Config mapping matching AstrBot's agent_runner section.
+    """
+    return {
+        "plugin_set": ["*"],
+        "agent_runner": {"config": {"misc": {"tool_schema_mode": "skills_like"}}},
+    }
+
+
+def test_tool_schema_mode_follows_the_native_default_and_fallback():
+    from astrbot_plugin_ovenheart.main import tool_schema_mode
+
+    assert tool_schema_mode(None) == "full"
+    assert tool_schema_mode({}) == "full"
+    assert tool_schema_mode({"agent_runner": {}}) == "full"
+    assert tool_schema_mode({"agent_runner": {"config": {"misc": {}}}}) == "full"
+    unknown = {"agent_runner": {"config": {"misc": {"tool_schema_mode": "auto"}}}}
+    assert tool_schema_mode(unknown) == "full"
+    assert tool_schema_mode(skills_like_config()) == "skills_like"
+
+
+async def test_skills_like_host_keeps_entries_but_exposes_only_allowed_tools(
+    participant, monkeypatch
+):
+    incoming = event()
+    request = (await requests(participant, incoming))[0]
+    tools = build_tools()
+    request.func_tool = tools
+    request.system_prompt = "宿主身份与规则"
+    participant.settings["autonomous_tools"] = ["qq_group_info"]
+    monkeypatch.setattr(
+        participant.context, "get_config", lambda umo: skills_like_config()
+    )
+    await participant.apply_participation(incoming, request)
+    assert len(request.func_tool.tools) == 2
+    assert bool(request.func_tool)
+    assert [t.name for t in request.func_tool.tools if t.active] == ["qq_group_info"]
+    assert request.func_tool.get_light_tool_set().names() == ["qq_group_info"]
+    assert request.func_tool.get_param_only_tool_set().names() == ["qq_group_info"]
+    assert [t.name for t in tools.tools] == ["qq_group_info", "qq_group_member_manage"]
+    assert all(t.active for t in tools.tools)
+
+
+async def test_skills_like_empty_allowlist_still_yields_a_truthy_tool_set(
+    participant, monkeypatch
+):
+    incoming = event()
+    request = (await requests(participant, incoming))[0]
+    tools = build_tools()
+    request.func_tool = tools
+    request.system_prompt = "宿主身份与规则"
+    participant.settings["autonomous_tools"] = []
+    monkeypatch.setattr(
+        participant.context, "get_config", lambda umo: skills_like_config()
+    )
+    await participant.apply_participation(incoming, request)
+    assert len(request.func_tool.tools) == 2
+    assert bool(request.func_tool)
+    assert request.func_tool.get_light_tool_set().names() == []
+    assert request.func_tool.get_param_only_tool_set().names() == []
+    assert all(t.active for t in tools.tools)
+
+
 async def test_new_input_cancels_an_admitted_request_waiting_for_host(participant):
     incoming = event("first")
     request = (await requests(participant, incoming))[0]
@@ -391,6 +475,13 @@ async def test_new_input_suppresses_a_generated_result_before_send(participant):
     await requests(participant, event("new-topic"))
     await participant.guard_participation_result(incoming)
     assert incoming.is_stopped()
+    # Stopping the event alone leaves the chain for the responder, and the process
+    # stage yields more than once, so the same stale chain was delivered twice.
+    assert incoming.get_result() is None
+    # Re-entering the guard on the already discarded result must stay suppressed.
+    await participant.guard_participation_result(incoming)
+    assert incoming.is_stopped()
+    assert incoming.get_result() is None
 
 
 async def test_an_own_send_stage_does_not_cancel_its_other_segments(participant):

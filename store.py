@@ -134,6 +134,9 @@ class Store:
             CREATE TABLE IF NOT EXISTS participation_state (
                 scope TEXT PRIMARY KEY, last_reply REAL NOT NULL DEFAULT 0
             );
+            CREATE TABLE IF NOT EXISTS prompts (
+                key TEXT PRIMARY KEY, body TEXT NOT NULL, updated REAL NOT NULL
+            );
         """)
         db.execute(
             "INSERT OR IGNORE INTO scopes VALUES (?, '', '所有人格', '全会话共用', ?, ?)",
@@ -706,6 +709,31 @@ class Store:
                 "INSERT INTO participation_state VALUES (?, ?) ON CONFLICT(scope) DO UPDATE SET last_reply=excluded.last_reply",
                 (key, time.time()),
             )
+
+    def prompt_overrides(self, db, patch=None):
+        """Read or replace operator-edited prompt templates.
+
+        Args:
+            db: Open database connection.
+            patch: Template bodies keyed by identifier; a None body restores the
+                shipped default by deleting the override.
+
+        Returns:
+            Persisted overrides keyed by template identifier.
+        """
+        if patch is not None:
+            for key, body in patch.items():
+                if body is None:
+                    db.execute("DELETE FROM prompts WHERE key=?", (key,))
+                else:
+                    db.execute(
+                        "INSERT OR REPLACE INTO prompts VALUES (?, ?, ?)",
+                        (key, body, time.time()),
+                    )
+        return {
+            row["key"]: row["body"]
+            for row in db.execute("SELECT key, body FROM prompts")
+        }
 
     def batch(self, db, scope, size, target_senders=None, blocked_senders=None):
         """Read the oldest unconsumed messages for a learning batch.

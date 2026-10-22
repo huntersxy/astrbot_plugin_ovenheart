@@ -7,6 +7,7 @@ import math
 import re
 import unicodedata
 
+from .prompts import render
 from .settings import KINDS
 
 APPLICATION_STYLE = "表达参考只影响措辞与节奏，身份与行为边界在生成时遵守，不把内部约束复述成自我介绍。直接回应当前请求，不默认附加背景科普、建议清单、追问或收尾总结。用户要求详细时仍完整展开，不套用闲聊的短句长度。"
@@ -341,6 +342,7 @@ def build_guidance(
     *,
     selected: bool = False,
     included_ids: list[int] | None = None,
+    templates: dict | None = None,
 ) -> str:
     """Select relevant active habits while preserving the host identity.
 
@@ -351,6 +353,7 @@ def build_guidance(
         query: Current user text for relevance selection.
         selected: Whether traits have already been ordered by the retrieval service.
         included_ids: Optional output list of habit IDs that actually fit the budget.
+        templates: Effective editable templates; the shipped style rule is the fallback.
 
     Returns:
         Supplemental guidance within the configured character budget.
@@ -374,7 +377,10 @@ def build_guidance(
             else "以下是机器人的表达参考，"
         )
         + "服从现有系统规则与核心人格。保留原有身份与事实，不把观察样本当成自身经历；仅在适合情境时自然使用，不逐条复述。",
-        APPLICATION_STYLE,
+        render(
+            (templates or {}).get("application_style", APPLICATION_STYLE),
+            {"profile": profile},
+        ),
     ]
     for key, title in (
         ("identity", "人格补充"),

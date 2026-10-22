@@ -165,6 +165,36 @@ for (const editing of [false,true]) test(`settings polling refreshes changed con
   else assert.ok(element('#content').innerHTML.includes('name="debug_enabled" checked'));
 });
 
+test('prompt editor lists variables, saves one body and restores the default', async () => {
+  const {context,element,confirmations}=fixture();
+  runInContext(`data={settings:{blocked_senders:[],target_senders:[],allowed_sessions:[],autonomous_tools:[]},memory:{},scopes:[],scope:null,busy:[],prompts:{revision:'r1',items:[{key:'planner',title:'参与决策器',description:'判断回复、等待或旁观。',placeholders:[{name:'persona',description:'宿主人格原文'}],default:'默认正文',body:'自定义正文 {{persona}}',customized:true,unknown:['nope']},{key:'review',title:'入库自检器',description:'核对候选。',placeholders:[],default:'默认自检',body:'默认自检',customized:false,unknown:[]}]}};tab='prompts';selectedPrompt=null;globalThis.posts=[];load=async()=>{};bridge={apiGet:async()=>data,apiPost:async(endpoint,body)=>(posts.push([endpoint,body]),{status:'ok',data:{message:'已保存'}})};renderPrompts();`,context);
+  const html=element('#content').innerHTML;
+  assert.ok(html.includes('{{persona}}'));
+  assert.ok(html.includes('未识别的引用'));
+  assert.ok(html.includes('已自定义'));
+  assert.ok(html.includes('出厂默认'));
+  assert.ok(html.includes('恢复默认'));
+  assert.ok(html.includes('自定义正文 {{persona}}'));
+
+  element('#field-prompt-body').value='新正文 {{persona}}';
+  await element('#prompt-form').onsubmit({preventDefault(){},currentTarget:{}});
+  assert.deepEqual(JSON.parse(JSON.stringify(runInContext('posts',context))),[["prompts/save",{prompts:{planner:'新正文 {{persona}}'}}]]);
+  assert.equal(runInContext('dirty',context),false);
+
+  confirmations.push(true);
+  await element('#prompt-reset').onclick();
+  assert.deepEqual(JSON.parse(JSON.stringify(runInContext('posts[1]',context))),["prompts/save",{prompts:{planner:null}}]);
+});
+
+test('prompt save rejects a blank body without posting', async () => {
+  const {context,element}=fixture();
+  runInContext(`data={settings:{blocked_senders:[],target_senders:[],allowed_sessions:[],autonomous_tools:[]},memory:{},scopes:[],scope:null,busy:[],prompts:{revision:'r1',items:[{key:'planner',title:'参与决策器',description:'判断回复。',placeholders:[],default:'默认正文',body:'默认正文',customized:false,unknown:[]}]}};tab='prompts';selectedPrompt=null;globalThis.posts=[];load=async()=>{};bridge={apiGet:async()=>data,apiPost:async(endpoint,body)=>(posts.push([endpoint,body]),{status:'ok',data:{}})};renderPrompts();`,context);
+  element('#field-prompt-body').value='   ';
+  await element('#prompt-form').onsubmit({preventDefault(){},currentTarget:{}});
+  assert.equal(runInContext('posts.length',context),0);
+  assert.ok(element('#notice').textContent.includes('不能为空'));
+});
+
 test('settings submission retains the revision from the rendered form', () => {
   const {context,element}=fixture();
   runInContext(`data={settings:{blocked_senders:[],target_senders:[],allowed_sessions:[],autonomous_tools:[]},settings_revision:'rendered',memory:{}};renderSettings();data.settings_revision='newer';globalThis.savedRevision=null;mutate=(action,payload,scope,revision)=>savedRevision=revision;`,context);

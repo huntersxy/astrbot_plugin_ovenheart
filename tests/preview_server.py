@@ -341,7 +341,7 @@ async def bridge():
     )
 
 
-@app.api_route("/fixture-api/{endpoint}", methods=["GET", "POST"])
+@app.api_route("/fixture-api/{endpoint:path}", methods=["GET", "POST"])
 async def api(endpoint: str, request: Request):
     """Invoke the real native page handler with a real host request context.
 
@@ -352,14 +352,22 @@ async def api(endpoint: str, request: Request):
     Returns:
         Native plugin response.
     """
-    if endpoint not in ("state", "library", "action", "preview"):
+    handlers = {
+        "state": "state",
+        "library": "library",
+        "action": "action",
+        "preview": "preview",
+        "prompts": "prompt_list",
+        "prompts/save": "prompt_save",
+    }
+    if endpoint not in handlers:
         return {"status": "error", "message": "Unknown test endpoint"}
     with bind_request_context(
         PluginRequest(
             request, plugin_name="astrbot_plugin_ovenheart", username="fixture"
         )
     ):
-        return await getattr(app.state.plugin.page_api, endpoint)()
+        return await getattr(app.state.plugin.page_api, handlers[endpoint])()
 
 
 @app.get("/{asset}")

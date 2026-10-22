@@ -440,13 +440,29 @@ class ParticipationController:
         query = "\n".join(m["text"] for m in messages[-6:])
         habits = rank_traits(state["traits"], query, settings | {"max_traits": 12})
         anchor = plugin.context.persona_manager.get_persona_v3_by_id(persona)
+        guidance = build_guidance(
+            state["scope"]["profile"],
+            habits,
+            settings,
+            query,
+            selected=True,
+            templates=plugin.prompts,
+        )
+        task = plugin.template(
+            "planner",
+            persona=anchor["prompt"][:4000] if anchor else "",
+            profile=state["scope"]["profile"],
+            guidance=guidance,
+            recent_messages=messages[-20:],
+            wait_elapsed=waited,
+            max_wait=settings["planner_max_wait"],
+            scope=scope,
+        )
         prompt = json.dumps(
             {
-                "task": PLANNER_SYSTEM,
+                "task": task,
                 "identity_anchor": anchor["prompt"][:4000] if anchor else "",
-                "behavior_guidance": build_guidance(
-                    state["scope"]["profile"], habits, settings, query, selected=True
-                ),
+                "behavior_guidance": guidance,
                 "recent_messages": messages[-20:],
                 "wait_elapsed": waited,
                 "max_wait": settings["planner_max_wait"],
@@ -463,14 +479,14 @@ class ParticipationController:
         plugin.debug(
             "planner_request",
             provider=provider_id,
-            system=PLANNER_SYSTEM,
+            system=task,
             prompt=prompt,
         )
         response = await asyncio.wait_for(
             plugin.context.llm_generate(
                 chat_provider_id=provider_id,
                 prompt=prompt,
-                system_prompt=PLANNER_SYSTEM,
+                system_prompt=task,
             ),
             timeout=settings["planner_timeout"],
         )
