@@ -1,5 +1,33 @@
 # OvenHeart workshop guide
 
+## Conversation continuity after direct streaming (0.40)
+
+Direct streaming skips the host after-send hook, but the current native Agent
+normally emits final text in `STREAMING_FINISH` after adapter consumption. This
+notice can now invoke existing recording logic. Require a plugin-bound native
+model-request scope, the host send-operation flag, an unstopped/permitted event
+and unchanged effective persona scope. Duplicate notices for the same result
+object are ignored. Intermediate chunks, unbound/unsent results, generation alone
+and persona changes cannot create a self record.
+
+Final text uses the existing 1,200-character participation record and addressee.
+Same-member continuations may use the configured follow-up opportunity; quota,
+permissions, confidence and stale checks remain. Direct streaming settings stay
+unchanged; autonomous replies remain buffered for pre-send guards/decorations.
+Completed content is neither decorated again nor resent. No extra model call is
+introduced.
+
+The notice can also supply existing volatile learning self context, requiring an
+eligible human material anchor and current learning/blacklist/profile gates.
+Existing five-minute/64-entry/16-context limits apply. Text remains `self=true`,
+outside raw materials, evidence and persistent habits. Existing exposure writes
+retain their idempotency. A final notice/send flag is not a platform delivery
+acknowledgement; partial or altered delivered streams are not reconstructed from
+model output. Adapters, Live paths and older hosts without a usable final notice
+remain unsupported. Opt-in `streaming_self_context` logs bridge admission, not a
+guarantee that every downstream context gate retained text. Seven focused native
+SDK simulated cases pass; production QQ streaming remains unverified.
+
 ## Grounded expression samples (0.39)
 
 Since 0.39.1, expression entries in `known_traits` also carry old sample text in
@@ -258,7 +286,7 @@ Only native model replies reaching the send-stage callback are eligible. They re
 
 Default extraction/review prompts reject learning the bot's own wording, preferences or conclusions from human assent. This constrains the semantic task rather than guaranteeing perfect model judgment; human review remains useful. Current access/profile settings, blacklist changes, clearing, expiry and scope changes invalidate late additions; repeated callbacks deduplicate identical own text. Opt-in `learning_self_context` diagnostics show retained own text.
 
-The callback establishes a send-stage observation, not confirmed platform delivery. Native direct streaming paths that skip the callback cannot supply this text; generated output is not substituted for it. Autonomous replies keep their existing buffered sending path. Model examples neither read nor populate this context.
+The callback establishes a send-stage observation, not confirmed platform delivery. Since 0.40, direct streaming can supply this text through the native final notice plus send flag; generation alone is never substituted for it. Autonomous replies keep their existing buffered sending path. Model examples neither read nor populate this context.
 
 Since 0.31.1, extraction/review `observations` retain their stored `created` timestamps: Unix seconds recorded at local capture, not original platform send times. Automatically supplied review neighbors must also be within five minutes of the cited observation, in addition to the existing two-row radius. Missing timestamps no longer produce inferred neighbors; explicit quoted context remains available. Default learning/review prompts distinguish temporal proximity from actual reply relationships while allowing independent evidence across periods to support a stable habit.
 
@@ -323,7 +351,7 @@ Blocked quoted authors are excluded; when a blacklist is active, unattributed qu
 
 **Learning settings → Autonomous participation → 允许连续接话 / Allow follow-ups** defaults on and synchronizes with native config `participation_followup`. If the just-addressed member continues within 120 seconds without another member intervening, the first follow-up can bypass the minimum-message gate, cooldown and normal planner recheck interval after the usual input debounce. The planner still chooses reply, wait or observe; an early reply must target this member's newer message. Thanks, farewells and closed topics need not receive another reply. An observed follow-up consumes this early opportunity until the bot enters the send stage again.
 
-Eligibility uses only that native session/persona's volatile own-reply record. Hourly quota, permissions, tool policies, confidence and stale-result cancellation remain in force. Disabling restores the uniform gates and cancels pending follow-up admissions. Off mode stays passive; observe mode never sends. Direct streaming replies lack the host after-send callback and cannot open this opportunity. Editable planner prompts can use `{{is_followup}}`; the structured planner payload always carries it.
+Eligibility uses only that native session/persona's volatile own-reply record. Hourly quota, permissions, tool policies, confidence and stale-result cancellation remain in force. Disabling restores the uniform gates and cancels pending follow-up admissions. Off mode stays passive; observe mode never sends. Since 0.40, direct streaming can open this opportunity when a usable native final notice and send flag supply the same record. Editable planner prompts can use `{{is_followup}}`; the structured planner payload always carries it.
 
 | Previous behavior | With follow-ups enabled |
 | --- | --- |
@@ -332,9 +360,9 @@ Eligibility uses only that native session/persona's volatile own-reply record. H
 
 ![Follow-up control using local illustrative data](../assets/followup-v0.25.jpg)
 
-Since 0.24, autonomous turns set AstrBot's native per-event `enable_streaming=false`: generation finishes before stale-result validation, real quote/mention decoration and after-send context recording. The current host bypasses those callbacks for streaming results. Normal host segmented sending remains available; direct wakes and name mentions retain their host streaming settings.
+Since 0.24, autonomous turns set AstrBot's native per-event `enable_streaming=false`: generation finishes before stale-result validation, real quote/mention decoration and after-send context recording. Streaming completion arrives after output, too late for those pre-send guards and decorations. Normal host segmented sending remains available; direct wakes and name mentions retain their host streaming settings.
 
-Non-streaming send-stage replies retain up to 1,200 text characters and the answered message in the native session/persona's volatile participation window, including a first direct reply before any ordinary group window exists. Own replies have distinct sequences, cannot become reply targets and do not count toward the new-human-message threshold. Inputs arriving during a send remain pending. Existing limits of 30 messages, ten minutes and 128 windows remain; own replies do not become learning materials or cross-group context. Send-stage exposure is not platform-confirmed delivery. Direct streaming replies still lack this callback in the current host; generation completion is not treated as delivery.
+Non-streaming send-stage replies retain up to 1,200 text characters and the answered message in the native session/persona's volatile participation window, including a first direct reply before any ordinary group window exists. Own replies have distinct sequences, cannot become reply targets and do not count toward the new-human-message threshold. Inputs arriving during a send remain pending. Existing limits of 30 messages, ten minutes and 128 windows remain; own replies do not become learning materials or cross-group context. Send-stage exposure is not platform-confirmed delivery. Since 0.40, a native final notice plus send flag can bridge the same record; generation alone is not treated as delivery.
 
 Since 0.23.1, habit retrieval follows the actual autonomous reply target and its quote rather than treating the latest unrelated group message as the question. Direct replies also read native quote text. Known local definitions matching that human source or quote survive an empty or failed style selector; unrelated recent topics and planner-written intent do not pin vocabulary. The existing 2,400-character query budget prioritizes the reply source, quote and goal before recent context, without adding model calls. Local definitions remain session/persona scoped.
 

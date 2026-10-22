@@ -911,7 +911,7 @@ class PersonaPlugin(Star):
                 logger.warning("OvenHeart could not bind a native conversation")
                 return
             event.set_extra("ovenheart_decision", plan)
-            # Native streaming bypasses both decoration and after-send hooks.
+            # Streaming completes after delivery, too late for pre-send guards.
             # Buffer autonomous turns so stale checks, real quote/At decoration
             # and the next planner's own-reply context run before/after delivery.
             event.set_extra("enable_streaming", False)
@@ -1117,11 +1117,34 @@ class PersonaPlugin(Star):
 
     @filter.on_decorating_result(priority=-100000)
     async def guard_participation_result(self, event: AstrMessageEvent):
-        """Suppress an obsolete autonomous result before the native send stage.
+        """Guard buffered replies or observe an already completed native stream.
 
         Args:
             event: Native event whose generated result is about to be decorated.
         """
+        result = event.get_result()
+        if result and result.result_content_type == ResultContentType.STREAMING_FINISH:
+            # Native streaming has already traversed its adapter before this
+            # completion notice; RespondStage skips its after-send hook here.
+            # Do not decorate/resend a completed stream or infer output from an
+            # intermediate model response. Retain only the native final text.
+            scope = event.get_extra("ovenheart_reply_scope")
+            if (
+                scope
+                and event._has_send_oper
+                and not event.is_stopped()
+                and event.get_extra("ovenheart_stream_recorded") is not result
+            ):
+                event.set_extra("ovenheart_stream_recorded", result)
+                if (
+                    await self.permitted(event)
+                    and (await self.resolve_scope(event))[0] == scope
+                ):
+                    await self.record_delivery(event)
+                    self.debug(
+                        "streaming_self_context", scope=scope, status="native_finish"
+                    )
+            return
         if event.get_extra("ovenheart_mention") and not await self.check_mention(event):
             event.stop_event()
             event.clear_result()
@@ -1551,10 +1574,11 @@ class PersonaPlugin(Star):
 
     @filter.after_message_sent()
     async def record_delivery(self, event: AstrMessageEvent):
-        """Record exposure and volatile self context at the native send stage.
+        """Record exposure and volatile self context at a native completion boundary.
 
         Self context requires an eligible human anchor and a native model request
-        in the same scope. The hook does not establish platform delivery success.
+        in the same scope. The after-send hook and streaming-finish bridge do not
+        establish platform delivery success.
 
         Args:
             event: Native message event after the send pipeline.

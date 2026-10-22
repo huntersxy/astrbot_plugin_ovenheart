@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.40.0
+
+- Bridge native `STREAMING_FINISH` notices into existing send-stage self context and exposure recording. Require a native model-request scope, the host send-operation flag, a live permitted event and the same effective persona scope; ignore duplicate notices for the same result.
+- Let a completed direct streaming reply inform subsequent participation/follow-up decisions and volatile learning context without forcing buffered output, resending or decorating completed content, or adding model calls. Preserve existing raw-material/evidence exclusions, retention bounds, quotas and exposure idempotency.
+- Ignore intermediate streams, missing send/request markers, stopped/disabled events and persona changes. Hosts/adapters that do not emit a usable final notice remain unsupported; completion notices and send flags are not platform-delivery acknowledgements. Autonomous replies remain buffered for pre-send cancellation and decoration.
+- Pass seven focused native-SDK simulated cases covering direct follow-up, volatile learning context, duplicate completion and six exclusion boundaries. Production streaming transport remains unverified.
+
 ## 0.39.1
 
 - Include old expression sample text in stable known-habit descriptions for extraction templates and payloads, and in the explicit merge target seen by admission review. Do not expose source metadata or treat old samples as new evidence.
