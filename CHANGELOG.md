@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.27.1
+
+- Recheck autonomous admission liveness and current allow/deny policy at native tool-name resolution in both schema modes. Superseded or paused requests stop and clear pending results instead of dispatching an initially allowed tool from an obsolete request.
+- Advance a local participation window marker after workshop profile edits/restores, so queued tool lookup can immediately recognize the change. Common-profile edits continue closing affected participation windows.
+- Preserve native tool instances, inactive-tool filtering, skills-like text-only initialization and direct-wake behavior. Add opt-in cancellation diagnostics without logging tool arguments or adding provider calls.
+- Verify six stale-admission dispatch cases plus four existing native boundary cases. This guards name resolution; already-started tool effects remain outside its cancellation boundary.
+
 ## 0.27.0
 
 - Give contextual selection native-scope expression exposure IDs from its last three send-stage records within ten minutes. Exclude inactive or subsequently updated expressions, and keep recency local even when personality is shared.

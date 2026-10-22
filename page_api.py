@@ -292,6 +292,7 @@ class PageAPI:
             if operation in ("profile", "restore"):
                 window = self.plugin.participation.windows.get(scope)
                 if window:
+                    window["sequence"] += 1
                     window["changed"].set()
             return {"status": "ok", "data": {"message": "已保存。"}}
         except ValueError as exc:

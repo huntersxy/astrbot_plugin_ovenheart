@@ -1,5 +1,9 @@
 # OvenHeart workshop guide
 
+Since 0.27.1, autonomous tool sets recheck admission liveness and the current allow/deny policy when the native runner resolves a name. New group input, disabled participation/application, and workshop profile changes invalidate old requests. A rejected lookup stops the event and clears its pending result. This works in both `full` and `skills_like` modes without copying/mutating native tools or changing direct-wake handling. Debug `autonomous_tool_cancelled` records the name and liveness/policy flags, excluding arguments.
+
+The boundary is name resolution: it does not undo already-started tools or cover delays introduced by another plugin after resolution. Host permissions, tool checks and final-result validation remain in force.
+
 ## Recent expression references and variety (0.27)
 
 Contextual selection receives `recent_expression_ids` from the native session/persona's last three exposure records within ten minutes. Only still-active, unchanged expressions count. A generated or previewed reference does not count before the send stage. Exposure is not proof of wording adoption, platform delivery or satisfaction. Shared personality does not share this recent-use history between conversations.

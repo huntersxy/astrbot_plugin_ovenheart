@@ -10,6 +10,7 @@ import statistics
 import time
 import weakref
 from collections import deque
+from collections.abc import Callable
 from uuid import uuid4
 
 from astrbot.api import logger
@@ -69,7 +70,35 @@ def tool_schema_mode(host_config) -> str:
     return mode if mode in TOOL_SCHEMA_MODES else "full"
 
 
-class SkillsLikeToolSet(ToolSet):
+class ParticipationToolSet(ToolSet):
+    """Recheck a request-local gate when the native runner resolves a tool."""
+
+    def __init__(self, tools, permit: Callable[[str], bool] | None = None):
+        """Retain native tool instances without modifying the host registry.
+
+        Args:
+            tools: Tools already admitted by the host and autonomous policy.
+            permit: Optional synchronous liveness/policy check at name lookup.
+        """
+        super().__init__(tools)
+        self.permit = permit
+
+    def get_tool(self, name: str):
+        """Resolve only a currently active and still-permitted tool.
+
+        Args:
+            name: Exact tool name requested by the native runner.
+
+        Returns:
+            The original native tool, or None if unavailable or superseded.
+        """
+        tool = super().get_tool(name)
+        if tool is None or not tool.active:
+            return None
+        return tool if self.permit is None or self.permit(name) else None
+
+
+class SkillsLikeToolSet(ParticipationToolSet):
     """Keep the native runner's reset path available for text-only requests."""
 
     def __bool__(self) -> bool:
@@ -82,7 +111,9 @@ class SkillsLikeToolSet(ToolSet):
         return True
 
 
-def narrow_toolset(toolset: ToolSet | None, allowed: set[str], *, skills_like: bool):
+def narrow_toolset(
+    toolset: ToolSet | None, allowed: set[str], *, skills_like: bool, permit=None
+):
     """Restrict a prepared tool set to an exact-name allowlist.
 
     Args:
@@ -92,6 +123,7 @@ def narrow_toolset(toolset: ToolSet | None, allowed: set[str], *, skills_like: b
             reset when a skills_like request carries a falsy tool set, leaving stats
             and the message list unset. A truthy input wrapper avoids that branch
             without retaining any denied or host-inactive tool handlers.
+        permit: Optional synchronous name-lookup check for this request only.
 
     Returns:
         The restricted tool set, or None when the request had no tool set.
@@ -103,7 +135,9 @@ def narrow_toolset(toolset: ToolSet | None, allowed: set[str], *, skills_like: b
         for tool in (toolset.tools if toolset is not None else [])
         if tool.name in allowed and tool.active
     ]
-    return SkillsLikeToolSet(selected) if skills_like else ToolSet(selected)
+    return (SkillsLikeToolSet if skills_like else ParticipationToolSet)(
+        selected, permit
+    )
 
 
 def reply_people(event: AstrMessageEvent, plan: dict | None) -> dict[str, str]:
@@ -1004,10 +1038,53 @@ class PersonaPlugin(Star):
                 else set()
             )
         host_config = self.context.get_config(event.unified_msg_origin)
+
+        def permit_tool(name: str) -> bool:
+            """Reject tools from a superseded autonomous request.
+
+            Args:
+                name: Exact name resolved by the native tool runner.
+
+            Returns:
+                Whether this admission and its current tool policy still allow it.
+            """
+            window = self.participation.windows.get(plan["scope"])
+            room = self.participation.rooms.get(plan["room"])
+            current = self.settings
+            live = bool(
+                not event.is_stopped()
+                and current["enabled"]
+                and current["apply_enabled"]
+                and current["participation_mode"] == "auto"
+                and (not plan.get("followup") or current["participation_followup"])
+                and window is not None
+                and window["sequence"] == plan["sequence"]
+                and room is not None
+                and room["source"] == plan["room_source"]
+            )
+            permitted = (
+                name in current["autonomous_tools"]
+                if current["autonomous_tool_policy"] == "allowlist"
+                else name not in current["autonomous_tool_denylist"]
+            )
+            if live and permitted:
+                return True
+            event.stop_event()
+            event.clear_result()
+            self.debug(
+                "autonomous_tool_cancelled",
+                scope=plan["scope"],
+                tool=name,
+                admission_current=live,
+                policy_allowed=permitted,
+            )
+            return False
+
         req.func_tool = narrow_toolset(
             req.func_tool,
             allowed,
             skills_like=tool_schema_mode(host_config) == "skills_like",
+            permit=permit_tool,
         )
         profile = plan.get("profile", {})
         target = plan.get("target") or {}

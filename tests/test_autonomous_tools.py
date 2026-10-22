@@ -16,6 +16,69 @@ pytest_plugins = ["tests.test_participation"]
 
 
 @pytest.mark.parametrize("skills_like", [False, True])
+@pytest.mark.parametrize("change", ["input", "policy", "profile"])
+async def test_native_dispatch_rejects_tools_after_an_admission_changes(
+    participant, skills_like, change
+):
+    from astrbot.core.agent.hooks import BaseAgentRunHooks
+    from astrbot.core.agent.run_context import ContextWrapper
+    from astrbot.core.agent.runners.tool_loop_agent_runner import ToolLoopAgentRunner
+    from astrbot.core.provider.entities import LLMResponse
+    from astrbot.core.provider.provider import Provider
+    from mcp.types import CallToolResult, TextContent
+
+    participant.settings["autonomous_tools"] = ["qq_group_info"]
+    if skills_like:
+        participant.context.get_config = lambda umo: skills_like_config()
+    incoming = event("tool-before-change")
+    request = (await requests(participant, incoming))[0]
+    original = build_tools()
+    request.func_tool = original
+    await participant.apply_participation(incoming, request)
+    if change == "input":
+        await participant.capture(event("new-input-before-tool", text="等等，换个问题"))
+    elif change == "policy":
+        participant.settings["autonomous_tool_policy"] = "denylist"
+        participant.settings["autonomous_tool_denylist"] = ["qq_group_info"]
+    else:
+        scope = incoming.get_extra("ovenheart_decision")["scope"]
+        saved = await api_call(
+            participant.page_api.action,
+            {"action": "profile", "scope": scope, "payload": {"apply_enabled": False}},
+        )
+        assert saved["status"] == "ok"
+    provider = MagicMock(spec=Provider)
+    provider.provider_config = {}
+    executed = []
+
+    async def execute(tool, run_context, **kwargs):
+        executed.append(tool.name)
+        yield CallToolResult(content=[TextContent(type="text", text="ok")])
+
+    runner = ToolLoopAgentRunner()
+    await runner.reset(
+        provider=provider,
+        request=request,
+        run_context=ContextWrapper(context=SimpleNamespace(event=incoming)),
+        tool_executor=SimpleNamespace(execute=execute),
+        agent_hooks=BaseAgentRunHooks(),
+        tool_schema_mode="skills_like" if skills_like else "full",
+    )
+    response = LLMResponse(
+        role="assistant",
+        tools_call_name=["qq_group_info"],
+        tools_call_args=[{}],
+        tools_call_ids=["superseded"],
+    )
+    async for _ in runner._handle_function_tools(request, response):
+        pass
+    assert executed == []
+    assert incoming.is_stopped() and incoming.get_result() is None
+    assert original.get_tool("qq_group_info") is not None
+    assert all(tool.active for tool in original.tools)
+
+
+@pytest.mark.parametrize("skills_like", [False, True])
 @pytest.mark.parametrize("policy", ["allowlist", "denylist"])
 async def test_native_executor_cannot_resolve_hidden_or_inactive_tools(
     participant, skills_like, policy
