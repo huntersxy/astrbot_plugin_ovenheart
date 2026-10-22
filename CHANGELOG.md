@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.34.0
+
+- Integrate the optional LivingMemory reply-source binding API when autonomous replies answer an earlier member. Supply an actual native event anchor after checking source ID/text/sender, effective scope and host permissions; do not rebind the triggering event.
+- Keep at most 128 bounded runtime source references independently of learning. The paired LivingMemory local build uses one source snapshot for recall and reflection, rechecks its own policy and a live-admission guard, and skips requested missing/invalid sources rather than reading the wrong trigger user's memory.
+- Preserve unbound/current-target requests, existing native memory calls and learning-batch recall. Older LivingMemory builds retain their native behavior with opt-in diagnostic guidance to install the paired adapter. No new configuration or runtime dependency is added.
+- Pass three focused OvenHeart source/legacy checks and seven paired LivingMemory binding checks, plus one existing native recall check. No external provider, production memory database or real QQ acceptance was performed.
+
 ## 0.33.1
 
 - Bind autonomous request prompts to the actual planner-selected message instead of always sending the latest triggering input. Preserve the full original input for current-message targets; older targets retain the planner's existing 1,200-character bound.

@@ -14,6 +14,34 @@ class MemoryBridge:
     def __init__(self, context):
         self.context = context
 
+    def bind_reply_source(self, event, source, is_current) -> str:
+        """Use LivingMemory's optional same-session reply-source protocol.
+
+        Args:
+            event: Native trigger carrying the admitted autonomous reply.
+            source: Verified real target event, or None to suppress wrong recall.
+            is_current: Synchronous live-admission guard used by both memory hooks.
+
+        Returns:
+            A credential-free integration status, without making a memory call.
+        """
+        metadata = self.context.get_registered_star("astrbot_plugin_livingmemory")
+        if not metadata or not metadata.activated or metadata.star_cls is None:
+            return "未启用 LivingMemory，无需绑定回复来源。"
+        handler = getattr(metadata.star_cls, "event_handler", None)
+        bind = getattr(handler, "bind_reply_source", None)
+        if not callable(bind):
+            return "当前 LivingMemory 不支持回复来源绑定，仍使用原始触发事件。请安装配套适配版。"
+        try:
+            return (
+                "LivingMemory 已绑定实际回复来源。"
+                if bind(event, source, is_current)
+                else "回复来源缺失、过期或无权限，本轮跳过 LivingMemory 召回与反思。"
+            )
+        except Exception:
+            event.set_extra("livingmemory_reply_source_requested", True)
+            return "回复来源绑定失败，本轮跳过适配版 LivingMemory 召回与反思。"
+
     def status(self) -> dict:
         """Inspect integration readiness without initializing another plugin.
 

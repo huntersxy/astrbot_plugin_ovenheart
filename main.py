@@ -839,6 +839,57 @@ class PersonaPlugin(Star):
             event.set_extra("enable_streaming", False)
             event.call_llm = True
             target = plan.get("target") or {}
+            if target.get("source") != plan["room_source"]:
+                source = self.participation.sources.get(
+                    (plan["scope"], target.get("source"))
+                )
+                if source is not None:
+                    current_source = str(
+                        source.message_obj.message_id
+                        or f"{source.get_sender_id()}:{source.created_at}"
+                    )
+                    if (
+                        source.get_sender_id() != target.get("sender_id")
+                        or current_source != target.get("source")
+                        or source.get_message_str()[:1200] != target.get("text")
+                        or source.unified_msg_origin != event.unified_msg_origin
+                        or not await self.permitted(source)
+                        or (await self.resolve_scope(source))[0] != plan["scope"]
+                    ):
+                        source = None
+                request_event = weakref.ref(event)
+                self.debug(
+                    "participation_memory_source",
+                    scope=plan["scope"],
+                    target_source=target.get("source"),
+                    status=self.memory.bind_reply_source(
+                        event,
+                        source,
+                        lambda: bool(
+                            request_event() is not None
+                            and not request_event().is_stopped()
+                            and self.settings["enabled"]
+                            and self.settings["apply_enabled"]
+                            and self.settings["participation_mode"] == "auto"
+                            and request_event().get_extra(
+                                "ovenheart_reply_scope", plan["scope"]
+                            )
+                            == plan["scope"]
+                            and (
+                                not plan.get("followup")
+                                or self.settings["participation_followup"]
+                            )
+                            and self.participation.windows.get(plan["scope"], {}).get(
+                                "sequence"
+                            )
+                            == plan["sequence"]
+                            and self.participation.rooms.get(plan["room"], {}).get(
+                                "source"
+                            )
+                            == plan["room_source"]
+                        ),
+                    ),
+                )
             # Keep the full original input when answering the triggering message;
             # older targets are available only as the planner's bounded text.
             prompt = (

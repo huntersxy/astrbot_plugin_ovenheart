@@ -1,5 +1,33 @@
 # OvenHeart workshop guide
 
+## Target-aware LivingMemory replies (0.34)
+
+Install OvenHeart 0.34 together with the local LivingMemory build
+`2.7.0-beta.3+ovenheart.1`, then reload both plugins. This is an integration build,
+not an upstream LivingMemory release. No configuration or data migration is
+required. Older LivingMemory builds remain usable with their previous native
+event-based behavior.
+
+For an earlier-member autonomous target, OvenHeart retrieves a real native event
+from its bounded 128-anchor runtime cache, independently of learning. It checks
+message ID/text/sender, origin, effective persona and host permissions before
+binding. LivingMemory also checks matching native group session/platform/bot,
+human source, ten-minute age and both allowlists. Recall and reflection use the
+same isolated source snapshot, so user scope resolves the actual target identity;
+existing alias/persona filtering and passive raw group capture remain intact.
+
+Neither original event is impersonated or mutated. The current request supplies
+reply timestamp/checkpoint. Invalid, missing, evicted or superseded requested
+bindings skip recall/reflection rather than falling back to a different user.
+Already-started storage work is not undone, and existing summary/tool semantics
+and platform delivery guarantees are not extended. Current-target requests,
+direct wakes and batch-learning recall retain their original paths. Binding adds
+no memory/model call.
+
+Opt-in `participation_memory_source` logs identify binding/compatibility status.
+Focused checks use native event interfaces and simulated downstream hooks; no
+real memory database, provider or QQ acceptance is claimed.
+
 Since 0.33.1, autonomous request prompts use the planner's actual reply target. If one member asks a question and another member later triggers planning, a decision to answer the earlier member sends that question as the primary prompt. Current-message targets retain the full original input; earlier targets use the existing 1,200-character window text without fetching platform history.
 
 Temporary participation context now explicitly carries `reply_message`, including sender, text, sequence and inbound quote, even when the target is no longer among the final twelve context messages. Custom templates can use `{{reply_message}}`; the structured payload always supplies it. Default wording distinguishes trigger-event sender metadata from the actual reply target. Opt-in `participation_injection` diagnostics also include the request prompt at that hook.

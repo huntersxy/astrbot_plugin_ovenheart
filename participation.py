@@ -140,6 +140,7 @@ class ParticipationController:
         self.plugin = plugin
         self.windows: dict[str, dict] = {}
         self.rooms: dict[str, dict] = {}
+        self.sources: dict[tuple[str, str], object] = {}
         self.inflight = 0
 
     def room_key(self, event) -> str:
@@ -316,6 +317,10 @@ class ParticipationController:
         )
         if any(m["source"] == source for m in window["messages"]):
             return None
+        self.sources.pop((scope, source), None)
+        self.sources[scope, source] = event
+        if len(self.sources) > 128:
+            self.sources.pop(next(iter(self.sources)))
         window["sequence"] += 1
         window["messages"] = deque(
             sorted(
@@ -709,3 +714,4 @@ class ParticipationController:
         for room in self.rooms.values():
             room["changed"].set()
         self.rooms.clear()
+        self.sources.clear()
