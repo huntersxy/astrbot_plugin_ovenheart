@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.37.0
+
+- Prewarm active habit document vectors after committed learning, manual approval/content edits, snapshot restore and shared-profile startup. Schedule this derived work independently so failures cannot change successful learning/review results.
+- Reuse content-addressed scoped vectors through a document-only indexing pass, without a query embedding, reranker, selector or chat call. Limit one warm job and at most 64 missing documents per pass; skip an already busy retrieval lock and bound the vector phase to two seconds or the smaller configured retrieval timeout.
+- Keep lexical/unconfigured/paused application paths idle, preserve native session/plugin gates, and leave partial/failing work to existing on-demand retrieval. Add opt-in `embedding_warmup` diagnostics and disclose that configured document calls may occur before a real reply.
+- Extend compact guidance metadata with its source origin for the background gate. Pass four focused document-cache, committed-run failure, approval and busy/overlap checks using simulated providers. No production latency or billing improvement is claimed.
+
 ## 0.36.1
 
 - Replace ID-less learning's sender/second/text fallback with a cached per-event identity. Distinct identical arrivals survive equal native/arrival timestamps; repeated hooks on the same event still deduplicate. Existing platform IDs retain native redelivery deduplication.

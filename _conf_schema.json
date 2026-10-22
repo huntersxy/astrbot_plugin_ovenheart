@@ -139,7 +139,7 @@
     "description": "表达检索向量模型 ID",
     "type": "string",
     "default": "",
-    "hint": "用于回复、参与判断和学习时的旧习惯对照。填写 AstrBot 已配置的 embedding 提供商 ID；留空回退文字相关性。"
+    "hint": "用于回复、参与判断和学习对照，并为生效习惯做有界后台预热。填写 AstrBot 已配置的 embedding 提供商 ID；留空回退文字相关性。"
   },
   "retrieval_timeout": {
     "description": "向量与重排序总超时（秒）",

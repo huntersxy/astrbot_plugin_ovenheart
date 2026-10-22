@@ -560,7 +560,9 @@ class HabitRetriever:
         )
         return parse_selection(response.completion_text, pool, maximum)
 
-    async def semantic_scores(self, scope, traits, query, settings):
+    async def semantic_scores(
+        self, scope, traits, query, settings, *, index_only=False
+    ):
         """Embed missing habits in bounded batches and score with cosine similarity.
 
         Args:
@@ -568,9 +570,10 @@ class HabitRetriever:
             traits: Active habits in this scope.
             query: Bounded conversational query; never persisted to disk.
             settings: Embedding provider and latency configuration.
+            index_only: Prepare one document batch without a query embedding.
 
         Returns:
-            Cosine similarities for indexed habits.
+            Cosine similarities, or an empty mapping for document-only warming.
 
         Raises:
             ValueError: If the provider or any embedding is invalid.
@@ -629,6 +632,12 @@ class HabitRetriever:
                     records.append(
                         {"id": identifier, "digest": digest, "vector": vector}
                     )
+            if index_only:
+                if len({len(vector) for vector in vectors.values()}) > 1:
+                    raise ValueError("Document embedding dimensions are inconsistent")
+                if records:
+                    await self.store.call("vectors", signature, scope, records)
+                return {}
             cache_key = hashlib.sha256(
                 f"{signature}:{scope}:{query[:2400]}".encode()
             ).hexdigest()

@@ -332,6 +332,7 @@ class PersonaPlugin(Star):
         self.participation = ParticipationController(self)
         self.tasks: set[asyncio.Task] = set()
         self.busy: set[str] = set()
+        self.prewarming: set[str] = set()
         self.events: dict[str, AstrMessageEvent] = {}
         self.speaker_events: dict[tuple[str, str], AstrMessageEvent] = {}
         self.learning_context: dict[str, deque] = {}
@@ -479,6 +480,8 @@ class PersonaPlugin(Star):
         self.ready = True
         _active = weakref.ref(self)
         self.worker = self.track(self.poll())
+        if not self.settings["session_isolation"]:
+            self.track(self.prewarm_embeddings(SHARED_SCOPE))
         logger.info("Persona learning plugin initialized")
 
     async def update_settings(self, payload, expected_revision=None):
@@ -552,6 +555,87 @@ class PersonaPlugin(Star):
             logger.error(
                 "Persona background task failed (%s)", type(task.exception()).__name__
             )
+
+    async def prewarm_embeddings(self, scope: str):
+        """Prepare a bounded derived index independently of successful writes.
+
+        Only active habits are offered. Skip an already busy retrieval lock;
+        incomplete or failed warming leaves on-demand indexing available.
+
+        Args:
+            scope: Native source or explicitly shared profile being updated.
+        """
+        settings = self.settings.copy()
+        if (
+            not self.ready
+            or self.closing
+            or not settings["enabled"]
+            or not settings["apply_enabled"]
+            or settings["selection_mode"] == "lexical"
+            or not settings["embedding_provider_id"]
+            or self.prewarming
+            or self.retriever.lock.locked()
+        ):
+            return
+        self.prewarming.add(scope)
+        started = time.monotonic()
+        try:
+            state = await self.store.call(
+                "guidance", scope, not settings["session_isolation"]
+            )
+            if not state["scope"] or not state["scope"]["profile"]["apply_enabled"]:
+                return
+            umo = state["scope"]["umo"]
+            if umo:
+                plugin_set = self.context.get_config(umo).get("plugin_set", ["*"])
+                if (
+                    (
+                        settings["allowed_sessions"]
+                        and umo not in settings["allowed_sessions"]
+                    )
+                    or (plugin_set != ["*"] and PLUGIN_NAME not in plugin_set)
+                    or not await SessionServiceManager.is_session_enabled(umo)
+                    or not await SessionPluginManager.is_plugin_enabled_for_session(
+                        umo, PLUGIN_NAME
+                    )
+                ):
+                    return
+            if (
+                not state["traits"]
+                or self.settings != settings
+                or self.retriever.lock.locked()
+            ):
+                return
+            await asyncio.wait_for(
+                self.retriever.semantic_scores(
+                    scope if settings["session_isolation"] else SHARED_SCOPE,
+                    state["traits"],
+                    "",
+                    settings,
+                    index_only=True,
+                ),
+                timeout=min(2, settings["retrieval_timeout"]),
+            )
+            self.debug(
+                "embedding_warmup",
+                scope=scope,
+                status="pass_completed",
+                active_count=len(state["traits"]),
+                max_documents=64,
+                seconds=round(time.monotonic() - started, 3),
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            self.debug(
+                "embedding_warmup",
+                scope=scope,
+                status="failed",
+                error=type(exc).__name__,
+                seconds=round(time.monotonic() - started, 3),
+            )
+        finally:
+            self.prewarming.discard(scope)
 
     async def permitted(self, event: AstrMessageEvent, cfg=None) -> bool:
         """Apply host and plugin access switches to passive and active hooks.
@@ -2430,6 +2514,7 @@ class PersonaPlugin(Star):
                 review=review,
                 memory_status=memory_status,
             )
+            self.track(self.prewarm_embeddings(scope))
             return {
                 "status": "success",
                 "count": count,

@@ -1,5 +1,31 @@
 # OvenHeart workshop guide
 
+## Prewarming active habit vectors (0.37)
+
+Committed learning, manual approval/content edits, snapshot restore and shared
+profile startup can schedule a background document-vector pass. It sends only
+active habit situation/content to the configured embedding provider, without
+reading raw materials/evidence bodies, generating a query embedding or calling
+rerank/chat models. Content-addressed scoped vector caches are reused.
+
+Lexical, unconfigured or paused application paths and empty active libraries are
+skipped. Native source origins retain allowed-session/plugin-set/session-enable
+gates. Only one warm job runs; already busy retrieval and overlapping warm work
+are skipped. Started warming shares the existing retrieval lock. Its vector phase
+uses `min(2, retrieval_timeout)` seconds and at most 64 missing documents per pass,
+without looping over the whole library or adding a setting.
+
+Warming is derived cache work, separate from successful learning/review commits.
+Failure, timeout or unloading cannot turn those commits into failures. Existing
+on-demand retrieval fills incomplete coverage. A completed pass is not a fully
+indexed library: large libraries, edits and skipped jobs can still incur indexing
+on the first query. Configured document calls may occur before real replies; no
+zero-extra-call, production latency or billing guarantee is made.
+
+Opt-in `embedding_warmup` logs show attempt status, active count, batch cap and
+elapsed time; errors expose only their type. Exposure/material/activation state
+does not change. Focused checks used simulated providers only.
+
 Since 0.36.1, ID-less arrivals use one cached per-event source identity instead
 of learning's sender/second/text fingerprint. Distinct identical messages survive
 equal platform and arrival timestamps, while repeated hooks on the same event

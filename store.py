@@ -815,12 +815,12 @@ class Store:
             shared: Share non-jargon habits and profile, keeping jargon source-local.
 
         Returns:
-            Profile, compact ranking records and recent expression exposure IDs
+            Profile/source origin, compact ranking records and recent expression IDs
             from this native scope, without dashboard history or reply text.
         """
         row = db.execute(
-            "SELECT profile FROM scopes WHERE id=?",
-            (SHARED_SCOPE if shared else scope,),
+            "SELECT profile, (SELECT umo FROM scopes WHERE id=?) AS source_umo FROM scopes WHERE id=?",
+            (scope, SHARED_SCOPE if shared else scope),
         ).fetchone()
         traits = [
             dict(t)
@@ -845,7 +845,9 @@ class Store:
             )
         )
         return {
-            "scope": {"profile": json.loads(row[0])} if row else None,
+            "scope": {"profile": json.loads(row[0]), "umo": row["source_umo"] or ""}
+            if row
+            else None,
             "traits": traits,
             "recent_expression_ids": recent,
         }

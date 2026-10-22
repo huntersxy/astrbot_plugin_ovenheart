@@ -312,6 +312,15 @@ class PageAPI:
                 if window:
                     window["sequence"] += 1
                     window["changed"].set()
+            if operation == "restore" or (
+                operation == "trait"
+                and (
+                    payload.get("status") == "active"
+                    or "content" in payload
+                    or "situation" in payload
+                )
+            ):
+                self.plugin.track(self.plugin.prewarm_embeddings(scope))
             return {"status": "ok", "data": {"message": "已保存。"}}
         except ValueError as exc:
             return {"status": "error", "message": str(exc)}
