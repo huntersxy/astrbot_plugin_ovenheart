@@ -38,7 +38,7 @@ from .learning import (
 )
 from .memory_bridge import MemoryBridge
 from .participation import ParticipationController
-from .retrieval import HabitRetriever, rank_traits
+from .retrieval import HabitRetriever
 from .settings import (
     DEFAULTS,
     KINDS,
@@ -2040,25 +2040,82 @@ class PersonaPlugin(Star):
                 memories=memories,
                 status=memory_status,
             )
+            # Include rejected/disabled habits too, so paraphrases cannot undo a decision.
+            known_state = await self.store.call(
+                "state", scope, None, None, not settings["session_isolation"]
+            )
+            if (
+                self.settings != settings
+                or self.prompts_revision != prompts_revision
+                or not known_state["scope"]
+                or known_state["scope"]["profile"] != selected["profile"]
+            ):
+                raise ValueError(
+                    "学习准备期间设置或底稿已改变，旧结果未保存，素材保留。"
+                )
+            known = known_state["traits"]
+            # Every source contributes to the bounded query; long messages keep
+            # their beginning and end rather than hiding later batch topics.
+            per_source = (2400 - len(batch) + 1) // len(batch)
+            batch_query = "\n".join(
+                m["text"]
+                if len(m["text"]) <= per_source
+                else m["text"][: per_source // 2]
+                + "…"
+                + m["text"][-(per_source - per_source // 2 - 1) :]
+                for m in batch
+            )
+            selection = await self.track(
+                self.retriever.select(
+                    scope if settings["session_isolation"] else SHARED_SCOPE,
+                    [
+                        t | {"status": "active"}
+                        for t in known
+                        if settings[f"learn_{t['kind']}"]
+                    ],
+                    batch_query,
+                    settings
+                    | {
+                        "selection_mode": "lexical"
+                        if settings["selection_mode"] == "lexical"
+                        else "hybrid",
+                        "max_traits": 40,
+                    },
+                    literal_query=batch_query,
+                    record_status=False,
+                )
+            )
+            latest = await self.store.call(
+                "state", scope, None, None, not settings["session_isolation"]
+            )
+            if (
+                self.settings != settings
+                or self.prompts_revision != prompts_revision
+                or not latest["scope"]
+                or latest["scope"]["profile"] != selected["profile"]
+            ):
+                raise ValueError(
+                    "旧习惯检索期间设置或底稿已改变，旧结果未保存，素材保留。"
+                )
+            stored = {t["id"]: t for t in latest["traits"]}
+            known = sorted(
+                {
+                    t["id"]: stored[t["id"]]
+                    for t in [*selection["traits"], *latest["traits"][:40]]
+                    if t["id"] in stored
+                }.values(),
+                key=lambda t: t["id"],
+            )
             anchor = self.context.persona_manager.get_persona_v3_by_id(
                 selected["persona"]
             )
-            # Include rejected/disabled habits too, so paraphrases cannot undo a decision.
-            known = (
-                await self.store.call(
-                    "state", scope, None, None, not self.settings["session_isolation"]
-                )
-            )["traits"]
-            stored = {t["id"]: t for t in known}
-            batch_text = "\n".join(m["text"] for m in batch)
-            relevant = rank_traits(
-                [t | {"status": "active"} for t in known],
-                batch_text,
-                settings | {"max_traits": 40},
-            )
-            known = sorted(
-                {t["id"]: stored[t["id"]] for t in [*relevant, *known[:40]]}.values(),
-                key=lambda t: t["id"],
+            self.debug(
+                "learning_retrieval",
+                scope=scope,
+                query=batch_query,
+                mode=selection["mode"],
+                message=selection["message"],
+                known_ids=[t["id"] for t in known],
             )
             language_features = []
             # These describe one eligible speaker, not an independent source of evidence.

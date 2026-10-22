@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.35.0
+
+- Recall old consolidation counterparts using configured embedding/rerank services instead of lexical-only ranking. Keep recent references, stable ID ordering and actual pending/active/rejected/disabled states; the active view exists only for internal retrieval eligibility.
+- Build a bounded 2,400-character query from every batch source, retaining head/tail excerpts for long messages rather than letting the first messages hide later topics. Full observations and evidence accounting remain unchanged.
+- Contextual mode uses hybrid recall here, without a chat-selector call. Reuse existing vector/rerank caches and retrieval budgets; service failures retain lexical fallback. Refresh references/profile checks after recall and avoid replacing runtime retrieval status.
+- Update configuration help and bilingual guides. Pass four focused native checks for an old rejected counterpart, fallback, full-batch query coverage and profile-change cancellation. Production consolidation quality remains pending access.
+
 ## 0.34.1
 
 - Cache validated rerank scores in memory for five minutes, with at most 64 entries and access-order eviction. Fingerprint the effective scope, ordered habit IDs/text, actual query and non-secret model/endpoint/options; reset on provider-instance replacement.

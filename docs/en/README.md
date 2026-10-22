@@ -1,5 +1,29 @@
 # OvenHeart workshop guide
 
+## Finding existing habits during learning (0.35)
+
+Learning consolidation references now reuse configured embedding/rerank recall,
+alongside the latest forty records. This can offer older counterparts when new
+evidence uses different wording. Recall does not decide merges: existing
+extraction/review, human locks and activation rules remain authoritative.
+
+References retain their actual pending/active/rejected/disabled states and stable
+ID ordering. Internal retrieval eligibility never reactivates a record. Entries
+and profile are refreshed after recall; changed settings/prompts/profile cancel
+the old batch while preserving materials. Candidate scopes remain unchanged.
+
+The 2,400-character recall query allocates an excerpt to every batch source and
+keeps head/tail text for long messages. Full observations, language statistics and
+evidence counts are unaffected. Contextual mode uses hybrid recall here, without
+an extra chat-selector call. Lexical mode makes no embedding/rerank calls.
+Configured recall uses existing caches and `retrieval_timeout` before the usual
+extraction/review budget; unavailable services retain lexical fallback.
+
+Configuration help now discloses this use. Opt-in `learning_retrieval` diagnostics
+show query, mode/fallback and offered IDs, without overwriting runtime reply
+retrieval status. Focused checks establish reference availability and the call
+path, not correct semantic merges or production dialogue improvements.
+
 ## Reusing repeated reranks (0.34.1)
 
 Validated rerank scores can be reused for five minutes, with at most 64 entries

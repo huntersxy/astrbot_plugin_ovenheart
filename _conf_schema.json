@@ -138,7 +138,7 @@
     "description": "表达检索向量模型 ID",
     "type": "string",
     "default": "",
-    "hint": "填写 AstrBot 已配置的 embedding 提供商 ID；留空回退文字相关性。"
+    "hint": "用于回复、参与判断和学习时的旧习惯对照。填写 AstrBot 已配置的 embedding 提供商 ID；留空回退文字相关性。"
   },
   "retrieval_timeout": {
     "description": "向量与重排序总超时（秒）",
@@ -153,7 +153,8 @@
       "contextual",
       "hybrid",
       "lexical"
-    ]
+    ],
+    "hint": "同时影响回复、参与判断和学习对照的召回；后两者不额外调用聊天习惯筛选器。"
   },
   "selector_timeout": {
     "description": "情境筛选等待上限（秒）",
@@ -165,7 +166,7 @@
     "description": "习惯重排序提供商 ID",
     "type": "string",
     "default": "",
-    "hint": "填写 AstrBot 已配置的 rerank 提供商 ID；留空跳过。模型相关性不能代替情境适用判断。"
+    "hint": "用于回复、参与判断和学习对照。填写 AstrBot 已配置的 rerank 提供商 ID；留空跳过。模型相关性不能代替情境适用判断。"
   },
   "semantic_threshold": {
     "description": "语义相关性门槛",
