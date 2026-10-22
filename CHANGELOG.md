@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.21.1
+
+- Stop a single unusable candidate from failing the whole learning batch. A merge target that is missing, out of range or of another kind, and a jargon candidate merging into a differently named entry, are now dropped like an under-evidenced candidate instead of raising. Because a failed run preserves its sources, the old behavior replayed the same batch on every cycle and a deterministic model answer repeated the warning indefinitely; the remaining candidates now commit and the sources are consumed.
+- Back off the automatic scheduler per session after a real failure: the first retry keeps the configured interval, later ones double it up to one hour, and a success restores the normal cadence. Local guards that reject a batch before the model call still retry at the normal interval, so fixing a paused switch or a stale persona draft takes effect immediately.
+- Update the merge regression tests to assert that the candidate is dropped and the batch still returns a result.
+
 ## 0.21.0
 
 - Add an independent, default-off “Reply immediately when mentioned” switch and a list of bot names/aliases in both Panel Settings and native plugin config. Match case-sensitive substrings in the current message's own plain text, excluding quoted/forwarded content and @ display names.

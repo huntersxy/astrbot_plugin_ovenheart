@@ -199,9 +199,27 @@ class PersonaPlugin(Star):
         self.events: dict[str, AstrMessageEvent] = {}
         self.learning_context: dict[str, deque] = {}
         self.last_attempt: dict[str, float] = {}
+        # Consecutive failed attempts per scope, used to back off the scheduler.
+        self.failures: dict[str, int] = {}
         self.ready = False
         self.closing = False
         self.worker = None
+
+    def retry_delay(self, scope: str) -> float:
+        """Delay before the scheduler may retry one scope.
+
+        Args:
+            scope: Session/persona key that failed before.
+
+        Returns:
+            The normal interval, or an exponential backoff capped at one hour
+            so a deterministic failure cannot repeat every few minutes forever.
+        """
+        failures = self.failures.get(scope, 0)
+        interval = self.settings["interval_seconds"]
+        if not failures:
+            return interval
+        return min(interval * 2 ** min(failures - 1, 4), 3600)
 
     def template(self, key: str, **variables) -> str:
         """Render one effective prompt template for this call.
@@ -1146,7 +1164,7 @@ class PersonaPlugin(Star):
                         scope["pending"] >= self.settings["min_messages"]
                         and scope["profile"]["learning_enabled"]
                         and time.time() - self.last_attempt.get(scope["id"], 0)
-                        >= self.settings["interval_seconds"]
+                        >= self.retry_delay(scope["id"])
                     ):
                         await self.learn(scope["id"])
             except asyncio.CancelledError:
@@ -1786,6 +1804,7 @@ class PersonaPlugin(Star):
                 settings["session_isolation"],
                 prompt_overrides,
             )
+            self.failures.pop(scope, None)
             self.debug(
                 "learning_committed",
                 scope=scope,
@@ -1831,6 +1850,9 @@ class PersonaPlugin(Star):
                 sources_preserved=True,
             )
             if run_id:
+                # Only attempts that reached the model back off; local guards
+                # such as a paused switch must retry as soon as it is fixed.
+                self.failures[scope] = self.failures.get(scope, 0) + 1
                 await self.store.call(
                     "finish_run",
                     run_id,

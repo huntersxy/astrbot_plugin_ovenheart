@@ -94,23 +94,31 @@ def test_consolidation_targets_are_scoped_and_category_checked():
     known = [{"id": 8, "kind": "expression", "content": "简短", "situation": "日常"}]
     result = parse_candidates(candidates(merge_id=8), MESSAGES, DEFAULTS, known)
     assert result[0]["merge_id"] == 8
+    # An unusable consolidation target drops that candidate only. Failing the
+    # batch here would retry the same preserved sources on every cycle.
     for value in (True, 99, "8"):
-        with pytest.raises(ValueError, match="合并"):
+        assert (
             parse_candidates(candidates(merge_id=value), MESSAGES, DEFAULTS, known)
-    with pytest.raises(ValueError, match="合并"):
+            == []
+        )
+    assert (
         parse_candidates(
             candidates(kind="behavior", merge_id=8), MESSAGES, DEFAULTS, known
         )
+        == []
+    )
 
 
 def test_different_jargon_words_cannot_be_merged():
-    with pytest.raises(ValueError, match="不同词语"):
+    assert (
         parse_candidates(
             candidates(kind="jargon", content="绝绝子：称赞", merge_id=1),
             MESSAGES,
             DEFAULTS,
             [{"id": 1, "kind": "jargon", "content": "好家伙：惊讶"}],
         )
+        == []
+    )
 
 
 @pytest.mark.parametrize(

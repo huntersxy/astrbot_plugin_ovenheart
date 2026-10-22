@@ -134,6 +134,22 @@ async def test_failed_extraction_cancels_and_awaits_the_other_phase_before_retur
     state = await plugin.store.call("state", scope)
     assert state["scope"]["pending"] == 2 and not state["traits"]
     assert state["runs"][0]["status"] == "error" and scope not in plugin.busy
+    assert plugin.failures[scope] == 1
+
+
+async def test_repeated_failures_back_off_up_to_an_hour(plugin):
+    interval = plugin.settings["interval_seconds"]
+    scope = "backoff"
+    assert plugin.retry_delay(scope) == interval
+    delays = []
+    for _ in range(8):
+        plugin.failures[scope] = plugin.failures.get(scope, 0) + 1
+        delays.append(plugin.retry_delay(scope))
+    # The first retry keeps the normal cadence; only repeated failures back off.
+    assert delays == [min(interval * 2**n, 3600) for n in range(0, 8)]
+    assert delays[-1] == 3600 and max(delays) <= 3600
+    plugin.failures.pop(scope)
+    assert plugin.retry_delay(scope) == interval
 
 
 async def test_cancelling_learning_awaits_both_extraction_requests(plugin):

@@ -221,7 +221,10 @@ def parse_candidates(
         known_traits: Existing habits explicitly offered as consolidation targets.
 
     Returns:
-        Validated candidates with server-resolved evidence excerpts.
+        Validated candidates with server-resolved evidence excerpts. Candidates
+        whose consolidation target is unusable are dropped rather than failing
+        the whole batch, so preserved sources cannot be retried forever on the
+        same deterministic answer.
 
     Raises:
         ValueError: If the response is malformed or uses fabricated evidence.
@@ -279,17 +282,20 @@ def parse_candidates(
         if len(evidence_ids) < settings["min_evidence"]:
             continue
         merge_id = candidate.get("merge_id")
+        # A proposal this batch cannot honor is that candidate's problem, not the
+        # batch's. Raising here would fail every run over the same preserved
+        # sources, and a deterministic model answer would retry it forever.
         if merge_id is not None and (
             type(merge_id) is not int
             or merge_id not in known
             or known[merge_id]["kind"] != kind
         ):
-            raise ValueError("学习结果引用了无效或不同类别的合并目标，素材已保留。")
+            continue
         if merge_id is not None and kind == "jargon":
             old_term = jargon_term(known[merge_id]["content"])
             new_term = jargon_term(candidate["content"])
             if old_term != new_term:
-                raise ValueError("不同词语不能合并为同一个词汇条目，素材已保留。")
+                continue
         if kind == "jargon":
             _, separator, meaning = (
                 candidate["content"].replace("：", ":").partition(":")
