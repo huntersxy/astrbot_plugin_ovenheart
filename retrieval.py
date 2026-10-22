@@ -160,6 +160,7 @@ def rank_traits(
             | {
                 "_score": round(score, 5),
                 "_reason": reason,
+                "_lexical": round(lexical, 4),
                 "_semantic": round(semantic, 4),
             }
         )
@@ -324,6 +325,48 @@ class HabitRetriever:
                     )
                 finally:
                     self.selecting -= 1
+        recent = {i for i in recent_expression_ids if type(i) is int}
+        if recent and settings["selection_mode"] != "contextual":
+            # Only rotate near-equivalent expressions inside the bounded pool.
+            # This happens after remote ranking, preserving its cache inputs.
+            score_key = "_rerank" if result["mode"] == "rerank" else "_score"
+            promoted = []
+            for index in range(min(settings["max_traits"], len(pool))):
+                old = pool[index]
+                if old["kind"] != "expression" or old["id"] not in recent:
+                    continue
+                for other in range(index + 1, len(pool)):
+                    candidate = pool[other]
+                    if (
+                        candidate["kind"] == "expression"
+                        and candidate["id"] not in recent
+                        and habit_text(candidate) != habit_text(old)
+                        and candidate[score_key]
+                        >= old[score_key] - max(abs(old[score_key]), 0.1) * 0.05
+                        and (
+                            score_key == "_rerank"
+                            or (
+                                candidate["_lexical"] >= old["_lexical"] - 0.05
+                                and candidate["_semantic"] >= old["_semantic"] - 0.05
+                            )
+                        )
+                    ):
+                        pool[index], pool[other] = (
+                            candidate
+                            | {
+                                "_reason": candidate["_reason"]
+                                + "；近期未提供的相近表达"
+                            },
+                            old,
+                        )
+                        promoted.append(candidate["id"])
+                        break
+            if promoted:
+                result["traits"] = pool[: settings["max_traits"]]
+                result["expression_rotation"] = promoted
+                result["message"] += (
+                    f" 已在相近表达中优先 {len(promoted)} 条近期未提供的参考。"
+                )
         # Local definitions are factual context, not optional expression preferences.
         # Match only the human reply target and its quote. Unrelated history and
         # planner goals cannot pin a word into the final reply.

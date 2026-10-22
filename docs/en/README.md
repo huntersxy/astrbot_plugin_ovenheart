@@ -1,5 +1,30 @@
 # OvenHeart workshop guide
 
+## Soft rotation among comparable expressions (0.42)
+
+Lexical, hybrid and rerank modes now use existing native-session recent expression
+IDs from the last three send-stage applications within ten minutes. Global habit
+sharing does not share this exposure record across native sessions. Only expression
+positions within the existing at-most-24 pool can swap. A fresh candidate must be
+within five percent of the current ranking score, with absolute tolerance 0.005
+near zero. Without rerank, lexical and cosine scores must also be no more than
+0.05 lower. Identical rule/sample text under another ID is not fresh wording.
+
+Personality, behavior and jargon do not rotate; literal local vocabulary remains
+prioritized. Missing comparable alternatives or an all-recent pool retains normal
+ordering. Contextual mode preserves its existing recent-ID prompt hint and explicit
+model choices. Original scores, application count and character limits remain;
+when several expressions fit they may still be supplied together. This is a soft
+preference, not a ban on repetition or a guarantee of varied generated wording.
+
+Rotation follows remote rerank, preserving its cache inputs and query-vector keys.
+Cached delivery keeps changing references temporary. No extra model calls, random
+sampling, settings or persisted feedback are introduced. Diagnostic
+`expression_rotation` IDs and reasons identify promoted references; exposure is
+not adoption, delivery or approval. Four focused tests cover recent inputs,
+identical/unrelated wording, literal vocabulary and near/far rerank scores with
+cache reuse. Production phrasing diversity remains unverified.
+
 ## Long-term background for participation (0.41)
 
 The existing memory integration switch now lets admitted participation planning

@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.42.0
+
+- Prefer recently unprovided expression references among near-equivalent lexical/hybrid/rerank candidates. Use the caller's existing native-session exposure IDs, a five-percent ranking tolerance and additional lexical/cosine proximity checks without rerank. Do not rotate personality, behavior, jargon, identical wording or clearly lower-ranked styles.
+- Perform bounded rotation after remote ranking, preserving rerank/query cache inputs. Retain original relevance scores and expose promoted IDs/reasons in diagnostics. Contextual mode keeps its existing model-guided variety hint and explicit selections.
+- Preserve literal jargon priority, application count/character budgets and cache-friendly temporary delivery. No random sampling, extra model calls, settings or persisted feedback is introduced; exposure does not imply adoption or approval.
+- Pass four focused cases for native recent-ID input, identical/unrelated text, literal vocabulary and near/far rerank scores with warm-cache reuse. Production phrasing diversity remains unverified.
+
 ## 0.41.0
 
 - Supply optional LivingMemory background before participation decisions, reusing its real access/scope/persona policy and existing bridge. Build a bounded query from recent human messages/quotes; pass at most three 300-character excerpts linked to actual message sequences, never treating those links as ownership proof or new evidence.
