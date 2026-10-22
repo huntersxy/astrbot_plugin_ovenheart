@@ -1401,11 +1401,18 @@ class Store:
             )
         elif action in ("trait", "feedback"):
             row = db.execute(
-                "SELECT id,kind,situation,content FROM traits WHERE scope=? AND id=?",
+                "SELECT id,kind,situation,content,examples FROM traits WHERE scope=? AND id=?",
                 (scope, payload["id"]),
             ).fetchone()
             if not row:
                 raise ValueError("学习条目不存在或不属于当前会话。")
+            removals = payload.get("remove_examples", [])
+            examples = json.loads(row["examples"])
+            if removals and (
+                row["kind"] != "expression"
+                or not set(removals).issubset(e["text"] for e in examples)
+            ):
+                raise ValueError("原话片段已改变或不存在，请刷新学习条目后重新选择。")
             if (
                 row["kind"] == "jargon"
                 and scope == SHARED_SCOPE
@@ -1437,6 +1444,19 @@ class Store:
                     db.execute(
                         "UPDATE traits SET examples='[]' WHERE scope=? AND id=?",
                         (scope, payload["id"]),
+                    )
+                elif removals:
+                    db.execute(
+                        "UPDATE traits SET examples=?, updated=? WHERE scope=? AND id=?",
+                        (
+                            json.dumps(
+                                [e for e in examples if e["text"] not in removals],
+                                ensure_ascii=False,
+                            ),
+                            time.time(),
+                            scope,
+                            payload["id"],
+                        ),
                     )
                 db.execute(
                     "UPDATE traits SET manual=1 WHERE scope=? AND id=?",

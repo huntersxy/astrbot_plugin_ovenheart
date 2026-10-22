@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.44.0
+
+- Let operators mark individual expression samples for removal in the existing library edit form. Commit choices with Save or the existing review actions; checkbox drafts use normal dirty-state protection and can be unchecked before saving.
+- Validate exact existing sample text and apply removal/status/wording changes atomically in the owning scope. Stale or malformed requests do not partially approve/edit. Preserve the rule, other samples and evidence; manual locks prevent future reinforcement from readding the removed sample to that entry. Existing snapshots can restore it.
+- Keep full sample clearing on actual wording edits, derived-vector invalidation/prewarming and existing prompt/preview checks. Do not create a global word ban or erase evidence/snapshots. Add no model call or database column.
+- Pass three native API/SQLite checks and a bounded desktop draft/save interaction with synthetic data; record screenshot/provenance. Mobile and production learning quality remain unverified. Detector findings concern unchanged incumbent fonts/palette documentation.
+
 ## 0.43.0
 
 - Balance explicitly selected multiple speakers in bounded learning batches. Order each speaker's oldest eligible messages in groups sized by the configured minimum evidence, select across groups, then restore chronological order for model observations and context linkage.

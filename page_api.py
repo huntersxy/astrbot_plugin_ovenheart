@@ -268,10 +268,23 @@ class PageAPI:
                     raise ValueError("反馈必须包含有效条目与 -1、0、1 评价。")
             elif operation == "trait":
                 if (
-                    set(payload) - {"id", "status", "content", "situation"}
+                    set(payload)
+                    - {"id", "status", "content", "situation", "remove_examples"}
                     or type(payload.get("id")) is not int
                 ):
                     raise ValueError("请选择有效的学习条目。")
+                if "remove_examples" in payload:
+                    removals = payload["remove_examples"]
+                    if (
+                        not isinstance(removals, list)
+                        or len(removals) > 3
+                        or any(
+                            not isinstance(text, str) or not text or len(text) > 60
+                            for text in removals
+                        )
+                        or len(set(removals)) != len(removals)
+                    ):
+                        raise ValueError("请选择最多三个不同的现有原话片段。")
                 if "status" in payload and payload["status"] not in (
                     "pending",
                     "active",
@@ -318,6 +331,7 @@ class PageAPI:
                     payload.get("status") == "active"
                     or "content" in payload
                     or "situation" in payload
+                    or "remove_examples" in payload
                 )
             ):
                 self.plugin.track(self.plugin.prewarm_embeddings(scope))

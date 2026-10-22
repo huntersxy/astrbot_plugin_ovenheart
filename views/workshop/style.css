@@ -88,6 +88,7 @@ pre { white-space: pre-wrap; overflow-wrap: anywhere; font: 13px/1.8 "Consolas",
 [data-feedback][aria-pressed="true"] { color: var(--accent); background: var(--tint); border-color: var(--accent); }
 .evidence { margin-top: 26px; }
 .evidence h3 { margin-bottom: 12px; }
+.sample-removal { margin-top: 8px; min-height: 44px; align-items: center; }
 blockquote { margin: 0 0 12px; padding: 13px 16px; background: var(--paper); border-radius: 8px; }
 blockquote p { overflow-wrap: anywhere; white-space: pre-wrap; }
 blockquote small { display: block; margin-top: 8px; }

@@ -343,7 +343,15 @@ async def lifespan(app):
                             "source_id": second_batch[0]["source_id"],
                             "created": second_batch[0]["created"],
                             "scope": second_scope,
-                        }
+                        },
+                        {
+                            "text": "容易出错的地方",
+                            "id": second_batch[1]["id"],
+                            "sender": "烘焙演示用户",
+                            "source_id": second_batch[1]["source_id"],
+                            "created": second_batch[1]["created"],
+                            "scope": second_scope,
+                        },
                     ],
                 }
             ],

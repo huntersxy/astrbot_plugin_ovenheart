@@ -1,5 +1,28 @@
 # OvenHeart workshop guide
 
+## Selective sample review (0.44)
+
+In Library details, mark individual samples with the removal checkbox, then Save
+or use an existing review action such as Approve. Selection alone does not write;
+uncheck to undo the draft. Existing dirty-state navigation/refresh protection
+applies. The rule, unselected samples and evidence stay unchanged. Actual wording
+edits still clear all old samples, as explained beside the controls.
+
+Validate exact sample text in the owning scope, not a potentially stale array
+position. Missing/changed samples reject the entire removal/status/edit operation
+without partial approval. Existing snapshots retain the earlier state and can
+restore samples. Removal marks the entry manually locked, preventing subsequent
+reinforcement from readding samples to that entry. Existing content-digest caches,
+prewarming and preview checks recognize the change without another model call or
+database column.
+
+Removal manages this reference only: evidence, snapshots and chat history remain.
+It is not a global word ban or a guarantee about generated wording from other
+habits/persona/history/model knowledge. Three native API/SQLite checks and a
+bounded desktop selection/unsaved-navigation/save interaction pass with synthetic
+data. Mobile and production effects remain unverified. The [desktop result](../assets/expression-review-v0.44-desktop.png)
+shows the remaining sample and unchanged rule.
+
 ## Grouped sampling for multiple explicit targets (0.43)
 
 With two or more explicitly selected learning targets, select oldest eligible
@@ -154,7 +177,7 @@ metadata, using the existing budget and preferring the abstract rule if samples
 do not fit. Cached delivery stays temporary. No extra chat stage is introduced.
 Samples are style references, not fixed lines, bot facts or tool permissions.
 
-Library details show read-only samples, source and time. Approval with unchanged
+Library details show samples, source and time; since 0.44, selected samples can be removed with Save or review actions. Approval with unchanged
 wording retains them; actual manual edits clear them. Manual locks prevent
 replacement. Unlocked reinforcement follows existing activation/confidence gates
 and retains the first three distinct samples. Active habits in review mode do not
