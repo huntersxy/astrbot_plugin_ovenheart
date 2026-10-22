@@ -27,6 +27,7 @@ reply 的 intent 写本次对话目标、要回应的对象和简短应对策略
 decoration 决定引用与 @：none 都不加；quote 引用 target_sequence 那条消息；mention 真 @ 那条消息的发送者；quote_mention 两者都加。
 只在回应较早消息、需要让对方看到上下文或收到提醒时才加装饰；普通接话用 none。不要在正文里写 @昵称 或引用标记。
 本轮最多等待一次，wait_elapsed 为 true 后不能再次 wait。不得编造身份、个人经历、关系或消息事实。
+is_followup 为 true 时，刚回复的成员在继续说话。可自然接住追问，但不要因“连续接话”就强制回复；简单致谢、告别、问题已结束时可 observe，信息不全时仍可 wait。
 仅输出一个 JSON 对象，不要代码块或解释：
 {"action":"reply","confidence":0.85,"reason":"对方明确在向群内寻求安慰，此时简短回应有帮助","intent":"回应对方的失落，先接住情绪再问是否愿意说说","target_sequence":18,"decoration":"quote_mention","wait_seconds":0}
 action 只能为 reply、wait、observe；confidence 是 0 到 1；reason 最多 240 字；intent 最多 240 字；
@@ -361,14 +362,27 @@ class ParticipationController:
                 for m in window["messages"]
                 if not m.get("self") and m["sequence"] > window["consumed"]
             ]
-            if len(pending) < settings[
-                "participation_min_messages"
-            ] or time.monotonic() - window["last_check"] < min(
-                30, settings["participation_cooldown"]
+            own = next((m for m in reversed(window["messages"]) if m.get("self")), None)
+            # One early decision per own reply, only for the same addressee.
+            # Consuming an observe/wait result cannot reopen that early slot.
+            followup = bool(
+                settings["participation_followup"]
+                and own
+                and own["sequence"] == window["consumed"]
+                and 0 <= event.created_at - own["time"] <= 120
+                and (own.get("reply_to") or {}).get("sender_id")
+                == event.get_sender_id()
+                and pending
+                and all(m["sender_id"] == event.get_sender_id() for m in pending)
+            )
+            if not followup and (
+                len(pending) < settings["participation_min_messages"]
+                or time.monotonic() - window["last_check"]
+                < min(30, settings["participation_cooldown"])
             ):
                 return None
             gate = await plugin.store.call(
-                "participation_gate", scope, settings, room_key
+                "participation_gate", scope, settings, room_key, followup
             )
             if gate:
                 await plugin.store.call(
@@ -396,7 +410,16 @@ class ParticipationController:
                 ):
                     return None
                 task = plugin.track(
-                    self.plan(event, scope, persona, state, messages, settings, waited)
+                    self.plan(
+                        event,
+                        scope,
+                        persona,
+                        state,
+                        messages,
+                        settings,
+                        waited,
+                        followup,
+                    )
                 )
                 interruption = asyncio.create_task(changed.wait())
                 try:
@@ -418,17 +441,34 @@ class ParticipationController:
                 )
                 if plan["action"] == "reply" and target is None:
                     raise ParticipationFormatError("参与决策的回复目标不在最近消息中。")
-                plan = plan | {"room": room_key, "target": target}
+                if (
+                    followup
+                    and target
+                    and (
+                        target["sender_id"] != event.get_sender_id()
+                        or target["sequence"] <= own["sequence"]
+                    )
+                ):
+                    plan.update(
+                        action="observe",
+                        intent="",
+                        target_sequence=0,
+                        decoration=None,
+                        reason="连续接话只回应刚继续发言的成员，本轮继续旁观。",
+                    )
+                    target = None
+                plan = plan | {"room": room_key, "target": target, "followup": followup}
+                if followup:
+                    plan["reason"] = "连续接话：" + plan["reason"][:235]
                 if (
                     changed.is_set()
                     or window["sequence"] != sequence
                     or not await plugin.permitted(event)
                 ):
                     return None
-                if (
-                    plugin.settings["participation_mode"]
-                    != settings["participation_mode"]
-                ):
+                if plugin.settings["participation_mode"] != settings[
+                    "participation_mode"
+                ] or (followup and not plugin.settings["participation_followup"]):
                     return None
                 current_scope, _, _ = await plugin.resolve_scope(event)
                 latest = await plugin.store.call(
@@ -502,7 +542,9 @@ class ParticipationController:
             if reserved:
                 self.inflight -= 1
 
-    async def plan(self, event, scope, persona, state, messages, settings, waited):
+    async def plan(
+        self, event, scope, persona, state, messages, settings, waited, followup=False
+    ):
         """Ask the configured model for one decision without executing any tools.
 
         Args:
@@ -513,6 +555,7 @@ class ParticipationController:
             messages: Bounded real-message context.
             settings: Planner configuration snapshot.
             waited: Whether this turn has already waited once.
+            followup: Whether this is the first same-member continuation of a reply.
 
         Returns:
             A validated participation plan.
@@ -540,6 +583,7 @@ class ParticipationController:
             guidance=guidance,
             recent_messages=messages[-20:],
             wait_elapsed=waited,
+            is_followup=followup,
             max_wait=settings["planner_max_wait"],
             scope=scope,
         )
@@ -567,6 +611,7 @@ class ParticipationController:
                 "behavior_guidance": guidance,
                 "recent_messages": messages[-20:],
                 "wait_elapsed": waited,
+                "is_followup": followup,
                 "max_wait": settings["planner_max_wait"],
             },
             ensure_ascii=False,

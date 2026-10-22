@@ -17,6 +17,16 @@ test('mention switch and aliases save independently of participation mode', () =
   assert.equal(runInContext('saved.participation_mode',context),'off');
 });
 
+test('followup switch renders its scope and saves a false value', () => {
+  const {context,element}=fixture();
+  runInContext(`data={settings:{participation_followup:true,participation_mode:'auto',blocked_senders:[],target_senders:[],allowed_sessions:[],autonomous_tools:[]},memory:{}};renderSettings();globalThis.saved=null;mutate=(action,payload)=>saved=payload;`,context);
+  assert.ok(element('#content').innerHTML.includes('允许连续接话'));
+  assert.ok(element('#content').innerHTML.includes('120 秒内'));
+  const inputs={participation_followup:{checked:false}};
+  element('#settings-form').onsubmit({preventDefault(){},currentTarget:{elements:{namedItem:key=>inputs[key]||null}}});
+  assert.equal(runInContext('saved.participation_followup',context),false);
+});
+
 function fixture() {
   const nodes = new Map();
   let confirmations = [];

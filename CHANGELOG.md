@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.25.0
+
+- Add configurable conversational follow-ups, enabled by default. The first uninterrupted continuation from the just-addressed member within 120 seconds can bypass the minimum-message gate and cooldown, while retaining input debounce, planner choice, hourly quota, scope, permission and tool boundaries.
+- Consume the early opportunity after observation instead of repeatedly reopening it from an old own-reply record. Restrict early replies to newer messages from the continuing member; disabling the setting cancels pending follow-up admissions.
+- Add the switch in the existing autonomous-participation form and native config, plus `is_followup` in editable planner placeholders and structured context. Existing navigation stays unchanged.
+- Verify six focused SDK cases and one setting-save check, and inspect the desktop control on local illustrative data. Production dialogue quality remains pending access.
+
 ## 0.24.0
 
 - Buffer autonomous generation through the host's native per-event streaming override. This preserves the normal stale-result guard, real quote/mention decoration and after-send context path that AstrBot's streaming branch skips. Direct wakes retain their streaming settings; normal host segmented sending remains available.

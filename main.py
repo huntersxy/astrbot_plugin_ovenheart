@@ -800,6 +800,7 @@ class PersonaPlugin(Star):
             not await self.permitted(event)
             or self.settings["participation_mode"] != "auto"
             or not self.settings["apply_enabled"]
+            or (plan.get("followup") and not self.settings["participation_followup"])
         ):
             await self.store.call(
                 "cancel_decision",

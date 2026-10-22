@@ -1,5 +1,18 @@
 # OvenHeart workshop guide
 
+## Conversational follow-ups (0.25)
+
+**Learning settings → Autonomous participation → 允许连续接话 / Allow follow-ups** defaults on and synchronizes with native config `participation_followup`. If the just-addressed member continues within 120 seconds without another member intervening, the first follow-up can bypass the minimum-message gate, cooldown and normal planner recheck interval after the usual input debounce. The planner still chooses reply, wait or observe; an early reply must target this member's newer message. Thanks, farewells and closed topics need not receive another reply. An observed follow-up consumes this early opportunity until the bot enters the send stage again.
+
+Eligibility uses only that native session/persona's volatile own-reply record. Hourly quota, permissions, tool policies, confidence and stale-result cancellation remain in force. Disabling restores the uniform gates and cancels pending follow-up admissions. Off mode stays passive; observe mode never sends. Direct streaming replies lack the host after-send callback and cannot open this opportunity. Editable planner prompts can use `{{is_followup}}`; the structured planner payload always carries it.
+
+| Previous behavior | With follow-ups enabled |
+| --- | --- |
+| Even the same member's next question waits for minimum messages and cooldown | The first eligible continuation may enter planning early |
+| Fixed gates and hourly quota | Other chatter keeps those gates; every autonomous reply still counts toward hourly quota |
+
+![Follow-up control using local illustrative data](../assets/followup-v0.25.jpg)
+
 Since 0.24, autonomous turns set AstrBot's native per-event `enable_streaming=false`: generation finishes before stale-result validation, real quote/mention decoration and after-send context recording. The current host bypasses those callbacks for streaming results. Normal host segmented sending remains available; direct wakes and name mentions retain their host streaming settings.
 
 Non-streaming send-stage replies retain up to 1,200 text characters and the answered message in the native session/persona's volatile participation window, including a first direct reply before any ordinary group window exists. Own replies have distinct sequences, cannot become reply targets and do not count toward the new-human-message threshold. Inputs arriving during a send remain pending. Existing limits of 30 messages, ten minutes and 128 windows remain; own replies do not become learning materials or cross-group context. Send-stage exposure is not platform-confirmed delivery. Direct streaming replies still lack this callback in the current host; generation completion is not treated as delivery.

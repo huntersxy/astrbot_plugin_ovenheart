@@ -807,6 +807,74 @@ async def test_first_direct_reply_is_visible_to_the_next_group_planner(participa
     assert len({m["sequence"] for m in payload["recent_messages"]}) == 2
 
 
+@pytest.mark.parametrize(
+    "condition",
+    ["same_member", "different_member", "expired", "disabled", "interrupted"],
+)
+async def test_followup_admission_is_bounded_to_the_recent_addressee(
+    participant, condition
+):
+    participant.settings["participation_min_messages"] = 3
+    direct = event("answered", text="我应该怎么处理？", sender="alice")
+    await participant.capture(direct)
+    direct.set_result(direct.plain_result("可以先检查第一步。"))
+    await participant.record_delivery(direct)
+    scope, _, _ = await participant.resolve_scope(direct)
+    window = participant.participation.windows[scope]
+    if condition == "expired":
+        window["messages"][-1]["time"] -= 121
+    if condition == "disabled":
+        participant.settings["participation_followup"] = False
+    if condition == "interrupted":
+        assert await requests(participant, event("other-member", sender="bob")) == []
+    follow = event(
+        "continue",
+        text="第一步已经完成，接着呢？",
+        sender="bob" if condition == "different_member" else "alice",
+    )
+    output = await requests(participant, follow)
+    assert bool(output) is (condition == "same_member")
+    if output:
+        payload = json.loads(
+            participant.context.llm_generate.await_args.kwargs["prompt"]
+        )
+        assert payload["is_followup"] is True
+        assert follow.get_extra("ovenheart_decision")["followup"] is True
+        participant.settings["participation_followup"] = False
+        await participant.apply_participation(follow, output[0])
+        assert follow.is_stopped()
+    else:
+        participant.context.llm_generate.assert_not_awaited()
+
+
+async def test_followup_keeps_hourly_quota_and_does_not_repeat_after_observation(
+    participant,
+):
+    participant.settings.update(
+        participation_min_messages=3, participation_hourly_limit=1
+    )
+    direct = event("answered")
+    await participant.capture(direct)
+    direct.set_result(direct.plain_result("检查第一步。"))
+    await participant.record_delivery(direct)
+    participant.context.llm_generate.return_value = decision("observe")
+    assert await requests(participant, event("thanks", text="谢谢，我知道了")) == []
+    assert participant.context.llm_generate.await_count == 1
+    assert await requests(participant, event("repeat", text="嗯嗯")) == []
+    assert participant.context.llm_generate.await_count == 1
+    direct = event("answered-again")
+    await participant.capture(direct)
+    direct.set_result(direct.plain_result("也可以先停下来。"))
+    await participant.record_delivery(direct)
+    participant.context.llm_generate.return_value = decision()
+    follow = event("followup-one")
+    assert len(await requests(participant, follow)) == 1
+    follow.set_result(follow.plain_result("好的。"))
+    await participant.record_delivery(follow)
+    assert await requests(participant, event("quota-reached")) == []
+    assert participant.context.llm_generate.await_count == 2
+
+
 async def test_sent_reply_does_not_consume_newer_human_input(participant):
     participant.settings.update(participation_min_messages=1, participation_cooldown=0)
     original = event("reply-start")

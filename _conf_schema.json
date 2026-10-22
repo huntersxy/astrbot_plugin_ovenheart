@@ -195,6 +195,12 @@
     "type": "int",
     "default": 3
   },
+  "participation_followup": {
+    "description": "允许连续接话",
+    "type": "bool",
+    "default": true,
+    "hint": "刚回复的成员在 120 秒内继续说话，且没有其他成员插话时，允许一次跳过最少新消息与冷却的决策。仍可选择旁观，保留等待、权限、工具策略和每小时限额。关闭恢复统一门槛与冷却。"
+  },
   "participation_debounce": {
     "description": "群聊输入合并等待（秒）",
     "type": "int",

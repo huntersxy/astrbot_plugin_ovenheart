@@ -41,6 +41,7 @@ DEFAULTS = {
     "semantic_threshold": 0.25,
     "habit_half_life": 90,
     "participation_mode": "off",
+    "participation_followup": True,
     "mentioned_bot_reply": False,
     "mention_names": [],
     "participation_min_messages": 3,

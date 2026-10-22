@@ -597,7 +597,7 @@ class Store:
             (scope, umo, persona, label, json.dumps(PROFILE_DEFAULTS), time.time()),
         )
 
-    def participation_gate(self, db, scope, settings, room=""):
+    def participation_gate(self, db, scope, settings, room="", followup=False):
         """Check persistent cooldown and rolling autonomous admission limits.
 
         Args:
@@ -605,6 +605,8 @@ class Store:
             scope: Session/persona key.
             settings: Effective timing and quota settings.
             room: Physical group key, shared across isolated native sessions.
+            followup: Controller-validated same-member continuation. Only bypasses
+                cooldown when the operator also enables this feature.
 
         Returns:
             An empty string when another autonomous reply may be admitted.
@@ -618,6 +620,7 @@ class Store:
             row
             and row[0] is not None
             and now - row[0] < settings["participation_cooldown"]
+            and not (followup and settings["participation_followup"])
         ):
             return "距离上次回复或参与尝试过近，继续旁观。"
         count = db.execute(
@@ -647,7 +650,11 @@ class Store:
             profile = db.execute(
                 "SELECT profile FROM scopes WHERE id=?", (scope,)
             ).fetchone()
-            reason = self.participation_gate(db, scope, settings, plan.get("room", ""))
+            reason = self.participation_gate(
+                db, scope, settings, plan.get("room", ""), plan.get("followup", False)
+            )
+            if plan.get("followup") and not settings["participation_followup"]:
+                reason = "连续接话已关闭，取消排队中的回复。"
             if (
                 not settings["enabled"]
                 or settings["participation_mode"] != "auto"
