@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.40.1
+
+- Preserve follow-up eligibility when one direct answer produces multiple native send-stage callbacks. Track the uninterrupted room marker on that event, bound to its native scope, so subsequent parts can advance the answer's existing consumed position.
+- Once another room input intervenes, late parts cannot reclaim ownership or consume newer human messages. Preserve each own part in existing bounded context; no additional admission, model call, quota exemption or configuration is introduced.
+- Reproduce the three-part direct-answer failure, then pass two focused direct-path checks and one existing autonomous-segment check. This verifies native callback bookkeeping with simulated events, not real QQ segmentation or delivery.
+
 ## 0.40.0
 
 - Bridge native `STREAMING_FINISH` notices into existing send-stage self context and exposure recording. Require a native model-request scope, the host send-operation flag, a live permitted event and the same effective persona scope; ignore duplicate notices for the same result.

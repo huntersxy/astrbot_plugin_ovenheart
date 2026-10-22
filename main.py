@@ -1657,14 +1657,23 @@ class PersonaPlugin(Star):
             room = self.participation.rooms.get(room_key)
             plan = event.get_extra("ovenheart_decision")
             source = event_source(event)
-            current = room is None or room["source"] == (
-                plan["room_source"] if plan else source
-            )
+            direct_reply = event.get_extra("ovenheart_direct_reply_source", {})
+            owner = plan["room_source"] if plan else source
+            if not plan and direct_reply.get("scope") == scope:
+                owner = direct_reply.get("source", source)
+            current = room is None or room["source"] == owner
             if room:
                 room["changed"].set()
                 if not plan:
                     room["source"] = "bot:" + uuid4().hex
                     room["arrival"] = time.time()
+                    if current:
+                        # Extend only this uninterrupted direct answer. Once a
+                        # new room input wins, later segments cannot reclaim it.
+                        event.set_extra(
+                            "ovenheart_direct_reply_source",
+                            {"scope": scope, "source": room["source"]},
+                        )
             window = self.participation.windows.get(scope)
             result = event.get_result()
             text = result.get_plain_text()[:1200] if result else ""

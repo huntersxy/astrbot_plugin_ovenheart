@@ -2,6 +2,17 @@
 
 ## Conversation continuity after direct streaming (0.40)
 
+Version 0.40.1 also fixes direct answers that yield multiple native send-stage
+callbacks for one event. Previously only the first part advanced the consumed
+position, preventing follow-up eligibility after the last part. An event-local,
+scope-bound room marker now lets uninterrupted parts continue the same answer.
+Intervening input permanently prevents late parts from reclaiming ownership or
+consuming newer human messages. Existing context bounds, planner judgment, same-
+member checks, quota and configuration remain; there is no extra model call.
+Host paths that report all segments in one callback retain their existing path.
+The three-part failure was reproduced before the fix; two direct checks and one
+existing autonomous-segment check pass with simulated events, not QQ transport.
+
 Direct streaming skips the host after-send hook, but the current native Agent
 normally emits final text in `STREAMING_FINISH` after adapter consumption. This
 notice can now invoke existing recording logic. Require a plugin-bound native
