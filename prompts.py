@@ -51,6 +51,7 @@ SPECS = {
             "profile": "人工底稿：人格补充、表达基调、行为准则",
             "guidance": "本轮检索到的表达参考与已生效习惯",
             "recent_messages": "最近的群聊消息，最多 20 条",
+            "memory": "LivingMemory 背景，最多三条各 300 字，仅关联查询涉及的真实发言",
             "max_wait": "本轮允许的最长等待秒数",
             "wait_elapsed": "本轮是否已经等待过",
             "is_followup": "本轮是否为刚回复成员的首次连续接话判断",

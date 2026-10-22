@@ -78,6 +78,7 @@ class MemoryBridge:
         settings: dict,
         *,
         observations: list[dict] | None = None,
+        defer_user_scope: bool = False,
     ) -> tuple[list[dict], str]:
         """Retrieve context using LivingMemory's own policy and engine.
 
@@ -87,6 +88,8 @@ class MemoryBridge:
             settings: Memory integration settings.
             observations: Optional actual learning batch used to construct the
                 query and bind recalled context to eligible source IDs.
+            defer_user_scope: Skip personal memory before a planner has selected
+                its reply target; native final-reply recall still owns that path.
 
         Returns:
             Bounded memory excerpts and a visible integration status.
@@ -115,6 +118,8 @@ class MemoryBridge:
             if not policy.is_event_memory_allowed(plugin.config_manager, event):
                 return [], "LivingMemory 的访问规则禁止读取当前会话记忆。"
             scope = policy.resolve_memory_scope(plugin.config_manager, event)
+            if defer_user_scope and scope and scope.startswith("livingmemory:user:"):
+                return [], "参与决策尚未选定回复对象，用户记忆留待实际回复阶段读取。"
             sources = observations
             if sources is not None:
                 # User memory remains tied to the real event's identity. Do not
@@ -152,8 +157,9 @@ class MemoryBridge:
             use_persona = plugin.config_manager.filtering_settings.get(
                 "use_persona_filtering", True
             )
+            engine = plugin.initializer.memory_engine
             memories = await asyncio.wait_for(
-                plugin.initializer.memory_engine.search_memories(
+                engine.search_memories(
                     query=query,
                     k=settings["memory_top_k"],
                     # None deliberately means unfiltered in LivingMemory's legacy mode.
@@ -164,6 +170,35 @@ class MemoryBridge:
                 ),
                 timeout=12,
             )
+            latest = self.context.get_registered_star("astrbot_plugin_livingmemory")
+            enabled = await SessionPluginManager.is_plugin_enabled_for_session(
+                event.unified_msg_origin, "astrbot_plugin_livingmemory"
+            )
+            plugin_set = self.context.get_config(event.unified_msg_origin).get(
+                "plugin_set", ["*"]
+            )
+            if (
+                not latest
+                or not latest.activated
+                or latest.star_cls is not plugin
+                or not plugin.initializer.is_initialized
+                or plugin.initializer.memory_engine is not engine
+                or not enabled
+                or (
+                    plugin_set != ["*"]
+                    and "astrbot_plugin_livingmemory" not in plugin_set
+                )
+                or not policy.is_event_memory_allowed(plugin.config_manager, event)
+                or policy.resolve_memory_scope(plugin.config_manager, event) != scope
+                or plugin.config_manager.filtering_settings.get(
+                    "use_persona_filtering", True
+                )
+                != use_persona
+            ):
+                return (
+                    [],
+                    "LivingMemory 访问、实例或作用域在检索期间改变，已丢弃旧记忆结果。",
+                )
             excerpts = [
                 {
                     "id": str(m.doc_id),

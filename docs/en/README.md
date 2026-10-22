@@ -1,5 +1,43 @@
 # OvenHeart workshop guide
 
+## Long-term background for participation (0.41)
+
+The existing memory integration switch now lets admitted participation planning
+reference LivingMemory background in the same planner request. Query recent human
+text and allowed quotes from the final six window records, within the existing
+500-character query budget. Include at most `min(memory_top_k, 3)` excerpts of
+300 characters. `memory_context.for_sequences` links query inputs, not ownership:
+background cannot establish another member's identity, override current messages,
+become bot autobiography or force participation.
+
+Habit recall runs first; memory gets only the remaining `retrieval_timeout`
+budget. Unavailable/disabled services, failures, expiry and timeouts retain recent
+message/habit planning. No extra planner-chat stage is introduced, but memory
+search may invoke LivingMemory's configured services. A waited second decision
+may search again under its own shared budget. Bounded repeated queries may help
+service caching without a hit-rate or billing guarantee.
+
+Personal `livingmemory:user:*` recall is deferred until the reply target is known;
+existing native final-reply source binding still handles it. Other scopes follow
+LivingMemory access, persona and session/global/legacy sharing exactly, including
+its explicitly configured global/unfiltered ranges. OvenHeart's global habit
+mode does not widen those policies.
+
+After search, recheck plugin readiness, session plugin access, allow rules, scope,
+persona-filtering mode and plugin/engine identity. Changed results are discarded;
+this also protects existing learning recall. Planning rechecks OvenHeart's own
+policy/profile/persona and remains cancellable by new input. The excerpt array is request context and is not directly written into materials,
+evidence, habits or decision history. Model-generated reasons/intents retain their
+existing persistence and may summarize that background.
+Opt-in `planner_memory` and existing request diagnostics expose context/status;
+errors log types only.
+
+Editable planner templates may use `{{memory}}`; structured requests always carry
+`memory_context` and customized bodies are preserved. The switch covers learning
+and planning reference, not LivingMemory's separate native reply switch. Four
+focused planning scenarios and the existing bridge-policy case pass with the real
+policy module and a simulated engine. Production quality/latency remain unverified.
+
 ## Conversation continuity after direct streaming (0.40)
 
 Version 0.40.1 also fixes direct answers that yield multiple native send-stage

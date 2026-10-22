@@ -106,6 +106,7 @@
   },
   "memory_enabled": {
     "description": "参考 LivingMemory 记忆",
+    "hint": "学习与自主参与判断可参考记忆；参与阶段与习惯召回共用检索预算，用户独立记忆留待确定回复对象后读取。",
     "type": "bool",
     "default": true
   },

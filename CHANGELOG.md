@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.41.0
+
+- Supply optional LivingMemory background before participation decisions, reusing its real access/scope/persona policy and existing bridge. Build a bounded query from recent human messages/quotes; pass at most three 300-character excerpts linked to actual message sequences, never treating those links as ownership proof or new evidence.
+- Share the existing retrieval deadline between habit and memory recall. Missing services, exhausted budget, errors or timeouts retain recent-message/habit planning without another planner-chat stage. A waited second decision may repeat the memory lookup within its own shared budget.
+- Defer personal user-scoped memory until the actual reply target is known; native final-reply binding remains responsible for that path. Respect configured session/global/legacy sharing for other memory scopes. Recheck LivingMemory access, scope/persona policy and instance readiness after search, discarding changed results for both learning and planning.
+- Add a planner `memory` placeholder, memory diagnostics and config help. Do not persist planning excerpts or change participation gates, history, learning evidence or tool authority. Configured memory searches may call LivingMemory's services.
+- Pass four focused planner-memory scenarios and the existing bridge-policy check using the native SDK, real policy module and simulated engine. Production participation quality/latency remain unverified.
+
 ## 0.40.1
 
 - Preserve follow-up eligibility when one direct answer produces multiple native send-stage callbacks. Track the uninterrupted room marker on that event, bound to its native scope, so subsequent parts can advance the answer's existing consumed position.
