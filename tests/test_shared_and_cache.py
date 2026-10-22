@@ -531,6 +531,46 @@ async def test_cached_selector_serializes_stable_candidates_before_changing_quer
     )
 
 
+async def test_learning_keeps_stable_known_traits_before_dynamic_counts_and_sources(
+    shared_plugin,
+):
+    plugin = shared_plugin
+    scope = await sources(plugin)
+    await plugin.learn(scope)
+    plugin.context.llm_generate.reset_mock()
+    for batch_index in range(2):
+        for index in range(2):
+            await plugin.capture(
+                event(
+                    f"cache-learning-{batch_index}-{index}",
+                    text="好家伙，又被你看出来了",
+                )
+            )
+        assert (await plugin.learn(scope))["status"] == "success"
+    phase = [
+        call.kwargs
+        for call in plugin.context.llm_generate.await_args_list
+        if json.loads(call.kwargs["prompt"])["enabled_kinds"] != ["jargon"]
+    ]
+    assert len(phase) == 2
+    first, second = [json.loads(call["prompt"]) for call in phase]
+    assert first["known_traits"] and first["known_traits"] == second["known_traits"]
+    assert first["known_trait_stats"] != second["known_trait_stats"]
+    assert first["observations"] != second["observations"]
+    assert phase[0]["system_prompt"] == phase[1]["system_prompt"]
+    assert (
+        phase[0]["prompt"].split('"known_trait_stats":')[0]
+        == phase[1]["prompt"].split('"known_trait_stats":')[0]
+    )
+    assert [t["id"] for t in first["known_traits"]] == sorted(
+        t["id"] for t in first["known_traits"]
+    )
+    assert all(
+        "support_count" not in t and "meaning_stage" not in t
+        for t in first["known_traits"]
+    )
+
+
 async def test_stale_profile_form_cannot_write_into_a_different_effect_scope(
     shared_plugin,
 ):

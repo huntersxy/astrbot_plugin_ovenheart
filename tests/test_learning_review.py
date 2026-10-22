@@ -134,6 +134,14 @@ async def test_review_has_one_format_retry_and_keeps_original_evidence(plugin):
     assert inputs[0]["observations"] == inputs[1]["observations"]
     assert inputs[0]["candidates"] == inputs[1]["candidates"]
     assert "format_error" in inputs[1]
+    phase = [
+        call.kwargs
+        for call in plugin.context.llm_generate.await_args_list
+        if call.kwargs.get("system_prompt") == LEARNING_REVIEW_SYSTEM
+    ]
+    assert inputs[0]["task"] == inputs[1]["task"] and inputs[1]["correction_task"]
+    assert phase[0]["system_prompt"] == phase[1]["system_prompt"]
+    assert phase[1]["prompt"].startswith(phase[0]["prompt"][:-1] + ",")
 
 
 @pytest.mark.parametrize("provider_error", [False, True])

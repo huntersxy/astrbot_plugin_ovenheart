@@ -73,6 +73,7 @@ SPECS = {
             "memory": "LivingMemory 检索到的长期记忆",
             "context": "邻近发言及所引用原文，仅用于理解语境",
             "known_traits": "已存习惯，仅作合并对照",
+            "known_trait_stats": "已有习惯的动态批次计数与细化阶段，按 ID 关联",
             "language_features": "按对象统计的表达特征",
             "enabled_kinds": "本次启用的学习类别",
             "min_evidence": "每条习惯所需的最少证据消息数",

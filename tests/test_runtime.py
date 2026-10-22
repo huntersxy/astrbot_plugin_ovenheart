@@ -644,6 +644,14 @@ async def test_schema_drift_gets_one_correction_with_original_evidence(plugin):
     ]
     assert first["task"] and second["observations"] == first["observations"]
     assert "profile_updates" in second["format_error"]
+    phase = [
+        call.kwargs
+        for call in plugin.context.llm_generate.await_args_list
+        if json.loads(call.kwargs["prompt"])["enabled_kinds"] != ["jargon"]
+    ]
+    assert first["task"] == second["task"] and second["correction_task"]
+    assert phase[0]["system_prompt"] == phase[1]["system_prompt"]
+    assert phase[1]["prompt"].startswith(phase[0]["prompt"][:-1] + ",")
 
 
 async def test_repeated_bad_format_is_bounded_and_preserves_material(plugin):

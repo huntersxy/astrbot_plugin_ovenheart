@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.30.0
+
+- Place ID-sorted stable known-habit fields before changing learning-batch context. Move support counts/refinement stages into ID-linked `known_trait_stats`, preserving information and per-category filtering while keeping count updates out of the earlier text prefix.
+- Preserve the original task/system text during extraction and review format correction; append correction instructions and diagnostics at the request tail. Keep retry limits, deadlines and evidence checks unchanged.
+- Add an editable statistics placeholder and verify three focused native request cases for learning-prefix stability and both retry paths. No provider calls were made to measure cache hits or billing.
+
 ## 0.29.0
 
 - Allow explicitly requested, reviewed refinements of unlocked personality, expression and behavior entries using optional boolean `refine` with a known `merge_id`. Ordinary paraphrases continue reinforcing evidence without rewriting stored wording.

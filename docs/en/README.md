@@ -1,5 +1,9 @@
 # OvenHeart workshop guide
 
+Since 0.30, learning requests place stable known-habit fields before changing batch context. `known_traits` sorts by ID and retains kind, situation, content and status; `known_trait_stats` follows with ID-linked support counts and refinement stages, then observations, memories, language statistics and volatile context. Count updates no longer change the preceding known-text prefix. Editable prompts may use `{{known_trait_stats}}`; statistics remain non-evidence, and custom system templates that embed dynamic values intentionally vary.
+
+Extraction/review format retries preserve the original `task` and system prompt, appending only `format_error`, untrusted previous output and `correction_task`. The single-retry limit and existing deadlines remain. No model calls or provider cache flags are added. Focused checks establish matching default prefixes, not actual provider cache hits, retention or billing improvements.
+
 ## Evidence-backed habit refinement (0.29)
 
 Personality, expression and behavior entries can now refine their initial wording/conditions rather than only accumulating support. A candidate must explicitly supply `merge_id` and boolean `refine=true`, with real batch evidence and an affirmative admission review. Ordinary paraphrases need no flag. Review compares the proposed and stored meaning, subject and conditions; refinement cannot reverse intent, broaden applicability or change core identity.
