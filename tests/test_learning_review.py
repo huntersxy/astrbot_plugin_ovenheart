@@ -217,6 +217,38 @@ async def test_review_uses_the_remaining_shared_deadline(plugin):
     assert time.monotonic() - started < 0.5 and cancelled.is_set()
 
 
+async def test_review_only_receives_memories_linked_to_cited_observations(plugin):
+    plugin.context.llm_generate = AsyncMock(
+        return_value=SimpleNamespace(
+            completion_text='{"approved_ids":[1],"flagged":[]}'
+        )
+    )
+    trait = {
+        "kind": "expression",
+        "situation": "倾诉时",
+        "content": "先听对方说",
+        "evidence": [{"id": 1}],
+    }
+    base = {
+        "identity_anchor": "小夏",
+        "profile": {},
+        "observations": [
+            {"id": 1, "sender": "alice", "text": "我听着"},
+            {"id": 2, "sender": "bob", "text": "我来处理"},
+        ],
+        "conversation_context": [],
+        "memory_context": [
+            {"id": "own", "content": "相关语境", "for_evidence_ids": [1]},
+            {"id": "other", "content": "无关用户记忆", "for_evidence_ids": [2]},
+            {"id": "legacy", "content": "兼容旧的无关联语境"},
+        ],
+    }
+    await plugin._review_learning([trait], base, "fixture", time.monotonic() + 2)
+    payload = json.loads(plugin.context.llm_generate.await_args.kwargs["prompt"])
+    assert {m["id"] for m in payload["memory_context"]} == {"own", "legacy"}
+    assert len(base["memory_context"]) == 3
+
+
 async def test_empty_extraction_does_not_spend_a_review_request(plugin):
     plugin.settings["learning_review_enabled"] = True
     scope = await sources(plugin)

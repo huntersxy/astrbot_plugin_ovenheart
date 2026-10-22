@@ -333,6 +333,7 @@ class PersonaPlugin(Star):
         self.tasks: set[asyncio.Task] = set()
         self.busy: set[str] = set()
         self.events: dict[str, AstrMessageEvent] = {}
+        self.speaker_events: dict[tuple[str, str], AstrMessageEvent] = {}
         self.learning_context: dict[str, deque] = {}
         self.last_attempt: dict[str, float] = {}
         # Consecutive failed attempts per scope, used to back off the scheduler.
@@ -747,6 +748,10 @@ class PersonaPlugin(Star):
         if context_only:
             return
         self.events[scope] = event
+        self.speaker_events.pop((scope, sender), None)
+        self.speaker_events[scope, sender] = event
+        if len(self.speaker_events) > 128:
+            self.speaker_events.pop(next(iter(self.speaker_events)))
         # Only a bounded number of real event references are needed for optional recall.
         if len(self.events) > 128:
             self.events.pop(next(iter(self.events)))
@@ -1675,6 +1680,11 @@ class PersonaPlugin(Star):
             for m in base["conversation_context"]
             if cited.intersection(m["for_evidence_ids"])
         ]
+        memories = [
+            m
+            for m in base["memory_context"]
+            if "for_evidence_ids" not in m or cited.intersection(m["for_evidence_ids"])
+        ]
         neighbors = {}
         for index, observation in enumerate(base["observations"]):
             if observation["id"] not in cited:
@@ -1716,7 +1726,7 @@ class PersonaPlugin(Star):
             profile=base["profile"],
             observations=[m for m in base["observations"] if m["id"] in cited],
             context=context,
-            memory=base["memory_context"],
+            memory=memories,
             candidates=candidates,
         )
         payload = {
@@ -1725,7 +1735,7 @@ class PersonaPlugin(Star):
             "profile": base["profile"],
             "observations": [m for m in base["observations"] if m["id"] in cited],
             "conversation_context": context,
-            "memory_context": base["memory_context"],
+            "memory_context": memories,
             "candidates": candidates,
         }
         for attempt in range(2):
@@ -1843,7 +1853,33 @@ class PersonaPlugin(Star):
             plugin_set = host_config.get("plugin_set", ["*"])
             if plugin_set != ["*"] and PLUGIN_NAME not in plugin_set:
                 raise ValueError("当前 AstrBot 配置未启用人格工坊，素材保留。")
-            source_event = self.events.get(scope)
+            batch = await self.store.call(
+                "batch",
+                scope,
+                settings["batch_size"],
+                settings["target_senders"],
+                settings["blocked_senders"],
+            )
+            if len(batch) < settings["min_evidence"]:
+                raise ValueError(
+                    f"素材不足，至少需要 {settings['min_evidence']} 条不同消息。"
+                )
+            latest_event = self.events.get(scope)
+            source_event = next(
+                (
+                    self.speaker_events[scope, m["sender"]]
+                    for m in reversed(batch)
+                    if (scope, m["sender"]) in self.speaker_events
+                    and self.speaker_events[scope, m["sender"]].get_sender_id()
+                    == m["sender"]
+                    and self.speaker_events[scope, m["sender"]].unified_msg_origin
+                    == selected["umo"]
+                ),
+                latest_event
+                if latest_event is not None
+                and any(m["sender"] == latest_event.get_sender_id() for m in batch)
+                else None,
+            )
             if source_event is not None and not await self.permitted(source_event):
                 raise ValueError("当前会话不符合 AstrBot 访问规则，素材保留。")
             if source_event is None:
@@ -1865,17 +1901,6 @@ class PersonaPlugin(Star):
                 raise ValueError("AstrBot 已停用当前会话或插件，请先恢复启用。")
             if not any(settings[f"learn_{kind}"] for kind in KINDS):
                 raise ValueError("没有启用任何学习类别，请先开启至少一个类别。")
-            batch = await self.store.call(
-                "batch",
-                scope,
-                settings["batch_size"],
-                settings["target_senders"],
-                settings["blocked_senders"],
-            )
-            if len(batch) < settings["min_evidence"]:
-                raise ValueError(
-                    f"素材不足，至少需要 {settings['min_evidence']} 条不同消息。"
-                )
             batch = [
                 m | {"label": selected["label"], "persona": selected["persona"]}
                 for m in batch
@@ -1891,7 +1916,7 @@ class PersonaPlugin(Star):
             self.last_attempt[scope] = time.time()
             try:
                 memories, memory_status = await self.memory.recall(
-                    self.events.get(scope), selected["persona"], settings
+                    source_event, selected["persona"], settings, observations=batch
                 )
             except Exception as exc:
                 logger.warning("Persona memory recall failed (%s)", type(exc).__name__)
@@ -1899,6 +1924,14 @@ class PersonaPlugin(Star):
                     [],
                     "LivingMemory 检索失败，本次仅使用聊天素材；请检查记忆插件状态。",
                 )
+            self.debug(
+                "learning_memory",
+                scope=scope,
+                source_sender=source_event.get_sender_id() if source_event else None,
+                source_ids=[m["id"] for m in batch],
+                memories=memories,
+                status=memory_status,
+            )
             anchor = self.context.persona_manager.get_persona_v3_by_id(
                 selected["persona"]
             )
@@ -2284,6 +2317,7 @@ class PersonaPlugin(Star):
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
         self.events.clear()
+        self.speaker_events.clear()
         self.learning_context.clear()
         prefix = f"/{PLUGIN_NAME}/"
         self.context.registered_web_apis[:] = [

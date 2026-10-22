@@ -42,14 +42,21 @@ class MemoryBridge:
         }
 
     async def recall(
-        self, event, persona: str, settings: dict
+        self,
+        event,
+        persona: str,
+        settings: dict,
+        *,
+        observations: list[dict] | None = None,
     ) -> tuple[list[dict], str]:
         """Retrieve context using LivingMemory's own policy and engine.
 
         Args:
-            event: The latest permitted real event in the selected scope.
+            event: A permitted real source event in the selected scope.
             persona: Currently selected AstrBot persona.
             settings: Memory integration settings.
+            observations: Optional actual learning batch used to construct the
+                query and bind recalled context to eligible source IDs.
 
         Returns:
             Bounded memory excerpts and a visible integration status.
@@ -60,7 +67,7 @@ class MemoryBridge:
         if not status["available"]:
             return [], status["message"]
         if event is None:
-            return [], "插件重载后尚未收到该会话消息，本次仅使用已保留的聊天素材。"
+            return [], "本批素材没有可用的真实来源事件，本次仅使用已保留的聊天素材。"
         metadata = self.context.get_registered_star("astrbot_plugin_livingmemory")
         plugin = metadata.star_cls
         try:
@@ -78,12 +85,34 @@ class MemoryBridge:
             if not policy.is_event_memory_allowed(plugin.config_manager, event):
                 return [], "LivingMemory 的访问规则禁止读取当前会话记忆。"
             scope = policy.resolve_memory_scope(plugin.config_manager, event)
+            sources = observations
+            if sources is not None:
+                # User memory remains tied to the real event's identity. Do not
+                # impersonate another batch member or widen the plugin's scope.
+                if scope and scope.startswith("livingmemory:user:"):
+                    sources = [
+                        m for m in sources if m["sender"] == event.get_sender_id()
+                    ]
+                if not sources:
+                    return (
+                        [],
+                        "本批素材为空或与当前记忆作用域不匹配，本次仅使用聊天素材。",
+                    )
+                sample = (
+                    [sources[i * (len(sources) - 1) // 7] for i in range(8)]
+                    if len(sources) > 8
+                    else sources
+                )
+                per_source = (500 - len(sample) + 1) // len(sample)
+                query = "\n".join(m["text"][:per_source] for m in sample)
+            else:
+                query = event.get_message_str()[:500]
             use_persona = plugin.config_manager.filtering_settings.get(
                 "use_persona_filtering", True
             )
             memories = await asyncio.wait_for(
                 plugin.initializer.memory_engine.search_memories(
-                    query=event.get_message_str()[:500],
+                    query=query,
                     k=settings["memory_top_k"],
                     # None deliberately means unfiltered in LivingMemory's legacy mode.
                     session_id=scope,
@@ -94,7 +123,15 @@ class MemoryBridge:
                 timeout=12,
             )
             excerpts = [
-                {"id": str(m.doc_id), "content": m.content[:700]}
+                {
+                    "id": str(m.doc_id),
+                    "content": m.content[:700],
+                    **(
+                        {"for_evidence_ids": [source["id"] for source in sources]}
+                        if sources is not None
+                        else {}
+                    ),
+                }
                 for m in memories[: settings["memory_top_k"]]
             ]
             return (

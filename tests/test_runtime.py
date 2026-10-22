@@ -890,6 +890,8 @@ async def test_memory_bridge_uses_livingmemory_policy_and_bounded_context(
         and call["persona_id"] == "default"
     )
     assert call["k"] == 3
+    assert "好家伙，你又看出来了" in call["query"]
+    assert "好家伙，还是你懂我" in call["query"]
     prompt = json.loads(plugin.context.llm_generate.await_args.kwargs["prompt"])
     assert prompt["memory_context"][0]["id"] == "m1"
     for mode, session_filter, isolated, expected in (
@@ -914,6 +916,82 @@ async def test_memory_bridge_uses_livingmemory_policy_and_bounded_context(
     memories, message = await plugin.memory.recall(event(), "default", plugin.settings)
     assert memories == [] and "禁止" in message
     assert engine.search_memories.await_count == 7
+    values.update(
+        {
+            "access_control.whitelist_enabled": False,
+            "filtering_settings.memory_scope_mode": "session",
+            "filtering_settings.isolated_sessions": "",
+        }
+    )
+    observations = [
+        {
+            "id": index,
+            "sender": "alice",
+            "text": f"BATCH_TOPIC_{index} " + "原始素材" * 40,
+        }
+        for index in range(10)
+    ]
+    latest = event("later", text="UNRELATED_LATEST_INPUT", sender="bob")
+    memories, _ = await plugin.memory.recall(
+        latest, "default", plugin.settings, observations=observations
+    )
+    query = engine.search_memories.await_args.kwargs["query"]
+    assert len(query) <= 500 and "BATCH_TOPIC_0" in query and "BATCH_TOPIC_9" in query
+    assert "UNRELATED_LATEST_INPUT" not in query
+    assert memories[0]["for_evidence_ids"] == list(range(10))
+    values["filtering_settings.memory_scope_mode"] = "user"
+    count = engine.search_memories.await_count
+    memories, status = await plugin.memory.recall(
+        latest, "default", plugin.settings, observations=observations
+    )
+    assert memories == [] and "不匹配" in status
+    assert engine.search_memories.await_count == count
+    mixed = [*observations, {"id": 77, "sender": "bob", "text": "BOB_BATCH_TOPIC"}]
+    memories, _ = await plugin.memory.recall(
+        latest, "default", plugin.settings, observations=mixed
+    )
+    assert engine.search_memories.await_args.kwargs["query"] == "BOB_BATCH_TOPIC"
+    assert memories[0]["for_evidence_ids"] == [77]
+    assert latest.get_message_str() == "UNRELATED_LATEST_INPUT"
+
+    plugin.settings.update(batch_size=4, min_messages=4)
+    for index in range(4):
+        await plugin.capture(
+            event(
+                f"backlog-{index}",
+                text=f"BACKLOG_TOPIC_{index}",
+                session="789",
+                sender="alice",
+            )
+        )
+    await plugin.capture(
+        event(
+            "outside-backlog",
+            text="OUTSIDE_SELECTED_BATCH",
+            session="789",
+            sender="bob",
+        )
+    )
+    selected_scope, _, _ = await plugin.resolve_scope(event(session="789"))
+    assert (await plugin.learn(selected_scope))["status"] == "success"
+    call = engine.search_memories.await_args.kwargs
+    assert call["session_id"] == "livingmemory:user:aiocqhttp:alice"
+    assert "BACKLOG_TOPIC_0" in call["query"] and "BACKLOG_TOPIC_3" in call["query"]
+    assert "OUTSIDE_SELECTED_BATCH" not in call["query"]
+    for index in range(4):
+        incoming = event(
+            f"mutated-source-{index}",
+            text="原始素材仍属于 Alice",
+            session="999",
+            sender="alice",
+        )
+        await plugin.capture(incoming)
+    # Native reply decoration can rebind the event to an older addressee.
+    incoming.message_obj.sender = MessageMember("bob", "Bob")
+    mutated_scope, _, _ = await plugin.resolve_scope(incoming)
+    count = engine.search_memories.await_count
+    assert (await plugin.learn(mutated_scope))["status"] == "success"
+    assert engine.search_memories.await_count == count
 
 
 async def test_blacklisted_qq_is_not_captured_or_used_as_neighbor_context(plugin):

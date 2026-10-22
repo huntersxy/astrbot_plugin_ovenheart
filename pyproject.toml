@@ -1,6 +1,6 @@
 [project]
 name = "astrbot-plugin-ovenheart"
-version = "0.27.1"
+version = "0.28.0"
 description = "Evidence-based personality, language and behavior learning for AstrBot"
 requires-python = ">=3.10"
 dependencies = []

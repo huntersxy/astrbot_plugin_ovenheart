@@ -284,6 +284,13 @@ class PageAPI:
             else:
                 raise ValueError("不支持的操作，请刷新页面后重试。")
             await self.plugin.store.call("mutate", scope, operation, payload)
+            if operation == "clear_messages":
+                self.plugin.events.pop(scope, None)
+                self.plugin.speaker_events = {
+                    key: value
+                    for key, value in self.plugin.speaker_events.items()
+                    if key[0] != scope
+                }
             if scope == SHARED_SCOPE and operation in ("profile", "restore"):
                 self.plugin.learning_context.clear()
                 self.plugin.participation.close()

@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.28.0
+
+- Query LivingMemory from the selected learning batch, using up to eight evenly spaced source excerpts within the existing 500-character query budget. Preserve a single recall per batch and all existing retrieval limits.
+- Keep bounded real sender-event anchors and select a batch member's event for access checks, avoiding unrelated latest-message identities. Reject rebound sender anchors and clear scope anchors with material deletion or plugin reload.
+- Preserve LivingMemory scope/alias/persona policy. In user scopes, query only the real anchor user's observations and link returned context to their evidence IDs; review excludes unrelated linked memories.
+- Add opt-in batch-memory diagnostics. Verify batch queries, actual backlog identity, bounded sampling, existing scope/whitelist behavior, mismatched users, rebound events and review filtering with two focused SDK checks using the real policy parser and a simulated search engine.
+
 ## 0.27.1
 
 - Recheck autonomous admission liveness and current allow/deny policy at native tool-name resolution in both schema modes. Superseded or paused requests stop and clear pending results instead of dispatching an initially allowed tool from an obsolete request.

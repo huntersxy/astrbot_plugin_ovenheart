@@ -1,5 +1,13 @@
 # OvenHeart workshop guide
 
+## Batch-grounded memory recall (0.28)
+
+LivingMemory queries now sample the actual selected learning batch, rather than a later unrelated message. Up to eight evenly spaced excerpts form a query of at most 500 characters. Recall remains at most once per batch, with the existing top-k, twelve-second timeout and 700-character excerpt limits. Memories remain context rather than additional evidence/material.
+
+At most 128 real source-event anchors are cached by native session/persona and sender. A batch member's real event is revalidated and passed to LivingMemory's existing access/scope/alias policy. No synthetic identity or unrelated queue sender is used. Events rebound to another sender by native reply decoration are not reused for the original author. Clearing that scope's materials or reloading clears the cache; if no valid anchor remains, learning proceeds without recall.
+
+For a resolved user scope, only that real user's batch observations form the query, and `for_evidence_ids` links returned context to those observations. Session/global/legacy scope and persona filtering remain owned by LivingMemory. Review keeps only linked memories relevant to cited evidence, while accepting legacy unlinked context. Debug `learning_memory` records the real source sender, batch IDs, excerpts and status, excluding credentials.
+
 Since 0.27.1, autonomous tool sets recheck admission liveness and the current allow/deny policy when the native runner resolves a name. New group input, disabled participation/application, and workshop profile changes invalidate old requests. A rejected lookup stops the event and clears its pending result. This works in both `full` and `skills_like` modes without copying/mutating native tools or changing direct-wake handling. Debug `autonomous_tool_cancelled` records the name and liveness/policy flags, excluding arguments.
 
 The boundary is name resolution: it does not undo already-started tools or cover delays introduced by another plugin after resolution. Host permissions, tool checks and final-result validation remain in force.
