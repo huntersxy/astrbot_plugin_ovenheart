@@ -1,5 +1,13 @@
 # OvenHeart workshop guide
 
+## Habit recall before participation planning (0.33)
+
+The participation planner now uses configured embedding/rerank providers instead of lexical-only habit ranking. Its query contains up to 2,400 characters from the latest six native-scope messages and quotes. Lexical mode makes neither call. Hybrid/contextual modes use configured semantic recall and reranking; contextual mode does not add a chat-selector call here because the existing planner judges candidate applicability. Final reply selection keeps its original configured behavior.
+
+Recalled habits do not force participation. Native permissions, message/debounce/cooldown/hourly gates and follow-up rules remain. Recall reuses existing scoped habit vectors, five-minute query caches, provider concurrency limits and `retrieval_timeout`, followed by the separate existing `planner_timeout` decision budget. Configured recall calls can incur charges and additional latency; failure or timeout retains lexical fallback. No settings or runtime dependencies are added.
+
+Scope/profile/settings are rechecked after recall, edited or disabled candidates are omitted, and interruption still cancels stale work. Human message/quote text grounds literal vocabulary context; native source boundaries remain. Planner recall does not increment exposure counts or overwrite runtime reply-retrieval status. Opt-in `planner_retrieval` diagnostics show mode, fallback reasons, candidate IDs and IDs that fit the guidance budget. Custom prompts remain intact; the default now explicitly asks the planner to check conditions and participation value. Simulated-provider checks establish the path, while production participation quality remains pending access.
+
 Since 0.32.1, learning capture accepts nonempty single-character human responses, including acknowledgements, punctuation and plain-text Unicode emoji. These retain quoted context and participate in extraction, review and existing language statistics in both all-speaker and selected-speaker modes. Own replies remain context only; whitespace, commands, blacklist and access filtering are unchanged.
 
 Short responses count toward existing batch thresholds and may trigger scheduled learning sooner, without extra calls per batch or lower evidence/activation requirements. Default prompts require context to distinguish assent, listening, questions and disagreement, rather than inferring full agreement, stable personality or a local definition from terse assent or repeated symbols. Custom templates stay unchanged and can be updated using the new defaults as a reference. Production semantic quality remains to be evaluated.

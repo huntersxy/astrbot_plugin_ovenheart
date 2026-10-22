@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.33.0
+
+- Use configured embedding/rerank recall before participation planning instead of lexical-only habit ranking. Lexical mode remains lexical; contextual mode uses hybrid candidate recall here because the planner itself judges applicability, without a second chat-selector call.
+- Reuse existing scoped habit vectors, query caches, provider concurrency and retrieval budgets. Keep authored profile/character limits, literal local vocabulary from recent human text/quotes and all participation gates. Recall failure falls back through the existing lexical path.
+- Recheck scope/profile/settings after recall, omit edited or disabled candidates and preserve cancellation of interrupted work. Keep planner recall outside runtime retrieval status and exposure accounting. Add `planner_retrieval` diagnostics with candidate/included IDs and fallback reasons.
+- Clarify that recalled habits do not force participation. Update bilingual guides to disclose configured recall calls and their separate latency budget; no settings or runtime dependencies are added.
+- Pass five focused native planning checks with a crowded SQLite habit library and simulated embedding/rerank providers: semantic access, fallback, lexical mode, pause cancellation and mid-recall disable. Production participation quality remains pending access.
+
 ## 0.32.1
 
 - Retain nonempty single-character human responses such as acknowledgements, questions and Unicode emoji. Previously the two-character capture minimum silently removed them from learning, timing statistics and linked quote/self context; participation already accepted them.
