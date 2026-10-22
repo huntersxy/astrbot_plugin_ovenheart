@@ -8,6 +8,7 @@ import json
 import math
 import time
 from collections import deque
+from uuid import uuid4
 
 from astrbot.api import logger
 from astrbot.api.platform import MessageType
@@ -40,6 +41,27 @@ wait 时 wait_seconds 是 1 到 max_wait 的整数，其他行动为 0；observe
 
 class ParticipationFormatError(ValueError):
     """Distinguish safe schema diagnostics from arbitrary provider exceptions."""
+
+
+def event_source(event) -> str:
+    """Return a native ID or one stable fallback for this event's hook lifetime.
+
+    Args:
+        event: Native event, possibly without an adapter-provided message ID.
+
+    Returns:
+        Platform identity when initially available, otherwise a cached random
+        identity. Distinct ID-less arrivals are never merged by text or time.
+    """
+    source = event.get_extra("ovenheart_fallback_source")
+    if isinstance(source, str) and source:
+        return source
+    native_id = getattr(event.message_obj, "message_id", None)
+    if native_id is not None and (source := str(native_id).strip()):
+        return source
+    source = "event:" + uuid4().hex
+    event.set_extra("ovenheart_fallback_source", source)
+    return source
 
 
 def parse_plan(text: str, settings: dict, waited: bool = False, messages=None) -> dict:
@@ -181,10 +203,7 @@ class ParticipationController:
         key = self.room_key(event)
         if not key or event.get_sender_id() == event.get_self_id():
             return None
-        source = str(
-            event.message_obj.message_id
-            or f"{event.get_sender_id()}:{event.created_at}"
-        )
+        source = event_source(event)
         previous = self.rooms.get(key)
         if previous and (
             previous["source"] == source or previous["arrival"] > event.created_at
@@ -311,10 +330,8 @@ class ParticipationController:
                     )
                 )[:1200],
             }
-        source = str(
-            event.message_obj.message_id
-            or f"{event.get_sender_id()}:{event.created_at}"
-        )
+        source = event_source(event)
+        native_id = getattr(event.message_obj, "message_id", None)
         if any(m["source"] == source for m in window["messages"]):
             return None
         self.sources.pop((scope, source), None)
@@ -331,7 +348,9 @@ class ParticipationController:
                         "source": source,
                         "sender": event.get_sender_name() or event.get_sender_id(),
                         "sender_id": event.get_sender_id(),
-                        "message_id": str(event.message_obj.message_id or ""),
+                        "message_id": str(native_id).strip()
+                        if native_id is not None
+                        else "",
                         "self": False,
                         "text": event.get_message_str()[:1200],
                         "reply_to": reply_to,

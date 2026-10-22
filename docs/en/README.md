@@ -1,5 +1,20 @@
 # OvenHeart workshop guide
 
+Since 0.36.1, ID-less arrivals use one cached per-event source identity instead
+of learning's sender/second/text fingerprint. Distinct identical messages survive
+equal platform and arrival timestamps, while repeated hooks on the same event
+deduplicate. Capture, room interruption/planning, send-stage context and target
+anchors share this rule. A fallback remains stable if an adapter fills the ID
+later.
+
+Real platform IDs retain native redelivery deduplication and existing scope/
+evidence boundaries. Fallback identities are not quoteable platform IDs. Memory
+anchors still validate native ID, author, text and persona snapshots. Without
+a native ID, separate event objects cannot reliably distinguish transport
+redelivery from genuine repeated speech; new arrivals are retained. No settings,
+database migration or provider calls are added. Real adapter acceptance is
+pending access.
+
 ## Retaining quote premises for delayed learning (0.36)
 
 Explicit native quote text now accompanies an eligible observation in the plugin

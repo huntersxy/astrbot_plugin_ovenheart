@@ -38,7 +38,7 @@ from .learning import (
     parse_learning_review,
 )
 from .memory_bridge import MemoryBridge
-from .participation import ParticipationController
+from .participation import ParticipationController, event_source
 from .retrieval import HabitRetriever
 from .settings import (
     DEFAULTS,
@@ -679,11 +679,7 @@ class PersonaPlugin(Star):
         ):
             return
         scope, persona, label = await self.resolve_scope(event)
-        # Platform IDs, not content hashes, deduplicate re-deliveries and hook overlap.
-        source = str(
-            event.message_obj.message_id
-            or f"{sender}:{event.message_obj.timestamp}:{hashlib.sha256(text.encode()).hexdigest()}"
-        )
+        source = event_source(event)
         quoted = None
         component = next(
             (part for part in event.get_messages() if isinstance(part, Reply)), None
@@ -841,13 +837,13 @@ class PersonaPlugin(Star):
                     (plan["scope"], target.get("source"))
                 )
                 if source is not None:
-                    current_source = str(
-                        source.message_obj.message_id
-                        or f"{source.get_sender_id()}:{source.created_at}"
-                    )
+                    current_source = event_source(source)
+                    native_id = getattr(source.message_obj, "message_id", None)
                     if (
                         source.get_sender_id() != target.get("sender_id")
                         or current_source != target.get("source")
+                        or (str(native_id).strip() if native_id is not None else "")
+                        != target.get("message_id", "")
                         or source.get_message_str()[:1200] != target.get("text")
                         or source.unified_msg_origin != event.unified_msg_origin
                         or not await self.permitted(source)
@@ -1056,7 +1052,9 @@ class PersonaPlugin(Star):
             decoration = plan.get("decoration")
             if decoration and target:
                 self.apply_planned_decoration(event, decoration, target)
-            if target_id and target_id != str(event.message_obj.message_id or ""):
+            if target_id and target_id != str(
+                getattr(event.message_obj, "message_id", "") or ""
+            ):
                 # The host decorator quotes event.message_obj.message_id after this
                 # hook, so binding it here makes the visible quote match the person
                 # the planner actually answered instead of the newest message.
@@ -1538,10 +1536,7 @@ class PersonaPlugin(Star):
             await self.store.call("note_reply", scope, room_key)
             room = self.participation.rooms.get(room_key)
             plan = event.get_extra("ovenheart_decision")
-            source = str(
-                event.message_obj.message_id
-                or f"{event.get_sender_id()}:{event.created_at}"
-            )
+            source = event_source(event)
             current = room is None or room["source"] == (
                 plan["room_source"] if plan else source
             )

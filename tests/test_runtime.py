@@ -377,9 +377,7 @@ async def test_learning_and_review_receive_linked_quote_context_without_new_evid
 
 
 @pytest.mark.parametrize("condition", ["blocked", "unknown_author", "foreign_scope"])
-async def test_learning_quote_context_respects_author_and_scope(
-    plugin, condition
-):
+async def test_learning_quote_context_respects_author_and_scope(plugin, condition):
     plugin.settings["blocked_senders"] = (
         ["bob"] if condition == "blocked" else ["mallory"]
     )

@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.36.1
+
+- Replace ID-less learning's sender/second/text fallback with a cached per-event identity. Distinct identical arrivals survive equal native/arrival timestamps; repeated hooks on the same event still deduplicate. Existing platform IDs retain native redelivery deduplication.
+- Reuse the source helper across capture, room interruption, planning, send-stage context and memory anchor checks. Keep a fallback stable if an adapter later fills the ID, while validating the target's separate native ID/sender/text snapshot before memory binding.
+- Accept absent ID attributes and preserve generation-time event identity. Do not fabricate quoteable platform IDs or claim cross-object redelivery detection without a transport ID. No settings, provider calls or database changes are added.
+- Pass three focused native cases for collision/hook overlap, capture-to-send consistency and ID-less earlier-target binding with learning off. Production adapter behavior remains pending access.
+
 ## 0.36.0
 
 - Retain explicit native quote context with eligible raw observations, so delayed/manual learning and restarts keep the premise of a human reply. Add an idempotent `messages.reply_context` migration that preserves IDs, deduplication and existing rows; no historical quotes are invented.
