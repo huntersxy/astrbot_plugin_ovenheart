@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.39.0
+
+- Learn optional grounded expression samples alongside abstract style rules: at most three literal spans of up to 60 characters, each from the first 300 characters of the candidate's own cited human observation. Invalid origin fails without consuming the batch; missing samples remain compatible.
+- Include samples in existing admission review, lexical/vector/rerank recall, contextual selection and bounded final guidance without another model stage. Fingerprint sample text, exclude author metadata from delivery and prefer the abstract rule if samples exceed the injection budget.
+- Add a JSON sample column with provenance. Preserve manual locks and activation gates, clear samples on actual manual/learned wording changes, and restore them with snapshots. Legacy records/snapshots use empty samples; no historical extraction occurs.
+- Display read-only samples in library details with existing evidence styling. Document habit/snapshot retention separately from raw expiry. Pass four focused temporary-SQLite/native/simulated-provider checks and inspect the desktop fixture. Mobile and production style quality remain unverified.
+
 ## 0.38.1
 
 - Remove the dashboard's latest-1,000 cutoff from compact runtime habit retrieval. Older active habits, including previously cached semantic matches, remain eligible as the library grows.

@@ -13,7 +13,7 @@ from astrbot.core.star.session_llm_manager import SessionServiceManager
 from astrbot.core.star.session_plugin_manager import SessionPluginManager
 
 from . import prompts
-from .learning import build_guidance, build_guidance_parts
+from .learning import build_guidance, build_guidance_parts, habit_text
 from .settings import PROFILE_DEFAULTS, SHARED_SCOPE
 
 
@@ -493,9 +493,7 @@ class PageAPI:
             selected = [
                 current[t["id"]]
                 for t in selection["traits"]
-                if t["id"] in current
-                and current[t["id"]]["content"] == t["content"]
-                and current[t["id"]]["situation"] == t["situation"]
+                if t["id"] in current and habit_text(current[t["id"]]) == habit_text(t)
             ]
             system, temporary, included = build_guidance_parts(
                 latest["scope"]["profile"],
@@ -540,10 +538,7 @@ class PageAPI:
                     t["id"] in included
                     and (
                         t["id"] not in final_traits
-                        or any(
-                            final_traits[t["id"]][key] != t[key]
-                            for key in ("content", "situation")
-                        )
+                        or habit_text(final_traits[t["id"]]) != habit_text(t)
                     )
                     for t in selected
                 )

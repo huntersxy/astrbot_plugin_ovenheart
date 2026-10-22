@@ -219,6 +219,16 @@ async def lifespan(app):
             )
         ]
         run = await plugin.store.call("start_run", scope)
+        traits[0]["examples"] = [
+            {
+                "text": "好家伙",
+                "id": batch[1]["id"],
+                "sender": "演示用户",
+                "source_id": batch[1]["source_id"],
+                "created": batch[1]["created"],
+                "scope": scope,
+            }
+        ]
         review = {"enabled": True, "passed": 3, "flagged": 1, "candidates": []}
         for index, trait in enumerate(traits, 1):
             approved = trait["kind"] != "personality"
@@ -325,6 +335,16 @@ async def lifespan(app):
                     ],
                     "situation": "讨论烘焙步骤时",
                     "content": "先说明关键步骤，再补充容易出错的地方",
+                    "examples": [
+                        {
+                            "text": "先说关键步骤",
+                            "id": second_batch[0]["id"],
+                            "sender": "烘焙演示用户",
+                            "source_id": second_batch[0]["source_id"],
+                            "created": second_batch[0]["created"],
+                            "scope": second_scope,
+                        }
+                    ],
                 }
             ],
             plugin.settings | {"learning_enabled": True},

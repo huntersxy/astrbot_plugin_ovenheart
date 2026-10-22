@@ -33,6 +33,7 @@ from . import prompts
 from .learning import (
     LearningFormatError,
     build_guidance_parts,
+    habit_text,
     normalize_quote,
     parse_candidates,
     parse_learning_review,
@@ -1498,9 +1499,7 @@ class PersonaPlugin(Star):
         selected = [
             current[t["id"]]
             for t in selection["traits"]
-            if t["id"] in current
-            and current[t["id"]]["content"] == t["content"]
-            and current[t["id"]]["situation"] == t["situation"]
+            if t["id"] in current and habit_text(current[t["id"]]) == habit_text(t)
         ]
         role = ""
         if settings["guidance_delivery"] == "dual":
@@ -1914,6 +1913,10 @@ class PersonaPlugin(Star):
                 "evidence_ids": [e["id"] for e in t["evidence"]],
                 "merge_target": t.get("_merge_target"),
                 "refine": t.get("refine", False),
+                "examples": [
+                    {"evidence_id": e["id"], "text": e["text"]}
+                    for e in t.get("examples", [])
+                ],
             }
             for index, t in enumerate(traits, 1)
         ]
@@ -2001,6 +2004,10 @@ class PersonaPlugin(Star):
                     "evidence_ids": [e["id"] for e in trait["evidence"]],
                     "merge_target": trait.get("_merge_target"),
                     "refine": trait.get("refine", False),
+                    "examples": [
+                        {"evidence_id": e["id"], "text": e["text"]}
+                        for e in trait.get("examples", [])
+                    ],
                 }
             )
         return [

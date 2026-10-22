@@ -167,6 +167,7 @@ class Store:
             "rating": "INTEGER NOT NULL DEFAULT 0",
             "manual": "INTEGER NOT NULL DEFAULT 0",
             "meaning_stage": "INTEGER NOT NULL DEFAULT 0",
+            "examples": "TEXT NOT NULL DEFAULT '[]'",
         }.items():
             if column not in columns:
                 db.execute(f"ALTER TABLE traits ADD COLUMN {column} {definition}")
@@ -506,6 +507,7 @@ class Store:
             ]
             for trait in result["traits"]:
                 trait["evidence"] = json.loads(trait["evidence"])
+                trait["examples"] = json.loads(trait["examples"])
             result["runs"] = [
                 dict(row) | {"review": json.loads(row["review"])}
                 for row in db.execute(
@@ -573,7 +575,11 @@ class Store:
         ).fetchone()[0]
         offset = min(offset // 100, max(0, (total - 1) // 100)) * 100
         traits = [
-            dict(row) | {"evidence": json.loads(row["evidence"])}
+            dict(row)
+            | {
+                "evidence": json.loads(row["evidence"]),
+                "examples": json.loads(row["examples"]),
+            }
             for row in db.execute(
                 f"SELECT t.*, s.label, s.persona FROM traits t JOIN scopes s ON s.id=t.scope WHERE {where} ORDER BY t.updated DESC, t.id DESC LIMIT 100 OFFSET ?",
                 (*values, offset),
@@ -826,9 +832,9 @@ class Store:
             (scope, SHARED_SCOPE if shared else scope),
         ).fetchone()
         traits = [
-            dict(t)
+            dict(t) | {"examples": json.loads(t["examples"])}
             for t in db.execute(
-                "SELECT id,kind,situation,content,confidence,status,created,updated,support_count,evidence_count,last_seen,use_count,rating,meaning_stage FROM traits WHERE (status='active' OR ?) AND ((kind='jargon' AND scope=? AND scope<>?) OR (kind<>'jargon' AND (scope=? OR ?))) ORDER BY updated DESC, id DESC",
+                "SELECT id,kind,situation,content,confidence,status,created,updated,support_count,evidence_count,last_seen,use_count,rating,meaning_stage,examples FROM traits WHERE (status='active' OR ?) AND ((kind='jargon' AND scope=? AND scope<>?) OR (kind<>'jargon' AND (scope=? OR ?))) ORDER BY updated DESC, id DESC",
                 (
                     include_inactive,
                     scope,
@@ -1165,8 +1171,26 @@ class Store:
                         and confidence >= settings["auto_confidence"]
                     ):
                         status = "active"
+                    examples = json.loads(target["examples"])
+                    if not target["manual"] and (
+                        status == "pending"
+                        or (
+                            settings["activation_mode"] == "auto"
+                            and confidence >= settings["auto_confidence"]
+                            and trait["confidence"] >= settings["auto_confidence"]
+                        )
+                    ):
+                        if (
+                            situation != target["situation"]
+                            or content != target["content"]
+                        ):
+                            examples = []
+                        for example in trait.get("examples", []):
+                            if example["text"] not in {e["text"] for e in examples}:
+                                examples.append(example)
+                        examples = examples[:3]
                     db.execute(
-                        "UPDATE traits SET evidence=?, evidence_count=evidence_count+?, support_count=?, last_seen=?, confidence=?, situation=?, content=?, status=?, meaning_stage=?, updated=? WHERE id=?",
+                        "UPDATE traits SET evidence=?, evidence_count=evidence_count+?, support_count=?, last_seen=?, confidence=?, situation=?, content=?, status=?, meaning_stage=?, examples=?, updated=? WHERE id=?",
                         (
                             json.dumps(
                                 (evidence + new_evidence)[-32:], ensure_ascii=False
@@ -1179,6 +1203,7 @@ class Store:
                             content,
                             status,
                             stage,
+                            json.dumps(examples, ensure_ascii=False),
                             now,
                             target["id"],
                         ),
@@ -1194,7 +1219,7 @@ class Store:
                     else "pending"
                 )
                 cursor = db.execute(
-                    "INSERT OR IGNORE INTO traits(scope, kind, situation, content, confidence, evidence, status, fingerprint, created, updated) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    "INSERT OR IGNORE INTO traits(scope, kind, situation, content, confidence, evidence, status, fingerprint, created, updated, examples) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     (
                         trait_scope,
                         trait["kind"],
@@ -1206,6 +1231,7 @@ class Store:
                         fingerprint,
                         now,
                         now,
+                        json.dumps(trait.get("examples", []), ensure_ascii=False),
                     ),
                 )
                 if cursor.rowcount:
@@ -1354,7 +1380,7 @@ class Store:
             )
         elif action in ("trait", "feedback"):
             row = db.execute(
-                "SELECT id,kind FROM traits WHERE scope=? AND id=?",
+                "SELECT id,kind,situation,content FROM traits WHERE scope=? AND id=?",
                 (scope, payload["id"]),
             ).fetchone()
             if not row:
@@ -1383,6 +1409,14 @@ class Store:
                     (value, time.time(), scope, payload["id"]),
                 )
             if action == "trait":
+                if any(
+                    key in updates and updates[key] != row[key]
+                    for key in ("situation", "content")
+                ):
+                    db.execute(
+                        "UPDATE traits SET examples='[]' WHERE scope=? AND id=?",
+                        (scope, payload["id"]),
+                    )
                 db.execute(
                     "UPDATE traits SET manual=1 WHERE scope=? AND id=?",
                     (scope, payload["id"]),
@@ -1405,13 +1439,14 @@ class Store:
             )
             for trait in data["traits"]:
                 db.execute(
-                    "UPDATE traits SET situation=?, content=?, confidence=?, evidence=?, status=?, updated=? WHERE scope=? AND id=?",
+                    "UPDATE traits SET situation=?, content=?, confidence=?, evidence=?, status=?, examples=?, updated=? WHERE scope=? AND id=?",
                     (
                         trait["situation"],
                         trait["content"],
                         trait["confidence"],
                         trait["evidence"],
                         trait["status"],
+                        trait.get("examples", "[]"),
                         time.time(),
                         scope,
                         trait["id"],

@@ -1,5 +1,39 @@
 # OvenHeart workshop guide
 
+## Grounded expression samples (0.39)
+
+Expressions may retain three short source spans alongside their rule. The existing
+extractor can return `examples: [{"evidence_id": 1, "text": "..."}]`. Each span
+must be at most 60 characters and literally occur in the first 300 characters of
+that candidate's own cited human observation. Duplicates add no evidence count.
+Context, quotes, memory and self turns cannot serve as sources. Malformed shapes
+use existing repair; fabricated spans fail without consuming materials. Missing
+samples remain compatible. Customized prompts are preserved; update their
+instructions or restore defaults to request extraction/review of samples.
+
+Existing admission review checks applicability, personal facts, privacy, identity
+and tool-instruction concerns alongside the rule. Literal matching proves origin,
+not suitability; disabling review omits this model check. Existing lexical,
+vector, rerank and contextual selection consider sample text. Its content digest
+invalidates affected caches. Final guidance contains text without author/source
+metadata, using the existing budget and preferring the abstract rule if samples
+do not fit. Cached delivery stays temporary. No extra chat stage is introduced.
+Samples are style references, not fixed lines, bot facts or tool permissions.
+
+Library details show read-only samples, source and time. Approval with unchanged
+wording retains them; actual manual edits clear them. Manual locks prevent
+replacement. Unlocked reinforcement follows existing activation/confidence gates
+and retains the first three distinct samples. Active habits in review mode do not
+gain unapproved active samples. Learned wording refinement clears old samples
+before considering new ones. Snapshot restore restores samples; legacy snapshots
+restore an empty list. Upgrade adds an empty JSON column without historical mining.
+
+Samples/provenance persist with habits and snapshots, like existing evidence
+excerpts, independently of raw-material expiry/clearing. Blacklist changes retain
+existing habits/samples; operators can disable or edit them. Four focused checks
+use temporary SQLite and simulated providers. The [desktop fixture capture](../assets/expression-examples-v0.39-desktop.png)
+was inspected; mobile and production style quality remain unverified.
+
 Since 0.38.1, runtime recall reads all scope-eligible compact active records,
 and learning reads compact records with their actual states from writable merge
 scopes. Neither inherits dashboard detail's latest-1,000 cutoff. Older active

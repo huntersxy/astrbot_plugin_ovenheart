@@ -64,7 +64,7 @@ SPECS = {
             "persona": "宿主人格与人工底稿的 JSON",
             "conversation": "当前输入与最近上下文，最多 2400 字",
             "max_selected": "本次最多可选的习惯条数",
-            "candidates": "候选习惯，含 id、类别、情境与内容",
+            "candidates": "候选习惯，含 id、类别、情境、内容及可选原话片段 examples",
             "recent_expression_ids": "本会话最近三次发送阶段提供的表达 ID，仅用于适度变化",
             "expression_intent": "自主参与本轮的表达意图，仅为参考；普通回复为空对象",
         },

@@ -15,7 +15,12 @@ from astrbot.api.platform import MessageType
 from astrbot.core.message.components import Plain, Reply
 from astrbot.core.star.session_llm_manager import SessionServiceManager
 
-from .learning import LearningFormatError, build_guidance, decode_model_object
+from .learning import (
+    LearningFormatError,
+    build_guidance,
+    decode_model_object,
+    habit_text,
+)
 from .settings import SHARED_SCOPE
 
 PLANNER_SYSTEM = """你是群聊中的参与决策器，不是最终回复者。根据身份、行为习惯与最近真实消息，决定参与、等待或旁观。
@@ -654,9 +659,7 @@ class ParticipationController:
         habits = [
             current[t["id"]]
             for t in selection["traits"]
-            if t["id"] in current
-            and current[t["id"]]["content"] == t["content"]
-            and current[t["id"]]["situation"] == t["situation"]
+            if t["id"] in current and habit_text(current[t["id"]]) == habit_text(t)
         ]
         anchor = plugin.context.persona_manager.get_persona_v3_by_id(persona)
         included = []
