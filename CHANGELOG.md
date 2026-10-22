@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.31.1
+
+- Preserve stored capture timestamps in extraction/review observations and automatically supplied review neighbors. Previously learning omitted timing, and review could associate adjacent rows from distant periods.
+- Limit inferred review neighbors to the existing five-minute context radius, excluding missing-time records while preserving explicit quote links and evidence IDs. Default prompts distinguish temporal proximity from actual reply relationships and allow independent repeated evidence across periods.
+- Identify timestamps as Unix capture times, not original send times or proof of response speed, availability or mood. Keep dynamic timing after stable known-habit fields; add no calls, settings, schema migrations or new data retention.
+- Pass five focused learning/review checks covering both extraction stages, review propagation, gap and missing-time exclusion, quote preservation, context limits and existing associations. Production learning quality remains pending access.
+
 ## 0.31.0
 
 - Add an explicitly requested model example beside the existing free guidance preview. Use the saved profile, active habits, source persona and current conversation provider, with configured retrieval and the same bounded system/dual/cached assembly as runtime replies.

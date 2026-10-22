@@ -1,5 +1,9 @@
 # OvenHeart workshop guide
 
+Since 0.31.1, extraction/review `observations` retain their stored `created` timestamps: Unix seconds recorded at local capture, not original platform send times. Automatically supplied review neighbors must also be within five minutes of the cited observation, in addition to the existing two-row radius. Missing timestamps no longer produce inferred neighbors; explicit quoted context remains available. Default learning/review prompts distinguish temporal proximity from actual reply relationships while allowing independent evidence across periods to support a stable habit.
+
+This reuses existing source data without additional retention, settings or model calls. Dynamic timing stays after stable known-habit fields. Capture times cannot establish schedules, availability, real response speed or mood. Existing custom prompts remain unchanged and may be updated using the new defaults as a reference; human review and evidence accounting remain unchanged.
+
 ## Generate an example reply (0.31)
 
 The Profile preview adds **生成示例回复 / Generate an example reply** beside the existing free **预览生效内容** action. Existing navigation and the free lexical preview remain unchanged. Select a real source conversation in the header to resolve its native persona, permissions and current chat provider. Examples use the saved profile; save draft edits first.

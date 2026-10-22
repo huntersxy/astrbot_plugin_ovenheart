@@ -1619,7 +1619,8 @@ class PersonaPlugin(Star):
 
         Args:
             traits: Validated candidates from the extraction phases.
-            base: Immutable original learning input and identity anchor.
+            base: Immutable original learning input and identity anchor. Observation
+                created values are capture times used to bound inferred neighbors.
             provider_id: Existing native learning provider.
             deadline: Shared deadline for extraction, review and schema repairs.
 
@@ -1645,7 +1646,12 @@ class PersonaPlugin(Star):
             if observation["id"] not in cited:
                 continue
             for nearby in base["observations"][max(0, index - 2) : index + 3]:
-                if nearby["id"] == observation["id"]:
+                if (
+                    nearby["id"] == observation["id"]
+                    or observation.get("created") is None
+                    or nearby.get("created") is None
+                    or abs(nearby["created"] - observation["created"]) > 300
+                ):
                     continue
                 entry = neighbors.setdefault(
                     nearby["id"],
@@ -1653,6 +1659,7 @@ class PersonaPlugin(Star):
                         "observation_id": nearby["id"],
                         "sender": nearby["sender"],
                         "text": nearby["text"][:400],
+                        "created": nearby["created"],
                         "for_evidence_ids": [],
                     },
                 )
@@ -1984,7 +1991,7 @@ class PersonaPlugin(Star):
                 key=lambda m: m["created"],
             )
             observations = [
-                {"id": m["id"], "sender": m["sender"], "text": m["text"]} for m in batch
+                {k: m[k] for k in ("id", "sender", "text", "created")} for m in batch
             ]
             task = self.template(
                 "learning",

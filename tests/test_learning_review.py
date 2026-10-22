@@ -257,6 +257,89 @@ async def test_review_only_receives_memories_linked_to_cited_observations(plugin
     assert len(base["memory_context"]) == 3
 
 
+async def test_learning_and_review_keep_original_capture_times(plugin):
+    scope = await sources(plugin)
+    batch = await plugin.store.call("batch", scope, 30)
+    seen = []
+    plugin.settings["learning_review_enabled"] = True
+
+    async def generate(**kwargs):
+        payload = json.loads(kwargs["prompt"])
+        seen.append(payload)
+        if "candidates" in payload:
+            return SimpleNamespace(
+                completion_text=json.dumps(
+                    {
+                        "approved_ids": [
+                            c["candidate_id"] for c in payload["candidates"]
+                        ],
+                        "flagged": [],
+                    }
+                )
+            )
+        return await completion(**kwargs)
+
+    plugin.context.llm_generate = generate
+    result = await plugin.learn(scope)
+    assert result["status"] == "success" and len(seen) == 3
+    captured = {m["id"]: m["created"] for m in batch}
+    assert all(
+        {m["id"]: m["created"] for m in payload["observations"]} == captured
+        for payload in seen
+    )
+
+
+async def test_review_time_neighbors_exclude_gaps_and_unknown_times_but_keep_quotes(
+    plugin,
+):
+    observations = [
+        {"id": 1, "sender": "peer", "text": "旧话题", "created": 1000},
+        {"id": 2, "sender": "mentor", "text": "这次我先听你说", "created": 5000},
+        {"id": 3, "sender": "peer", "text": "五分钟内", "created": 5300},
+        {"id": 4, "sender": "peer", "text": "超过五分钟", "created": 5301},
+        {"id": 5, "sender": "mentor", "text": "缺少采集时间"},
+    ]
+    quoted = {
+        "relation": "reply_to",
+        "sender": "peer",
+        "text": "明确引用的旧问题",
+        "created": 1000,
+        "for_evidence_ids": [2],
+    }
+    plugin.context.llm_generate = AsyncMock(
+        return_value=SimpleNamespace(
+            completion_text='{"approved_ids":[1],"flagged":[]}'
+        )
+    )
+    await plugin._review_learning(
+        [
+            {
+                "kind": "behavior",
+                "situation": "倾诉时",
+                "content": "先倾听",
+                "evidence": [{"id": 2}, {"id": 5}],
+            }
+        ],
+        {
+            "identity_anchor": "小夏",
+            "profile": {},
+            "observations": observations,
+            "conversation_context": [quoted],
+            "memory_context": [],
+        },
+        "fixture",
+        time.monotonic() + 2,
+    )
+    payload = json.loads(plugin.context.llm_generate.await_args.kwargs["prompt"])
+    assert payload["conversation_context"][0] == quoted
+    neighbors = payload["conversation_context"][1:]
+    assert len(neighbors) == 1
+    assert neighbors[0]["observation_id"] == 3
+    assert neighbors[0]["created"] == 5300
+    assert neighbors[0]["for_evidence_ids"] == [2]
+    assert {m["id"] for m in payload["observations"]} == {2, 5}
+
+
 async def test_native_learning_refines_an_unlocked_habit_only_after_review(plugin):
     plugin.settings.update(
         activation_mode="auto", learning_review_enabled=True, learn_jargon=False
@@ -645,6 +728,7 @@ async def test_review_keeps_uncited_neighbor_requests_as_context_without_new_evi
             "id": i,
             "sender": "mentor" if i in (3, 7) else "peer",
             "text": f"消息{i}" + "x" * 450,
+            "created": 1700000000 + i,
         }
         for i in range(1, 22)
     ]
@@ -694,7 +778,8 @@ async def test_review_keeps_uncited_neighbor_requests_as_context_without_new_evi
 
 async def test_review_neighbor_context_retains_the_existing_total_bound(plugin):
     observations = [
-        {"id": i, "sender": "person", "text": "普通消息"} for i in range(1, 51)
+        {"id": i, "sender": "person", "text": "普通消息", "created": 1700000000 + i}
+        for i in range(1, 51)
     ]
     trait = {
         "kind": "expression",
@@ -757,6 +842,7 @@ async def test_context_is_not_lost_when_a_different_candidate_cites_the_request(
                     "id": i,
                     "sender": "peer" if i % 2 else "mentor",
                     "text": "只想倾诉" if i % 2 else "先听你说",
+                    "created": 1700000000 + i,
                 }
                 for i in range(1, 5)
             ],

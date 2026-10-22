@@ -69,7 +69,7 @@ SPECS = {
         "placeholders": {
             "persona": "宿主人格原文，最多 4000 字",
             "profile": "人工底稿",
-            "observations": "本批可学习的原始消息",
+            "observations": "本批可学习的原始消息，created 为 Unix 秒数的采集时间",
             "memory": "LivingMemory 检索到的长期记忆",
             "context": "邻近发言及所引用原文，仅用于理解语境",
             "known_traits": "已存习惯，仅作合并对照",
@@ -85,7 +85,7 @@ SPECS = {
         "placeholders": {
             "persona": "宿主人格原文",
             "profile": "人工底稿",
-            "observations": "被候选引用的原始消息",
+            "observations": "被候选引用的原始消息，含采集时间 created",
             "context": "关联的邻近发言与被引用原文",
             "memory": "只在理解语境时参考的记忆",
             "candidates": "待核对的候选",
