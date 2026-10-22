@@ -661,6 +661,7 @@ class PersonaPlugin(Star):
             self.debug("capture_skipped", sender=sender, reason="blocked_sender")
             return
         targets = self.settings["target_senders"]
+        capture_revision = self.settings_revision
         context_only = bool(targets and sender not in targets)
         cfg = (
             cfg
@@ -723,9 +724,13 @@ class PersonaPlugin(Star):
                     or quoted_sender not in ("", "0")
                 )
             ):
-                quoted = {"sender": quoted_sender, "text": quoted_text[:1200]}
-        if targets == self.settings["target_senders"] and (targets or quoted):
-            # Quoted text is linked volatile context, never another observation.
+                quoted = {
+                    "sender": quoted_sender,
+                    "text": quoted_text[:1200],
+                    "self": quoted_sender == str(event.get_self_id()),
+                }
+        if capture_revision == self.settings_revision:
+            # Human anchors link quotes and send-stage replies without adding evidence.
             window = self.learning_context.pop(scope, deque(maxlen=64))
             now = time.time()
             window = deque((m for m in window if now - m["created"] <= 300), maxlen=64)
@@ -744,6 +749,16 @@ class PersonaPlugin(Star):
             )
             if len(self.learning_context) > 128:
                 self.learning_context.pop(next(iter(self.learning_context)))
+            event.set_extra(
+                "ovenheart_learning_source",
+                {
+                    "scope": scope,
+                    "persona": persona,
+                    "label": label,
+                    "source": source,
+                    "revision": capture_revision,
+                },
+            )
         if context_only:
             return
         self.events[scope] = event
@@ -1167,6 +1182,7 @@ class PersonaPlugin(Star):
         if not event.get_extra("ovenheart_observed", False):
             await self.capture(event)
         scope, persona, label = await self.resolve_scope(event, req)
+        event.set_extra("ovenheart_reply_scope", scope)
         state = await self.store.call(
             "guidance", scope, not self.settings["session_isolation"]
         )
@@ -1384,12 +1400,81 @@ class PersonaPlugin(Star):
 
     @filter.after_message_sent()
     async def record_delivery(self, event: AstrMessageEvent):
-        """Record send-stage prompt exposure without claiming confirmed delivery.
+        """Record exposure and volatile self context at the native send stage.
+
+        Self context requires an eligible human anchor and a native model request
+        in the same scope. The hook does not establish platform delivery success.
 
         Args:
             event: Native message event after the send pipeline.
         """
         application = event.get_extra("ovenheart_application")
+        learning_source = event.get_extra("ovenheart_learning_source")
+        if (
+            learning_source
+            and event.get_extra("ovenheart_reply_scope") == learning_source["scope"]
+            and self.settings["learning_enabled"]
+            and learning_source["revision"] == self.settings_revision
+            and await self.permitted(event)
+        ):
+            scope = learning_source["scope"]
+            window = self.learning_context.get(scope, ())
+            anchor = next(
+                (
+                    item
+                    for item in window
+                    if not item.get("self")
+                    and item["source_id"] == learning_source["source"]
+                    and time.time() - item["created"] <= 300
+                ),
+                None,
+            )
+            result = event.get_result()
+            text = result.get_plain_text().strip()[:1200] if result else ""
+            if (
+                anchor is not None
+                and text
+                and await self.store.call(
+                    "capture",
+                    scope,
+                    event.unified_msg_origin,
+                    learning_source["persona"],
+                    learning_source["label"],
+                    "",
+                    anchor["sender"],
+                    "",
+                    self.settings,
+                    True,
+                )
+            ):
+                window = self.learning_context.get(scope, ())
+                now = time.time()
+                if (
+                    learning_source["revision"] == self.settings_revision
+                    and any(item is anchor for item in window)
+                    and now - anchor["created"] <= 300
+                    and not any(
+                        item.get("self")
+                        and item.get("trigger") == learning_source["source"]
+                        and item["text"] == text
+                        for item in window
+                    )
+                ):
+                    window = deque(
+                        (m for m in window if now - m["created"] <= 300), maxlen=64
+                    )
+                    window.append(
+                        {
+                            "source_id": "bot:" + uuid4().hex,
+                            "trigger": learning_source["source"],
+                            "sender": event.get_self_id(),
+                            "text": text,
+                            "created": now,
+                            "self": True,
+                        }
+                    )
+                    self.learning_context[scope] = window
+                    self.debug("learning_self_context", scope=scope, text=text)
         if self.settings["participation_mode"] != "off" and await self.permitted(event):
             scope, _, _ = await self.resolve_scope(event)
             room_key = self.participation.room_key(event)
@@ -1944,7 +2029,11 @@ class PersonaPlugin(Star):
             window = list(self.learning_context.get(scope, ()))
             now = time.time()
             for index, item in enumerate(window):
-                if item["source_id"] not in sources or now - item["created"] > 300:
+                if (
+                    item.get("self")
+                    or item["source_id"] not in sources
+                    or now - item["created"] > 300
+                ):
                     continue
                 quoted = item.get("reply_to")
                 if (
@@ -1960,27 +2049,34 @@ class PersonaPlugin(Star):
                         "sender": quoted["sender"],
                         "text": quoted["text"][:400],
                         "created": item["created"],
+                        "self": bool(quoted.get("self")),
                         "for_evidence_ids": [sources[item["source_id"]]],
                     }
-                if settings["target_senders"]:
-                    for nearby in window[max(0, index - 2) : index + 3]:
-                        if (
-                            nearby["sender"] in settings["target_senders"]
-                            or nearby["sender"] in settings["blocked_senders"]
-                            or now - nearby["created"] > 300
-                            or abs(nearby["created"] - item["created"]) > 300
-                        ):
-                            continue
-                        entry = context.setdefault(
-                            nearby["source_id"],
-                            {
-                                "sender": nearby["sender"],
-                                "text": nearby["text"][:400],
-                                "created": nearby["created"],
-                                "for_evidence_ids": [],
-                            },
+                for nearby in window[max(0, index - 2) : index + 3]:
+                    if (
+                        (
+                            not nearby.get("self")
+                            and (
+                                not settings["target_senders"]
+                                or nearby["sender"] in settings["target_senders"]
+                            )
                         )
-                        entry["for_evidence_ids"].append(sources[item["source_id"]])
+                        or nearby["sender"] in settings["blocked_senders"]
+                        or now - nearby["created"] > 300
+                        or abs(nearby["created"] - item["created"]) > 300
+                    ):
+                        continue
+                    entry = context.setdefault(
+                        nearby["source_id"],
+                        {
+                            "sender": nearby["sender"],
+                            "text": nearby["text"][:400],
+                            "created": nearby["created"],
+                            "self": bool(nearby.get("self")),
+                            "for_evidence_ids": [],
+                        },
+                    )
+                    entry["for_evidence_ids"].append(sources[item["source_id"]])
             # Explicit reply links take priority over nearby, inferred context
             # within the existing sixteen-item request budget.
             conversation_context = sorted(

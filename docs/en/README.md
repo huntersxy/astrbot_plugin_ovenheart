@@ -1,5 +1,15 @@
 # OvenHeart workshop guide
 
+## Learning from human replies to the bot (0.32)
+
+Extraction and review can now use the bot's preceding message to understand a human response. This works with both all-speaker and selected-speaker learning, even when autonomous participation is off, and adds no model calls. Own text remains context rather than something to imitate or reinforce.
+
+Only native model replies reaching the send-stage callback are eligible. They require a live captured human anchor and a matching native session/persona request scope. Commands, uncaptured events and persona-mismatched results cannot backfill this context. Own text is cached up to 1,200 characters, marked `self=true`, and offered as a neighbor within the existing two-row/five-minute radius, truncated to 400 characters. It shares the existing five-minute, 64-entry, 128-scope cache and sixteen-context request bounds. It does not enter observations, evidence IDs, stored source materials, chat history or exposure accounting. Explicitly quoted bot text receives the same self marker.
+
+Default extraction/review prompts reject learning the bot's own wording, preferences or conclusions from human assent. This constrains the semantic task rather than guaranteeing perfect model judgment; human review remains useful. Current access/profile settings, blacklist changes, clearing, expiry and scope changes invalidate late additions; repeated callbacks deduplicate identical own text. Opt-in `learning_self_context` diagnostics show retained own text.
+
+The callback establishes a send-stage observation, not confirmed platform delivery. Native direct streaming paths that skip the callback cannot supply this text; generated output is not substituted for it. Autonomous replies keep their existing buffered sending path. Model examples neither read nor populate this context.
+
 Since 0.31.1, extraction/review `observations` retain their stored `created` timestamps: Unix seconds recorded at local capture, not original platform send times. Automatically supplied review neighbors must also be within five minutes of the cited observation, in addition to the existing two-row radius. Missing timestamps no longer produce inferred neighbors; explicit quoted context remains available. Default learning/review prompts distinguish temporal proximity from actual reply relationships while allowing independent evidence across periods to support a stable habit.
 
 This reuses existing source data without additional retention, settings or model calls. Dynamic timing stays after stable known-habit fields. Capture times cannot establish schedules, availability, real response speed or mood. Existing custom prompts remain unchanged and may be updated using the new defaults as a reference; human review and evidence accounting remain unchanged.

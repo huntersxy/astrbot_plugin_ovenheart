@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.32.0
+
+- Supply native send-stage self replies as volatile learning context, including ordinary conversations with autonomous participation disabled. Require an eligible captured human anchor and a matching native model-request scope; support both all-speaker and target-speaker learning.
+- Mark own and explicitly quoted own text with `self=true` throughout extraction/review. Keep it outside observations, evidence IDs, source counts, stored raw materials and exposure accounting. Default prompts forbid learning self wording or treating human assent as endorsement of the bot's preferences or conclusions.
+- Reuse five-minute, 64-entry, 128-scope cache bounds and existing neighbor/request budgets. Recheck settings/profile access, reject expired or cleared anchors and persona mismatches, and deduplicate repeated callbacks. Streaming paths without a native send callback are not reconstructed from generated text.
+- Add opt-in `learning_self_context` diagnostics and update bilingual documentation without extra model calls or configuration. Eight focused native learning checks and two existing neighbor/participation checks pass; real-platform learning quality remains pending access.
+
 ## 0.31.1
 
 - Preserve stored capture timestamps in extraction/review observations and automatically supplied review neighbors. Previously learning omitted timing, and review could associate adjacent rows from distant periods.
