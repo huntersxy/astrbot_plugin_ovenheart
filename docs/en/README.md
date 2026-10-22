@@ -1,5 +1,27 @@
 # OvenHeart workshop guide
 
+## Grouped sampling for multiple explicit targets (0.43)
+
+With two or more explicitly selected learning targets, select oldest eligible
+messages in per-speaker groups of `min_evidence`: consider each speaker's first
+group before second groups, with original message order breaking same-group ties.
+Restore chronological order before extraction, preserving source/quote links.
+For 40 earlier messages from A and four later messages from B, size eight and
+minimum evidence two can select four from each; language statistics stay separate.
+
+All-speaker and single-target sampling retain FIFO. Apply blacklists before
+grouping, keep native scope boundaries, and consume only the actual successful
+batch. Unselected rows remain pending under existing retention/caps. Trigger,
+batch-size, activation and review settings stay unchanged, without another model
+call, switch or schema migration.
+
+Coverage remains capacity-limited, not a guarantee of per-speaker learned output
+or strict cross-batch rotation. If target count times minimum evidence exceeds
+batch capacity, increase batch size or select fewer targets to fit full first
+groups. Unstable language still need not produce a trait. Four temporary-SQLite
+and simulated-native checks cover group sizes, defaults/blacklist, exact
+consumption and end-to-end speaker statistics. Production quality is unverified.
+
 ## Soft rotation among comparable expressions (0.42)
 
 Lexical, hybrid and rerank modes now use existing native-session recent expression

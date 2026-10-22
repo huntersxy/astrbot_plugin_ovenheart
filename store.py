@@ -768,8 +768,10 @@ class Store:
             for row in db.execute("SELECT key, body FROM prompts")
         }
 
-    def batch(self, db, scope, size, target_senders=None, blocked_senders=None):
-        """Read the oldest unconsumed messages for a learning batch.
+    def batch(
+        self, db, scope, size, target_senders=None, blocked_senders=None, min_evidence=2
+    ):
+        """Read bounded source materials, balancing explicitly selected speakers.
 
         Args:
             db: Open database connection.
@@ -777,6 +779,8 @@ class Store:
             size: Batch size limit.
             target_senders: Current eligible senders, including after settings changes.
             blocked_senders: Users excluded even if also selected as targets.
+            min_evidence: Size of each speaker's evidence group when multiple
+                speakers are explicitly selected; capacity still bounds coverage.
 
         Returns:
             Retained observations in arrival order.
@@ -798,9 +802,20 @@ class Store:
                 " AND sender NOT IN (" + ",".join("?" for _ in blocked) + ")"
             )
         messages = []
+        order = (
+            "(ROW_NUMBER() OVER (PARTITION BY sender ORDER BY id) - 1) / ?, id"
+            if len(targets) > 1
+            else "id"
+        )
         for row in db.execute(
-            f"SELECT * FROM messages WHERE scope=? AND consumed=0{sender_filter} ORDER BY id LIMIT ?",
-            (scope, *targets, *blocked, size),
+            f"SELECT * FROM messages WHERE scope=? AND consumed=0{sender_filter} ORDER BY {order} LIMIT ?",
+            (
+                scope,
+                *targets,
+                *blocked,
+                *([max(1, min_evidence)] if len(targets) > 1 else []),
+                size,
+            ),
         ):
             item = dict(row)
             try:
@@ -810,7 +825,7 @@ class Store:
             if quote:
                 item["reply_to"] = quote
             messages.append(item)
-        return messages
+        return sorted(messages, key=lambda m: m["id"])
 
     def guidance(self, db, scope, shared=False, include_inactive=False):
         """Load only the fields needed on the reply path, excluding evidence bodies.

@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.43.0
+
+- Balance explicitly selected multiple speakers in bounded learning batches. Order each speaker's oldest eligible messages in groups sized by the configured minimum evidence, select across groups, then restore chronological order for model observations and context linkage.
+- Prevent one target's long earlier backlog from monopolizing a capacity-sufficient batch. Preserve FIFO for all-speaker and single-target modes, blacklist priority, scope isolation, quote validation and exact successful-batch consumption. Unselected materials remain pending under existing retention/caps.
+- Reuse the same batch size, thresholds, extraction/review stages and per-speaker statistics. No configuration, schema migration or extra model call is introduced. Capacity still limits coverage when target count times minimum evidence exceeds the batch; sampling does not guarantee a learned trait per speaker.
+- Pass four focused SQLite/native cases for two evidence-group sizes, default/blacklist behavior, exact consumption and end-to-end speaker/statistics coverage using one simulated extraction call.
+
 ## 0.42.0
 
 - Prefer recently unprovided expression references among near-equivalent lexical/hybrid/rerank candidates. Use the caller's existing native-session exposure IDs, a five-percent ranking tolerance and additional lexical/cosine proximity checks without rerank. Do not rotate personality, behavior, jargon, identical wording or clearly lower-ranked styles.

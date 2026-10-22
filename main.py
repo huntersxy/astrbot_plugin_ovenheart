@@ -2098,6 +2098,7 @@ class PersonaPlugin(Star):
                 settings["batch_size"],
                 settings["target_senders"],
                 settings["blocked_senders"],
+                settings["min_evidence"],
             )
             if len(batch) < settings["min_evidence"]:
                 raise ValueError(
