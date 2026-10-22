@@ -672,8 +672,26 @@ class PersonaPlugin(Star):
             source=source,
             context_only=context_only,
         )
-        if targets and targets == self.settings["target_senders"]:
-            # Context is volatile and scoped; only target observations enter SQLite.
+        quoted = None
+        component = next(
+            (part for part in event.get_messages() if isinstance(part, Reply)), None
+        )
+        if component is not None:
+            quoted_sender = str(component.sender_id or "").strip()
+            quoted_text = (component.message_str or "").strip() or "".join(
+                part.text for part in component.chain or [] if isinstance(part, Plain)
+            )
+            if (
+                quoted_text
+                and quoted_sender not in self.settings["blocked_senders"]
+                and (
+                    not self.settings["blocked_senders"]
+                    or quoted_sender not in ("", "0")
+                )
+            ):
+                quoted = {"sender": quoted_sender, "text": quoted_text[:1200]}
+        if targets == self.settings["target_senders"] and (targets or quoted):
+            # Quoted text is linked volatile context, never another observation.
             window = self.learning_context.pop(scope, deque(maxlen=64))
             now = time.time()
             window = deque((m for m in window if now - m["created"] <= 300), maxlen=64)
@@ -684,6 +702,7 @@ class PersonaPlugin(Star):
                         "sender": sender,
                         "text": text[:1200],
                         "created": event.created_at,
+                        "reply_to": quoted,
                     }
                 )
             self.learning_context[scope] = deque(
@@ -1845,13 +1864,29 @@ class PersonaPlugin(Star):
                     }
                 )
             context = {}
-            if settings["target_senders"]:
-                sources = {m["source_id"]: m["id"] for m in batch}
-                window = list(self.learning_context.get(scope, ()))
-                now = time.time()
-                for index, item in enumerate(window):
-                    if item["source_id"] not in sources or now - item["created"] > 300:
-                        continue
+            sources = {m["source_id"]: m["id"] for m in batch}
+            window = list(self.learning_context.get(scope, ()))
+            now = time.time()
+            for index, item in enumerate(window):
+                if item["source_id"] not in sources or now - item["created"] > 300:
+                    continue
+                quoted = item.get("reply_to")
+                if (
+                    quoted
+                    and quoted["sender"] not in settings["blocked_senders"]
+                    and (
+                        not settings["blocked_senders"]
+                        or quoted["sender"] not in ("", "0")
+                    )
+                ):
+                    context[("quote", item["source_id"])] = {
+                        "relation": "reply_to",
+                        "sender": quoted["sender"],
+                        "text": quoted["text"][:400],
+                        "created": item["created"],
+                        "for_evidence_ids": [sources[item["source_id"]]],
+                    }
+                if settings["target_senders"]:
                     for nearby in window[max(0, index - 2) : index + 3]:
                         if (
                             nearby["sender"] in settings["target_senders"]
@@ -1870,6 +1905,15 @@ class PersonaPlugin(Star):
                             },
                         )
                         entry["for_evidence_ids"].append(sources[item["source_id"]])
+            # Explicit reply links take priority over nearby, inferred context
+            # within the existing sixteen-item request budget.
+            conversation_context = sorted(
+                sorted(
+                    context.values(),
+                    key=lambda m: (m.get("relation") == "reply_to", m["created"]),
+                )[-16:],
+                key=lambda m: m["created"],
+            )
             observations = [
                 {"id": m["id"], "sender": m["sender"], "text": m["text"]} for m in batch
             ]
@@ -1879,7 +1923,7 @@ class PersonaPlugin(Star):
                 profile=selected["profile"],
                 observations=observations,
                 memory=memories,
-                context=sorted(context.values(), key=lambda m: m["created"])[-16:],
+                context=conversation_context,
                 known_traits=[
                     {k: t[k] for k in ("id", "kind", "situation", "content", "status")}
                     for t in known
@@ -1898,9 +1942,7 @@ class PersonaPlugin(Star):
                     "observations": observations,
                     "memory_context": memories,
                     "language_features": language_features,
-                    "conversation_context": sorted(
-                        context.values(), key=lambda m: m["created"]
-                    )[-16:],
+                    "conversation_context": conversation_context,
                     "known_traits": [
                         {
                             k: t[k]

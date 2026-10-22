@@ -28,6 +28,7 @@ from astrbot.api.platform import (  # noqa: E402
 from astrbot.api.provider import ProviderRequest  # noqa: E402
 from astrbot.api.star import StarTools  # noqa: E402
 from astrbot.api.web import PluginRequest, bind_request_context  # noqa: E402
+from astrbot.core.message.components import Plain, Reply  # noqa: E402
 from starlette.requests import Request  # noqa: E402
 
 from astrbot_plugin_ovenheart.main import (  # noqa: E402
@@ -306,6 +307,110 @@ async def test_target_learning_uses_neighbors_without_persisting_or_learning_the
         plugin.page_api.action, {"action": "clear_messages", "scope": scope}
     )
     assert cleared["status"] == "ok" and scope not in plugin.learning_context
+
+
+@pytest.mark.parametrize("chain_only", [False, True])
+async def test_learning_and_review_receive_linked_quote_context_without_new_evidence(
+    plugin, chain_only
+):
+    plugin.settings.update(
+        learning_review_enabled=True,
+        target_senders=["alice"] if chain_only else [],
+    )
+
+    async def generate(**kwargs):
+        payload = json.loads(kwargs["prompt"])
+        if "candidates" in payload:
+            return SimpleNamespace(
+                completion_text=json.dumps(
+                    {
+                        "approved_ids": [
+                            c["candidate_id"] for c in payload["candidates"]
+                        ],
+                        "flagged": [],
+                    }
+                )
+            )
+        return await completion(**kwargs)
+
+    plugin.context.llm_generate.side_effect = generate
+    for index in range(2):
+        incoming = event(f"quoted-answer-{index}", text="我先听你说，慢慢来。")
+        incoming.message_obj.message = [
+            Reply(
+                id=f"outside-{index}",
+                sender_id="bob",
+                message_str=""
+                if chain_only
+                else "QUOTED_ONLY：我只想倾诉，先不用建议。",
+                chain=[Plain("QUOTED_ONLY：我只想倾诉，先不用建议。")]
+                if chain_only
+                else [],
+            )
+        ]
+        await plugin.capture(incoming)
+    scope, _, _ = await plugin.resolve_scope(incoming)
+    batch = await plugin.store.call("batch", scope, 100)
+    assert len(batch) == 2 and all("QUOTED_ONLY" not in m["text"] for m in batch)
+    assert (await plugin.learn(scope))["status"] == "success"
+    calls = [
+        json.loads(call.kwargs["prompt"])
+        for call in plugin.context.llm_generate.await_args_list
+    ]
+    assert any("candidates" in payload for payload in calls)
+    for payload in calls:
+        assert {m["sender"] for m in payload["observations"]} == {"alice"}
+        links = [
+            c
+            for c in payload["conversation_context"]
+            if c.get("relation") == "reply_to"
+        ]
+        assert len(links) == 2
+        assert all(c["sender"] == "bob" and "QUOTED_ONLY" in c["text"] for c in links)
+        assert all("id" not in c and len(c["for_evidence_ids"]) == 1 for c in links)
+        assert {c["for_evidence_ids"][0] for c in links} == {m["id"] for m in batch}
+    state = await plugin.store.call("state", scope)
+    assert "QUOTED_ONLY" not in json.dumps(state)
+    assert {e["id"] for t in state["traits"] for e in t["evidence"]} <= {
+        m["id"] for m in batch
+    }
+
+
+@pytest.mark.parametrize(
+    "condition", ["blocked", "unknown_author", "expired", "foreign_scope"]
+)
+async def test_learning_quote_context_respects_author_expiry_and_scope(
+    plugin, condition
+):
+    plugin.settings["blocked_senders"] = (
+        ["bob"] if condition == "blocked" else ["mallory"]
+    )
+    for index in range(2):
+        incoming = event(
+            f"quote-{index}",
+            text="我先听你说。",
+            session="456" if condition == "foreign_scope" else "123",
+        )
+        incoming.message_obj.message = [
+            Reply(
+                id=f"outside-{index}",
+                sender_id="" if condition == "unknown_author" else "bob",
+                message_str="EXCLUDED_QUOTE_CONTEXT",
+            )
+        ]
+        await plugin.capture(incoming)
+    if condition == "expired":
+        scope, _, _ = await plugin.resolve_scope(incoming)
+        for item in plugin.learning_context[scope]:
+            item["created"] -= 301
+    if condition == "foreign_scope":
+        scope = await sources(plugin)
+    else:
+        scope, _, _ = await plugin.resolve_scope(incoming)
+    assert (await plugin.learn(scope))["status"] == "success"
+    for call in plugin.context.llm_generate.await_args_list:
+        payload = json.loads(call.kwargs["prompt"])
+        assert "EXCLUDED_QUOTE_CONTEXT" not in json.dumps(payload)
 
 
 async def test_changed_targets_filter_existing_pending_material_and_panel_counts(

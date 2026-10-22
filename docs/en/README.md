@@ -1,5 +1,13 @@
 # OvenHeart workshop guide
 
+## Quote-aware learning (0.26)
+
+Extraction and admission review now receive explicit quote relationships to interpret which source a reply answers and why. This works both when learning everyone and when selecting particular speakers, without additional configuration or model calls. Native `Reply.message_str` or plain-text chain parts are used; old platform messages are not fetched. `relation=reply_to` and `for_evidence_ids` link quote context to real batch observations. Quoted authors remain distinct from responders, and quotes cannot supply independent evidence, instructions, autobiographies or wording to learn.
+
+Quotes stay in the native session/persona's volatile five-minute learning context: at most 64 entries per scope and 128 scopes, 1,200 cached characters per quote and 400 characters in requests. Existing requests retain at most 16 context items, prioritizing explicit quote links over inferred neighbors. Review receives the same links. Quotes do not increase material/evidence counts or become independent SQLite observations. Real captured materials survive quote expiry or a restart.
+
+Blocked quoted authors are excluded; when a blacklist is active, unattributed quotes are also excluded. Existing setting-change, pause and material-clearing rules clear context. The actual responder's observation still follows the normal target/blacklist policy. Saved custom learning/review prompts remain unchanged and can be adapted using the new defaults.
+
 ## Conversational follow-ups (0.25)
 
 **Learning settings → Autonomous participation → 允许连续接话 / Allow follow-ups** defaults on and synchronizes with native config `participation_followup`. If the just-addressed member continues within 120 seconds without another member intervening, the first follow-up can bypass the minimum-message gate, cooldown and normal planner recheck interval after the usual input debounce. The planner still chooses reply, wait or observe; an early reply must target this member's newer message. Thanks, farewells and closed topics need not receive another reply. An observed follow-up consumes this early opportunity until the bot enters the send stage again.

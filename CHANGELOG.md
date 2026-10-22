@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.26.0
+
+- Supply explicitly linked inbound quote context to both learning extraction and admission review, for all-speaker and target-speaker learning. Distinguish quoted authors from responders instead of relying solely on neighboring message order.
+- Keep quote text volatile and scope-bound, outside raw-material and evidence counts. Reuse existing cache/request bounds and prioritize explicit reply links within the sixteen-item context limit, without adding model calls.
+- Exclude blocked quoted authors and unattributed quotes when a blacklist is active. Preserve existing context expiry, source eligibility, settings-change cancellation and clearing behavior.
+- Verify six focused SDK cases for native text/chain quotes, review linkage, evidence/storage boundaries, blocked or unknown authors, expiry and foreign scopes. Production learning quality remains pending access.
+
 ## 0.25.0
 
 - Add configurable conversational follow-ups, enabled by default. The first uninterrupted continuation from the just-addressed member within 120 seconds can bypass the minimum-message gate and cooldown, while retaining input debounce, planner choice, hourly quota, scope, permission and tool boundaries.
