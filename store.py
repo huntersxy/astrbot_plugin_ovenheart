@@ -806,17 +806,20 @@ class Store:
             messages.append(item)
         return messages
 
-    def guidance(self, db, scope, shared=False):
+    def guidance(self, db, scope, shared=False, include_inactive=False):
         """Load only the fields needed on the reply path, excluding evidence bodies.
 
         Args:
             db: Open database connection.
             scope: Source session/persona key.
             shared: Share non-jargon habits and profile, keeping jargon source-local.
+            include_inactive: Include stored decisions for learning references.
+                Shared learning may merge only shared non-jargon entries, while
+                runtime application retains its existing cross-source sharing.
 
         Returns:
-            Profile/source origin, compact ranking records and recent expression IDs
-            from this native scope, without dashboard history or reply text.
+            Profile/source origin, all eligible compact ranking records and
+            recent expression IDs, without evidence bodies or dashboard history.
         """
         row = db.execute(
             "SELECT profile, (SELECT umo FROM scopes WHERE id=?) AS source_umo FROM scopes WHERE id=?",
@@ -825,12 +828,20 @@ class Store:
         traits = [
             dict(t)
             for t in db.execute(
-                "SELECT id,kind,situation,content,confidence,status,created,updated,support_count,evidence_count,last_seen,use_count,rating FROM traits WHERE status='active' AND ((kind='jargon' AND scope=? AND scope<>?) OR (kind<>'jargon' AND (scope=? OR ?))) ORDER BY updated DESC LIMIT 1000",
-                (scope, SHARED_SCOPE, scope, shared),
+                "SELECT id,kind,situation,content,confidence,status,created,updated,support_count,evidence_count,last_seen,use_count,rating,meaning_stage FROM traits WHERE (status='active' OR ?) AND ((kind='jargon' AND scope=? AND scope<>?) OR (kind<>'jargon' AND (scope=? OR ?))) ORDER BY updated DESC, id DESC",
+                (
+                    include_inactive,
+                    scope,
+                    SHARED_SCOPE,
+                    SHARED_SCOPE if shared else scope,
+                    shared and not include_inactive,
+                ),
             )
         ]
         expressions = {
-            t["id"]: t["updated"] for t in traits if t["kind"] == "expression"
+            t["id"]: t["updated"]
+            for t in traits
+            if t["kind"] == "expression" and t["status"] == "active"
         }
         recent = list(
             dict.fromkeys(

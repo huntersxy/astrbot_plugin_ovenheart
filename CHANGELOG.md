@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.38.1
+
+- Remove the dashboard's latest-1,000 cutoff from compact runtime habit retrieval. Older active habits, including previously cached semantic matches, remain eligible as the library grows.
+- Load compact all-status references for learning instead of dashboard detail snapshots, preserving old rejection/disable decisions without reading evidence bodies and histories. Retain actual statuses and writable shared/native merge scopes; source-local jargon stays isolated.
+- Keep dashboard detail limits, paginated library browsing, 64-document embedding batches, bounded rerank/selector pools and learning's at-most-80 offered references. Candidate scanning now scales with eligible library size; this is not a claim of complete semantic coverage or guaranteed recall.
+- Pass three focused SQLite/native checks with over 1,000 newer habits: old cached semantic retrieval, rejection-preserving consolidation, and shared/isolated scope eligibility. No external service or production database was used.
+
 ## 0.38.0
 
 - Carry optional structured `expression_intent` from participation planning through hybrid/rerank recall, contextual habit selection and the final native reply. Support focus, reply act, scene, tone, preferred expression and expression to avoid, without adding a model call or configuration switch.

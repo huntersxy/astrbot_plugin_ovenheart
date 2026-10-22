@@ -1,5 +1,20 @@
 # OvenHeart workshop guide
 
+Since 0.38.1, runtime recall reads all scope-eligible compact active records,
+and learning reads compact records with their actual states from writable merge
+scopes. Neither inherits dashboard detail's latest-1,000 cutoff. Older active
+habits and rejection/disable decisions remain eligible as the library grows.
+Shared learning still merges shared non-jargon records and source-local jargon;
+runtime shared application retains its existing cross-source non-jargon rule.
+
+Evidence bodies, run histories and snapshots are excluded from these reads.
+Dashboard detail limits and paginated library browsing stay unchanged. Memory
+and ranking cost scale with eligible record count. The 64-document embedding
+batch, rerank/selector pools, injection limits and at-most-80 learning references
+remain bounded. Eligibility does not guarantee selection or full cold-start
+semantic coverage. Three simulated checks cover old cached semantic recall,
+rejection-preserving consolidation after 1,000 newer entries, and scope rules.
+
 ## Per-reply expression intent (0.38)
 
 Like the local MaiBot expression selector, participation planning can supply an

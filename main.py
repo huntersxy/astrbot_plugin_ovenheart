@@ -2131,7 +2131,7 @@ class PersonaPlugin(Star):
             )
             # Include rejected/disabled habits too, so paraphrases cannot undo a decision.
             known_state = await self.store.call(
-                "state", scope, None, None, not settings["session_isolation"]
+                "guidance", scope, not settings["session_isolation"], True
             )
             if (
                 self.settings != settings
@@ -2179,7 +2179,7 @@ class PersonaPlugin(Star):
                 )
             )
             latest = await self.store.call(
-                "state", scope, None, None, not settings["session_isolation"]
+                "guidance", scope, not settings["session_isolation"], True
             )
             if (
                 self.settings != settings
