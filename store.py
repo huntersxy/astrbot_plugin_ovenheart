@@ -9,6 +9,7 @@ import sqlite3
 import time
 from pathlib import Path
 
+from .learning import jargon_term
 from .settings import KINDS, PROFILE_DEFAULTS, SHARED_SCOPE, validate_settings
 
 
@@ -1084,20 +1085,9 @@ class Store:
                         and stage < 4
                         and count >= 2 ** (stage + 1)
                     ):
-                        old_term = (
-                            content.replace("：", ":")
-                            .split(":", 1)[0]
-                            .strip()
-                            .casefold()
-                        )
-                        new_term = (
-                            trait["content"]
-                            .replace("：", ":")
-                            .split(":", 1)[0]
-                            .strip()
-                            .casefold()
-                        )
-                        if old_term == new_term:
+                        old_term = jargon_term(content)
+                        new_term = jargon_term(trait["content"])
+                        if old_term and old_term == new_term:
                             stage += 1
                             situation, content = trait["situation"], trait["content"]
                             if (

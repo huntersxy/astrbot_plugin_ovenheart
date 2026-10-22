@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.28.1
+
+- Use the existing shared jargon-term normalizer during stored definition refinement, matching extraction validation for quoted, nested-quoted and full-width/ASCII names. Previously these valid same-term merges accumulated evidence without advancing the refinement stage or updating the definition.
+- Preserve explicit-merge/exact-alias requirements, independent-batch thresholds, review/activation rules and manual locks. Do not perform automatic spelling-similarity merges or rewrite existing records on upgrade.
+- Reproduce three parser-to-SQLite failures before the fix, then pass those cases plus existing refinement/manual-edit checks. Ruff passes; no model or platform calls were required.
+
 ## 0.28.0
 
 - Query LivingMemory from the selected learning batch, using up to eight evenly spaced source excerpts within the existing 500-character query budget. Preserve a single recall per batch and all existing retrieval limits.

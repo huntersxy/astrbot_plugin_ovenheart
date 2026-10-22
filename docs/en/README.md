@@ -1,5 +1,7 @@
 # OvenHeart workshop guide
 
+Since 0.28.1, jargon refinement uses the same term normalization as extraction validation. Balanced/nested quotes and Unicode width differences no longer prevent a valid same-term definition update at existing independent-batch thresholds. `LUX`/`ＬＵＸ` and `『好家伙』`/`“好家伙”` compare consistently, while still requiring an explicit merge target or existing exact alias. Manual locks, rejection/disable state, local vocabulary isolation and activation policy remain unchanged. No bulk data rewrite occurs on upgrade.
+
 ## Batch-grounded memory recall (0.28)
 
 LivingMemory queries now sample the actual selected learning batch, rather than a later unrelated message. Up to eight evenly spaced excerpts form a query of at most 500 characters. Recall remains at most once per batch, with the existing top-k, twelve-second timeout and 700-character excerpt limits. Memories remain context rather than additional evidence/material.

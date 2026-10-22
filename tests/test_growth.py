@@ -5,6 +5,7 @@ import sqlite3
 
 import pytest
 
+from astrbot_plugin_ovenheart.learning import parse_candidates
 from astrbot_plugin_ovenheart.settings import DEFAULTS
 from astrbot_plugin_ovenheart.store import Store
 
@@ -113,6 +114,53 @@ async def test_jargon_is_refined_at_independent_batch_thresholds(store):
     )
     assert state["traits"][0]["meaning_stage"] == 1
     assert state["traits"][0]["content"] != "好家伙：临时另一种解释"
+
+
+@pytest.mark.parametrize(
+    "old_word,new_word",
+    [("『好家伙』", "“好家伙”"), ("LUX", "ＬＵＸ"), ("‘“好家伙”’", "好家伙")],
+)
+async def test_normalized_jargon_names_refine_after_real_parse_and_commit(
+    store, old_word, new_word
+):
+    known = []
+    for number, word in enumerate((old_word, new_word), 1):
+        for index in range(2):
+            await store.call(
+                "capture",
+                SCOPE,
+                "qq:GroupMessage:1",
+                "default",
+                "测试",
+                f"normalized:{number}:{index}",
+                "user",
+                f"{word}：暂缓一下，之后还会继续。",
+                DEFAULTS,
+            )
+        sources = await store.call("batch", SCOPE, 30)
+        proposed = f"{word}：" + (
+            "暂缓" if number == 1 else "暂缓一下，之后仍会继续，不代表取消"
+        )
+        candidate = {
+            "kind": "jargon",
+            "situation": "约定延后时",
+            "content": proposed,
+            "confidence": 0.95,
+            "evidence_ids": [m["id"] for m in sources],
+        }
+        if known:
+            candidate["merge_id"] = known[0]["id"]
+        parsed = parse_candidates(
+            json.dumps({"traits": [candidate]}), sources, DEFAULTS, known
+        )
+        assert len(parsed) == 1
+        run = await store.call("start_run", SCOPE)
+        await store.call("finish_run", run, SCOPE, sources, parsed, DEFAULTS, "")
+        known = (await store.call("state", SCOPE))["traits"]
+    assert len(known) == 1 and known[0]["support_count"] == 2
+    assert known[0]["meaning_stage"] == 1
+    assert known[0]["content"] == proposed
+    assert known[0]["evidence_count"] == 4
 
 
 async def test_learning_snapshot_restores_evidence_and_suppresses_later_aliases(store):
