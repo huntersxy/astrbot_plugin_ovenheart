@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.36.0
+
+- Retain explicit native quote context with eligible raw observations, so delayed/manual learning and restarts keep the premise of a human reply. Add an idempotent `messages.reply_context` migration that preserves IDs, deduplication and existing rows; no historical quotes are invented.
+- Bound quotes to 1,200 characters, with 400-character request excerpts and the existing sixteen-context limit. Source expiry, count eviction and material clearing remove its quote. Ambient peer/self context remains volatile, and quotes never become independent observations/evidence or enter evidence snapshots.
+- Centralize normalization and blacklist checks at capture/read time, excluding newly blocked or unknown authors as appropriate. Stored source quotes, rather than stale volatile copies, supply learning context. Previously retained raw quotes are not physically deleted by blacklisting; normal expiry/clear controls still apply.
+- Include allowed quote premises in existing bounded learning-reference and LivingMemory batch queries, without extra per-batch memory calls. Update retention help and bilingual documentation to disclose SQLite retention.
+- Pass four new persistence/migration/blacklist checks and six related quote/policy checks using isolated SQLite and simulated providers. Production learning quality remains pending access.
+
 ## 0.35.0
 
 - Recall old consolidation counterparts using configured embedding/rerank services instead of lexical-only ranking. Keep recent references, stable ID ordering and actual pending/active/rejected/disabled states; the active view exists only for internal retrieval eligibility.

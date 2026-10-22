@@ -33,6 +33,7 @@ from . import prompts
 from .learning import (
     LearningFormatError,
     build_guidance_parts,
+    normalize_quote,
     parse_candidates,
     parse_learning_review,
 )
@@ -683,6 +684,23 @@ class PersonaPlugin(Star):
             event.message_obj.message_id
             or f"{sender}:{event.message_obj.timestamp}:{hashlib.sha256(text.encode()).hexdigest()}"
         )
+        quoted = None
+        component = next(
+            (part for part in event.get_messages() if isinstance(part, Reply)), None
+        )
+        if component is not None:
+            quoted_sender = str(component.sender_id or "").strip()
+            quoted_text = (component.message_str or "").strip() or "".join(
+                part.text for part in component.chain or [] if isinstance(part, Plain)
+            )
+            quoted = normalize_quote(
+                {
+                    "sender": quoted_sender,
+                    "text": quoted_text,
+                    "self": quoted_sender == str(event.get_self_id()),
+                },
+                self.settings["blocked_senders"],
+            )
         retained = await self.store.call(
             "capture",
             scope,
@@ -694,6 +712,7 @@ class PersonaPlugin(Star):
             text[:1200],
             self.settings,
             context_only,
+            quoted,
         )
         if not retained or sender in self.settings["blocked_senders"]:
             self.debug(
@@ -707,28 +726,6 @@ class PersonaPlugin(Star):
             source=source,
             context_only=context_only,
         )
-        quoted = None
-        component = next(
-            (part for part in event.get_messages() if isinstance(part, Reply)), None
-        )
-        if component is not None:
-            quoted_sender = str(component.sender_id or "").strip()
-            quoted_text = (component.message_str or "").strip() or "".join(
-                part.text for part in component.chain or [] if isinstance(part, Plain)
-            )
-            if (
-                quoted_text
-                and quoted_sender not in self.settings["blocked_senders"]
-                and (
-                    not self.settings["blocked_senders"]
-                    or quoted_sender not in ("", "0")
-                )
-            ):
-                quoted = {
-                    "sender": quoted_sender,
-                    "text": quoted_text[:1200],
-                    "self": quoted_sender == str(event.get_self_id()),
-                }
         if capture_revision == self.settings_revision:
             # Human anchors link quotes and send-stage replies without adding evidence.
             window = self.learning_context.pop(scope, deque(maxlen=64))
@@ -2057,13 +2054,17 @@ class PersonaPlugin(Star):
             # Every source contributes to the bounded query; long messages keep
             # their beginning and end rather than hiding later batch topics.
             per_source = (2400 - len(batch) + 1) // len(batch)
-            batch_query = "\n".join(
-                m["text"]
-                if len(m["text"]) <= per_source
-                else m["text"][: per_source // 2]
-                + "…"
-                + m["text"][-(per_source - per_source // 2 - 1) :]
+            query_sources = [
+                m["text"] + ("\n" + m["reply_to"]["text"] if m.get("reply_to") else "")
                 for m in batch
+            ]
+            batch_query = "\n".join(
+                text
+                if len(text) <= per_source
+                else text[: per_source // 2]
+                + "…"
+                + text[-(per_source - per_source // 2 - 1) :]
+                for text in query_sources
             )
             selection = await self.track(
                 self.retriever.select(
@@ -2142,6 +2143,19 @@ class PersonaPlugin(Star):
                     }
                 )
             context = {}
+            for item in batch:
+                quoted = normalize_quote(
+                    item.get("reply_to"), settings["blocked_senders"]
+                )
+                if quoted:
+                    context[("quote", item["source_id"])] = {
+                        "relation": "reply_to",
+                        "sender": quoted["sender"],
+                        "text": quoted["text"][:400],
+                        "created": item["created"],
+                        "self": quoted["self"],
+                        "for_evidence_ids": [item["id"]],
+                    }
             sources = {m["source_id"]: m["id"] for m in batch}
             window = list(self.learning_context.get(scope, ()))
             now = time.time()
@@ -2152,23 +2166,6 @@ class PersonaPlugin(Star):
                     or now - item["created"] > 300
                 ):
                     continue
-                quoted = item.get("reply_to")
-                if (
-                    quoted
-                    and quoted["sender"] not in settings["blocked_senders"]
-                    and (
-                        not settings["blocked_senders"]
-                        or quoted["sender"] not in ("", "0")
-                    )
-                ):
-                    context[("quote", item["source_id"])] = {
-                        "relation": "reply_to",
-                        "sender": quoted["sender"],
-                        "text": quoted["text"][:400],
-                        "created": item["created"],
-                        "self": bool(quoted.get("self")),
-                        "for_evidence_ids": [sources[item["source_id"]]],
-                    }
                 for nearby in window[max(0, index - 2) : index + 3]:
                     if (
                         (

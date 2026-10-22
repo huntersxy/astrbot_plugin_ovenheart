@@ -1,5 +1,33 @@
 # OvenHeart workshop guide
 
+## Retaining quote premises for delayed learning (0.36)
+
+Explicit native quote text now accompanies an eligible observation in the plugin
+SQLite database, surviving five-minute cache expiry or a restart. This addresses
+slow-group/manual batches whose short replies previously lost their premise.
+No platform history is fetched and missing historical quotes are not invented.
+An additive, idempotent migration preserves existing message IDs, consumption and
+deduplication.
+
+**Retention changes:** up to 1,200 quoted characters share the source observation's
+`retention_days` (14 days by default), per-scope row cap and clearing/expiry rules.
+Quotes are not independent observations or evidence, do not enter habit evidence
+snapshots, and retain explicit author/`for_evidence_ids` relationships. Requests
+keep the existing 400-character excerpts and sixteen-context limit. Own quoted
+text remains `self=true`, never self-learning evidence. Ambient peer text and
+send-stage own context retain their original volatile five-minute limits.
+
+Capture and reads enforce the current blacklist; unknown quoted authors are
+excluded whenever a blacklist is active. Previously stored raw quote text is not
+physically deleted by blocking: clear the source materials or let them expire.
+Blocked quotes cannot be reintroduced from stale volatile copies. Eligible human
+responders can still be learned without their blocked quote.
+
+Allowed premises also join existing bounded counterpart/learning-memory queries,
+without an additional memory call per batch. Native source, jargon, evidence and
+review boundaries remain. Settings help now discloses quote retention. Checks use
+isolated SQLite and simulated providers; production learning quality is pending.
+
 ## Finding existing habits during learning (0.35)
 
 Learning consolidation references now reuse configured embedding/rerank recall,
@@ -160,7 +188,7 @@ The feature reuses existing exposure records without storing additional conversa
 
 Extraction and admission review now receive explicit quote relationships to interpret which source a reply answers and why. This works both when learning everyone and when selecting particular speakers, without additional configuration or model calls. Native `Reply.message_str` or plain-text chain parts are used; old platform messages are not fetched. `relation=reply_to` and `for_evidence_ids` link quote context to real batch observations. Quoted authors remain distinct from responders, and quotes cannot supply independent evidence, instructions, autobiographies or wording to learn.
 
-Quotes stay in the native session/persona's volatile five-minute learning context: at most 64 entries per scope and 128 scopes, 1,200 cached characters per quote and 400 characters in requests. Existing requests retain at most 16 context items, prioritizing explicit quote links over inferred neighbors. Review receives the same links. Quotes do not increase material/evidence counts or become independent SQLite observations. Real captured materials survive quote expiry or a restart.
+Versions 0.26–0.35 kept explicit quotes only in volatile learning context. Since 0.36 they accompany their source observation under the retention policy above. Ambient context retains the five-minute, 64-entry/128-scope cache. Requests still use 400-character excerpts and at most sixteen context items, prioritizing explicit links; review receives the same links. Quotes do not increase material/evidence counts.
 
 Blocked quoted authors are excluded; when a blacklist is active, unattributed quotes are also excluded. Existing setting-change, pause and material-clearing rules clear context. The actual responder's observation still follows the normal target/blacklist policy. Saved custom learning/review prompts remain unchanged and can be adapted using the new defaults.
 

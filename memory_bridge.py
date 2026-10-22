@@ -7,6 +7,8 @@ import importlib
 
 from astrbot.core.star.session_plugin_manager import SessionPluginManager
 
+from .learning import normalize_quote
+
 
 class MemoryBridge:
     """Reuse LivingMemory's scope and permission policy without owning its data."""
@@ -132,7 +134,19 @@ class MemoryBridge:
                     else sources
                 )
                 per_source = (500 - len(sample) + 1) // len(sample)
-                query = "\n".join(m["text"][:per_source] for m in sample)
+                query = "\n".join(
+                    (
+                        m["text"]
+                        + "\n"
+                        + (
+                            normalize_quote(
+                                m.get("reply_to"), settings["blocked_senders"]
+                            )
+                            or {}
+                        ).get("text", "")
+                    )[:per_source].rstrip()
+                    for m in sample
+                )
             else:
                 query = event.get_message_str()[:500]
             use_persona = plugin.config_manager.filtering_settings.get(

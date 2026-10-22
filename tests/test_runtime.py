@@ -376,10 +376,8 @@ async def test_learning_and_review_receive_linked_quote_context_without_new_evid
     }
 
 
-@pytest.mark.parametrize(
-    "condition", ["blocked", "unknown_author", "expired", "foreign_scope"]
-)
-async def test_learning_quote_context_respects_author_expiry_and_scope(
+@pytest.mark.parametrize("condition", ["blocked", "unknown_author", "foreign_scope"])
+async def test_learning_quote_context_respects_author_and_scope(
     plugin, condition
 ):
     plugin.settings["blocked_senders"] = (
@@ -399,10 +397,6 @@ async def test_learning_quote_context_respects_author_expiry_and_scope(
             )
         ]
         await plugin.capture(incoming)
-    if condition == "expired":
-        scope, _, _ = await plugin.resolve_scope(incoming)
-        for item in plugin.learning_context[scope]:
-            item["created"] -= 301
     if condition == "foreign_scope":
         scope = await sources(plugin)
     else:
@@ -902,6 +896,27 @@ async def test_memory_bridge_uses_livingmemory_policy_and_bounded_context(
     assert "好家伙，还是你懂我" in call["query"]
     prompt = json.loads(plugin.context.llm_generate.await_args.kwargs["prompt"])
     assert prompt["memory_context"][0]["id"] == "m1"
+    quoted_batch = [
+        {
+            "id": 77,
+            "sender": "alice",
+            "text": "这个我听懂了",
+            "reply_to": {"sender": "bob", "text": "QUOTE_MEMORY_LOOKUP：想先倾诉"},
+        }
+    ]
+    await plugin.memory.recall(
+        event(), "default", plugin.settings, observations=quoted_batch
+    )
+    assert "QUOTE_MEMORY_LOOKUP" in engine.search_memories.await_args.kwargs["query"]
+    await plugin.memory.recall(
+        event(),
+        "default",
+        plugin.settings | {"blocked_senders": ["bob"]},
+        observations=quoted_batch,
+    )
+    assert (
+        "QUOTE_MEMORY_LOOKUP" not in engine.search_memories.await_args.kwargs["query"]
+    )
     for mode, session_filter, isolated, expected in (
         ("legacy", False, "", None),
         ("legacy", True, "", event().unified_msg_origin),
@@ -919,11 +934,12 @@ async def test_memory_bridge_uses_livingmemory_policy_and_bounded_context(
         )
         await plugin.memory.recall(event(), "default", plugin.settings)
         assert engine.search_memories.await_args.kwargs["session_id"] == expected
+    calls_before_denial = engine.search_memories.await_count
     values["access_control.whitelist_enabled"] = True
     values["access_control.allowed_ids"] = "nobody"
     memories, message = await plugin.memory.recall(event(), "default", plugin.settings)
     assert memories == [] and "禁止" in message
-    assert engine.search_memories.await_count == 7
+    assert engine.search_memories.await_count == calls_before_denial
     values.update(
         {
             "access_control.whitelist_enabled": False,

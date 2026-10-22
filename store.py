@@ -9,7 +9,7 @@ import sqlite3
 import time
 from pathlib import Path
 
-from .learning import jargon_term
+from .learning import jargon_term, normalize_quote
 from .settings import KINDS, PROFILE_DEFAULTS, SHARED_SCOPE, validate_settings
 
 
@@ -94,7 +94,8 @@ class Store:
             CREATE TABLE IF NOT EXISTS messages (
                 id INTEGER PRIMARY KEY, scope TEXT NOT NULL, source_id TEXT NOT NULL,
                 sender TEXT NOT NULL, text TEXT NOT NULL, created REAL NOT NULL,
-                consumed INTEGER NOT NULL DEFAULT 0, UNIQUE(scope, source_id)
+                consumed INTEGER NOT NULL DEFAULT 0,
+                reply_context TEXT NOT NULL DEFAULT '{}', UNIQUE(scope, source_id)
             );
             CREATE INDEX IF NOT EXISTS messages_pending ON messages(scope, consumed, id);
             CREATE TABLE IF NOT EXISTS traits (
@@ -143,6 +144,12 @@ class Store:
             "INSERT OR IGNORE INTO scopes VALUES (?, '', '所有人格', '全会话共用', ?, ?)",
             (SHARED_SCOPE, json.dumps(PROFILE_DEFAULTS), time.time()),
         )
+        if "reply_context" not in {
+            r[1] for r in db.execute("PRAGMA table_info(messages)")
+        }:
+            db.execute(
+                "ALTER TABLE messages ADD COLUMN reply_context TEXT NOT NULL DEFAULT '{}'"
+            )
         if "room" not in {r[1] for r in db.execute("PRAGMA table_info(decisions)")}:
             db.execute("ALTER TABLE decisions ADD COLUMN room TEXT NOT NULL DEFAULT ''")
         db.execute(
@@ -340,6 +347,7 @@ class Store:
         text,
         settings,
         context_only=False,
+        reply_to=None,
     ):
         """Retain a bounded, deduplicated observation for a session and persona.
 
@@ -354,6 +362,7 @@ class Store:
             text: Truncated plain text observation.
             settings: Effective runtime settings.
             context_only: Check scoped learning permission without retaining raw text.
+            reply_to: Explicit native quote retained only with an eligible source.
 
         Returns:
             Whether an observation was inserted or context-only capture is permitted.
@@ -388,8 +397,18 @@ class Store:
         if not profile["learning_enabled"]:
             return False
         cursor = db.execute(
-            "INSERT OR IGNORE INTO messages(scope, source_id, sender, text, created) VALUES (?, ?, ?, ?, ?)",
-            (scope, source_id, sender, text, now),
+            "INSERT OR IGNORE INTO messages(scope, source_id, sender, text, created, reply_context) VALUES (?, ?, ?, ?, ?, ?)",
+            (
+                scope,
+                source_id,
+                sender,
+                text,
+                now,
+                json.dumps(
+                    normalize_quote(reply_to, settings["blocked_senders"]) or {},
+                    ensure_ascii=False,
+                ),
+            ),
         )
         db.execute(
             "DELETE FROM messages WHERE created < ?",
@@ -772,13 +791,20 @@ class Store:
             sender_filter += (
                 " AND sender NOT IN (" + ",".join("?" for _ in blocked) + ")"
             )
-        return [
-            dict(row)
-            for row in db.execute(
-                f"SELECT * FROM messages WHERE scope=? AND consumed=0{sender_filter} ORDER BY id LIMIT ?",
-                (scope, *targets, *blocked, size),
-            )
-        ]
+        messages = []
+        for row in db.execute(
+            f"SELECT * FROM messages WHERE scope=? AND consumed=0{sender_filter} ORDER BY id LIMIT ?",
+            (scope, *targets, *blocked, size),
+        ):
+            item = dict(row)
+            try:
+                quote = normalize_quote(json.loads(item.pop("reply_context")), blocked)
+            except (ValueError, TypeError):
+                quote = None
+            if quote:
+                item["reply_to"] = quote
+            messages.append(item)
+        return messages
 
     def guidance(self, db, scope, shared=False):
         """Load only the fields needed on the reply path, excluding evidence bodies.

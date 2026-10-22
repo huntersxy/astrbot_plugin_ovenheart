@@ -127,7 +127,8 @@
   "retention_days": {
     "description": "原始素材保留天数",
     "type": "int",
-    "default": 14
+    "default": 14,
+    "hint": "原始素材及其明确引用一同到期或清除；引用不计为独立素材/证据，邻近语境仍仅临时保留。"
   },
   "max_messages_per_scope": {
     "description": "每会话原始素材数量上限",
