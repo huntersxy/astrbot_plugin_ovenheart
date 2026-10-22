@@ -760,6 +760,76 @@ async def test_an_own_send_stage_does_not_cancel_its_other_segments(participant)
     assert not incoming.is_stopped()
 
 
+@pytest.mark.parametrize("direct", [False, True])
+async def test_native_agent_buffers_only_autonomous_replies(
+    participant, monkeypatch, direct
+):
+    from astrbot.core.astr_main_agent import MainAgentBuildConfig
+    from astrbot.core.pipeline.process_stage.method.agent_sub_stages import internal
+
+    incoming = event("native-stream-policy")
+    incoming.set_extra("enable_streaming", True)
+    incoming.is_at_or_wake_command = direct
+    output = await requests(participant, incoming)
+    if output:
+        incoming.set_extra("provider_request", output[0])
+    build = AsyncMock(return_value=None)
+    monkeypatch.setattr(internal, "build_main_agent", build)
+    monkeypatch.setattr(internal, "call_event_hook", AsyncMock(return_value=False))
+    stage = internal.InternalAgentSubStage()
+    stage.streaming_response = True
+    stage.show_reasoning = False
+    stage.main_agent_cfg = MainAgentBuildConfig(tool_call_timeout=30)
+    stage.ctx = SimpleNamespace(
+        plugin_manager=SimpleNamespace(context=participant.context)
+    )
+    async for _ in stage.process(incoming, ""):
+        pass
+    build.assert_awaited_once()
+    assert build.await_args.kwargs["config"].streaming_response is direct
+
+
+async def test_first_direct_reply_is_visible_to_the_next_group_planner(participant):
+    participant.settings["participation_cooldown"] = 0
+    direct = event("direct-first", text="这个问题解决了吗？")
+    direct.is_at_or_wake_command = True
+    await participant.capture(direct)
+    direct.set_result(direct.plain_result("已经解决，不需要重复操作。"))
+    await participant.record_delivery(direct)
+    later = event("follow-up", text="那接下来做什么？")
+    assert len(await requests(participant, later)) == 1
+    payload = json.loads(participant.context.llm_generate.await_args.kwargs["prompt"])
+    own = next(message for message in payload["recent_messages"] if message["self"])
+    assert own["text"] == "已经解决，不需要重复操作。"
+    assert own["reply_to"]["message_id"] == "direct-first"
+    assert own["reply_to"]["text"] == "这个问题解决了吗？"
+    assert own["sender_id"] == direct.get_self_id()
+    assert len({m["sequence"] for m in payload["recent_messages"]}) == 2
+
+
+async def test_sent_reply_does_not_consume_newer_human_input(participant):
+    participant.settings.update(participation_min_messages=1, participation_cooldown=0)
+    original = event("reply-start")
+    await requests(participant, original)
+    plan = original.get_extra("ovenheart_decision")
+    participant.settings["participation_min_messages"] = 3
+    latest = event("arrived-during-send", text="等等，还有一个问题")
+    assert await requests(participant, latest) == []
+    original.set_result(original.plain_result("上一条问题的回答"))
+    await participant.record_delivery(original)
+    window = participant.participation.windows[plan["scope"]]
+    fresh = [
+        m
+        for m in window["messages"]
+        if not m["self"] and m["sequence"] > window["consumed"]
+    ]
+    assert [m["message_id"] for m in fresh] == ["arrived-during-send"]
+    assert len({m["sequence"] for m in window["messages"]}) == 3
+    assert await requests(participant, event("next-human")) == []
+    await participant.guard_participation_result(original)
+    assert original.is_stopped() and original.get_result() is None
+
+
 async def test_persistent_admission_reservation_cannot_race_past_quota(participant):
     scope, persona, label = await participant.resolve_scope(event())
     await participant.store.call(

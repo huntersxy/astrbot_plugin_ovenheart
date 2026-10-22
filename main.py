@@ -761,6 +761,10 @@ class PersonaPlugin(Star):
                 logger.warning("OvenHeart could not bind a native conversation")
                 return
             event.set_extra("ovenheart_decision", plan)
+            # Native streaming bypasses both decoration and after-send hooks.
+            # Buffer autonomous turns so stale checks, real quote/At decoration
+            # and the next planner's own-reply context run before/after delivery.
+            event.set_extra("enable_streaming", False)
             event.call_llm = True
             yield event.request_llm(
                 prompt=event.get_message_str(), conversation=conversation
@@ -1331,27 +1335,69 @@ class PersonaPlugin(Star):
             room_key = self.participation.room_key(event)
             await self.store.call("note_reply", scope, room_key)
             room = self.participation.rooms.get(room_key)
+            plan = event.get_extra("ovenheart_decision")
+            source = str(
+                event.message_obj.message_id
+                or f"{event.get_sender_id()}:{event.created_at}"
+            )
+            current = room is None or room["source"] == (
+                plan["room_source"] if plan else source
+            )
             if room:
                 room["changed"].set()
-                if not event.get_extra("ovenheart_decision"):
+                if not plan:
                     room["source"] = "bot:" + uuid4().hex
                     room["arrival"] = time.time()
             window = self.participation.windows.get(scope)
             result = event.get_result()
-            if window is not None and result and result.get_plain_text():
+            text = result.get_plain_text()[:1200] if result else ""
+            if window is None and room_key and text:
+                if len(self.participation.windows) >= 128:
+                    inactive = next(
+                        (
+                            key
+                            for key, value in self.participation.windows.items()
+                            if not value["running"]
+                        ),
+                        None,
+                    )
+                    if inactive is not None:
+                        self.participation.windows.pop(inactive)
+                if len(self.participation.windows) < 128:
+                    window = self.participation.windows[scope] = {
+                        "messages": deque(maxlen=30),
+                        "sequence": 0,
+                        "consumed": 0,
+                        "changed": asyncio.Event(),
+                        "running": 0,
+                        "last_check": 0.0,
+                    }
+            if window is not None and text:
                 window["changed"].set()
-                if not event.get_extra("ovenheart_decision"):
-                    window["sequence"] += 1
-                window["consumed"] = window["sequence"]
+                owned = bool(plan and window["sequence"] == plan["sequence"])
+                window["sequence"] += 1
+                if current:
+                    window["consumed"] = window["sequence"]
+                if owned:
+                    # Further segments from this same admitted turn stay valid;
+                    # a newer input must never be acknowledged on its behalf.
+                    plan["sequence"] = window["sequence"]
+                target = (plan.get("target") or {}) if plan else {}
                 window["messages"].append(
                     {
                         "sequence": window["sequence"],
                         "source": "bot:" + uuid4().hex,
                         "sender": "机器人（自己）",
-                        "sender_id": "",
+                        "sender_id": event.get_self_id(),
                         "message_id": "",
                         "self": True,
-                        "text": result.get_plain_text()[:1200],
+                        "text": text,
+                        "reply_to": {
+                            "message_id": target.get("message_id", source),
+                            "sender_id": target.get("sender_id", event.get_sender_id()),
+                            "sender": target.get("sender", event.get_sender_name()),
+                            "text": target.get("text", event.get_message_str())[:1200],
+                        },
                         "time": time.time(),
                     }
                 )

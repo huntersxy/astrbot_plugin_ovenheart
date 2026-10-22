@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.24.0
+
+- Buffer autonomous generation through the host's native per-event streaming override. This preserves the normal stale-result guard, real quote/mention decoration and after-send context path that AstrBot's streaming branch skips. Direct wakes retain their streaming settings; normal host segmented sending remains available.
+- Retain a first direct send-stage reply in a bounded session/persona participation window. Own replies identify the bot and the answered message, so later planning can distinguish already-answered questions from new input.
+- Give own replies distinct sequences without cancelling further segments from the same current admission. Exclude own text from new-human-message thresholds and retain newer human inputs when a previous reply reaches the send stage.
+- Verify native Agent streaming configuration and the focused continuity paths with five SDK checks; broader production behavior remains pending user-provided access.
+
 ## 0.23.1
 
 - Ground habit retrieval and literal local-vocabulary matching in the actual autonomous reply target and its inbound quote, rather than the latest unrelated group message. Direct replies also use native quote text or plain-text chain parts.

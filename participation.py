@@ -357,7 +357,9 @@ class ParticipationController:
             # Include older arrivals that completed admission during the debounce.
             sequence = window["sequence"]
             pending = [
-                m for m in window["messages"] if m["sequence"] > window["consumed"]
+                m
+                for m in window["messages"]
+                if not m.get("self") and m["sequence"] > window["consumed"]
             ]
             if len(pending) < settings[
                 "participation_min_messages"
