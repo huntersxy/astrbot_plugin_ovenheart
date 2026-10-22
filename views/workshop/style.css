@@ -152,7 +152,7 @@ button.text { border-color: transparent; background: transparent; }
   .filter-field select { min-width: 0; width: 100%; }
 }
 
-.debug-settings { grid-column: 1 / -1; }
+.debug-settings, .mention-settings { grid-column: 1 / -1; }
 
 .prompts { display: grid; grid-template-columns: minmax(220px, .9fr) minmax(0, 1.5fr); gap: 28px; align-items: start; }
 .prompt-editor { min-width: 0; }

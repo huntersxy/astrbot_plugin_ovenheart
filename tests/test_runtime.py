@@ -44,7 +44,13 @@ POLICY_PATH = (
 PLUGIN_ROOT = Path(__file__).resolve().parents[1]
 
 
-def event(message_id="1", text="好家伙，你又看出来了", sender="alice", session="123"):
+def event(
+    message_id="1",
+    text="好家伙，你又看出来了",
+    sender="alice",
+    session="123",
+    sender_name="测试用户",
+):
     """Construct a real SDK group event without a running bot adapter.
 
     Args:
@@ -52,6 +58,7 @@ def event(message_id="1", text="好家伙，你又看出来了", sender="alice",
         text: Incoming plain text.
         sender: Platform user identity.
         session: Group session identity.
+        sender_name: Display name used as the reply target label.
 
     Returns:
         An AstrBot message event.
@@ -59,7 +66,7 @@ def event(message_id="1", text="好家伙，你又看出来了", sender="alice",
     message = AstrBotMessage()
     message.type = MessageType.GROUP_MESSAGE
     message.self_id = "bot"
-    message.sender = MessageMember(sender, "测试用户")
+    message.sender = MessageMember(sender, sender_name)
     message.group = Group(session, "周末闲聊")
     message.message_id = message_id
     message.message = []

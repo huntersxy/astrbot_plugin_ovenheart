@@ -484,6 +484,85 @@ async def test_new_input_suppresses_a_generated_result_before_send(participant):
     assert incoming.get_result() is None
 
 
+async def test_autonomous_reply_binds_the_planner_target_message_and_sender(
+    participant,
+):
+    participant.settings["participation_mode"] = "observe"
+    participant.settings["participation_cooldown"] = 0
+    older = event("older", text="我要看你的", sender="alice", sender_name="汐兮雨")
+    await requests(participant, older)
+    participant.settings["participation_mode"] = "auto"
+    participant.context.llm_generate.return_value = decision(target_sequence=1)
+    newest = event(
+        "newest", text="咕噜？看本鲸的？", sender="whale", sender_name="小鲸"
+    )
+    request = (await requests(participant, newest))[0]
+    await participant.apply_participation(newest, request)
+    injection = request.system_prompt + "".join(
+        part.text for part in request.extra_user_content_parts
+    )
+    assert '"reply_target": "汐兮雨"' in injection
+    newest.set_result(newest.plain_result("造物主怎么只盯着鱼片看，我在这儿呢"))
+    await participant.guard_participation_result(newest)
+    assert not newest.is_stopped()
+    assert newest.message_obj.message_id == "older"
+    assert newest.get_sender_id() == "alice"
+    assert newest.get_sender_name() == "汐兮雨"
+
+    from astrbot.core.message.components import Reply
+    from astrbot.core.pipeline.result_decorate.stage import ResultDecorateStage
+
+    stage = ResultDecorateStage()
+    stage.reply_prefix = ""
+    stage.content_safe_check_reply = False
+    stage.enable_segmented_reply = False
+    stage.only_llm_result = True
+    stage.words_count_threshold = 100
+    stage.split_mode = "regex"
+    stage.split_words = []
+    stage.split_words_pattern = None
+    stage.content_cleanup_rule = ""
+    stage.show_reasoning = False
+    stage.tts_trigger_probability = 0
+    stage.reply_with_mention = False
+    stage.reply_with_quote = True
+    stage.forward_threshold = 1000
+    stage.t2i_word_threshold = 150
+    stage.t2i_use_network = False
+    stage.t2i_active_template = ""
+    stage.ctx = SimpleNamespace(
+        plugin_manager=SimpleNamespace(
+            context=SimpleNamespace(
+                get_using_tts_provider_async=AsyncMock(return_value=None)
+            )
+        ),
+        astrbot_config={
+            "provider_tts_settings": {
+                "enable": False,
+                "use_file_service": False,
+                "dual_output": False,
+            },
+            "callback_api_base": "",
+            "t2i": False,
+        },
+    )
+    async for _ in stage.process(newest):
+        pass
+    assert isinstance(newest.get_result().chain[0], Reply)
+    assert newest.get_result().chain[0].id == "older"
+
+
+async def test_autonomous_reply_keeps_the_latest_message_as_target_by_default(
+    participant,
+):
+    incoming = event("latest", sender="alice", sender_name="汐兮雨")
+    await requests(participant, incoming)
+    incoming.set_result(incoming.plain_result("回复"))
+    await participant.guard_participation_result(incoming)
+    assert incoming.message_obj.message_id == "latest"
+    assert incoming.get_sender_id() == "alice"
+
+
 async def test_an_own_send_stage_does_not_cancel_its_other_segments(participant):
     incoming = event("segmented")
     await requests(participant, incoming)
@@ -529,6 +608,54 @@ async def test_persistent_admission_reservation_cannot_race_past_quota(participa
 def test_malformed_plans_do_not_admit_actions(patch):
     with pytest.raises(ValueError):
         parse_plan(decision(**patch).completion_text, DEFAULTS)
+
+
+@pytest.mark.parametrize("target", [True, -1, "1", 1.5])
+def test_malformed_reply_targets_are_rejected(target):
+    with pytest.raises(ValueError):
+        parse_plan(
+            decision(target_sequence=target).completion_text,
+            DEFAULTS,
+            messages=[{"sequence": 1, "self": False}],
+        )
+
+
+def test_reply_target_must_exist_and_defaults_to_the_latest_non_self_message():
+    messages = [
+        {"sequence": 1, "self": False},
+        {"sequence": 2, "self": True},
+    ]
+    assert (
+        parse_plan(decision().completion_text, DEFAULTS, messages=messages)[
+            "target_sequence"
+        ]
+        == 1
+    )
+    assert (
+        parse_plan(
+            decision(target_sequence=1).completion_text, DEFAULTS, messages=messages
+        )["target_sequence"]
+        == 1
+    )
+    with pytest.raises(ValueError):
+        parse_plan(
+            decision(target_sequence=2).completion_text, DEFAULTS, messages=messages
+        )
+    with pytest.raises(ValueError):
+        parse_plan(
+            decision(target_sequence=3).completion_text, DEFAULTS, messages=messages
+        )
+
+
+def test_wait_and_observe_plans_never_carry_a_reply_target():
+    messages = [{"sequence": 4, "self": False}]
+    for action in ("wait", "observe"):
+        plan = parse_plan(
+            decision(action, target_sequence=4).completion_text,
+            DEFAULTS,
+            messages=messages,
+        )
+        assert plan["target_sequence"] == 0
 
 
 def test_low_confidence_and_repeated_wait_become_observation():
@@ -581,3 +708,166 @@ async def test_cached_participation_keeps_goal_out_of_system_prefix(participant)
     assert "OvenHeart participation" in request.extra_user_content_parts[-1].text
     assert "reply_goal" in request.extra_user_content_parts[-1].text
     assert request.extra_user_content_parts[-1].model_dump_for_context()["_no_save"]
+
+
+async def test_name_mention_uses_native_direct_path_once_without_planner(participant):
+    from astrbot.core.pipeline.context_utils import call_handler
+    from astrbot.core.pipeline.process_stage.stage import ProcessStage
+
+    participant.settings.update(
+        mentioned_bot_reply=True,
+        mention_names=["小夏", "夏夏"],
+        participation_mode="off",
+        participation_min_messages=30,
+        participation_debounce=10,
+        participation_hourly_limit=1,
+    )
+    incoming = event(text="刚才夏夏说的那个办法怎么样？")
+    scope, _, _ = await participant.resolve_scope(incoming)
+    await participant.store.call(
+        "touch_scope", scope, incoming.unified_msg_origin, "default", "群聊"
+    )
+    await participant.store.call(
+        "note_reply", scope, participant.participation.room_key(incoming)
+    )
+    assert ParticipationFilter().filter(incoming, {})
+    incoming.set_extra("activated_handlers", [SimpleNamespace(event_filters=[])])
+    invoked = []
+
+    class StarStage:
+        async def process(self, event):
+            async for output in call_handler(event, participant.participate):
+                yield output
+
+    class AgentStage:
+        async def process(self, event):
+            invoked.append(event.get_extra("provider_request"))
+            yield None
+
+    stage = ProcessStage()
+    stage.ctx = SimpleNamespace(astrbot_config={"provider_settings": {"enable": True}})
+    stage.star_request_sub_stage = StarStage()
+    stage.agent_sub_stage = AgentStage()
+    async for _ in stage.process(incoming):
+        pass
+    assert invoked == [None]
+    assert incoming.is_at_or_wake_command and not incoming.call_llm
+    assert incoming.get_message_str() == "刚才夏夏说的那个办法怎么样？"
+    assert not incoming.get_extra("ovenheart_decision")
+    participant.context.llm_generate.assert_not_awaited()
+    # Direct requests retain the host's existing tool policy and stable prefix.
+    request = ProviderRequest(system_prompt="宿主系统词", func_tool=ToolSet([]))
+    original_tools = request.func_tool
+    await participant.apply_participation(incoming, request)
+    assert request.func_tool is original_tools
+    assert request.system_prompt == "宿主系统词"
+
+
+@pytest.mark.parametrize("mode", ["off", "observe", "auto"])
+async def test_mentions_are_independent_of_ordinary_participation_mode(
+    participant, mode
+):
+    participant.settings.update(
+        mentioned_bot_reply=True, mention_names=["小夏"], participation_mode=mode
+    )
+    incoming = event(text="大家觉得小夏的建议如何？")
+    assert ParticipationFilter().filter(incoming, {})
+    assert await requests(participant, incoming) == []
+    assert incoming.is_at_or_wake_command
+    participant.context.llm_generate.assert_not_awaited()
+
+
+async def test_mentions_respect_disablement_names_and_native_wakes(participant):
+    participant.settings.update(participation_mode="off", mention_names=["小夏"])
+    assert not ParticipationFilter().filter(event(text="小夏在吗"), {})
+    participant.settings["mentioned_bot_reply"] = True
+    assert not ParticipationFilter().filter(event(text="在吗"), {})
+    participant.settings["mention_names"] = []
+    assert not ParticipationFilter().filter(event(text="小夏在吗"), {})
+    participant.settings["mention_names"] = ["小夏"]
+    incoming = event(text="小夏在吗")
+    incoming.is_at_or_wake_command = True
+    assert not ParticipationFilter().filter(incoming, {})
+    assert await requests(participant, incoming) == []
+    for sender, text in [
+        ("bot", "小夏在吗"),
+        ("alice", "/小夏"),
+        ("alice", "[CQ:forward,id=1]小夏"),
+    ]:
+        assert not ParticipationFilter().filter(event(text=text, sender=sender), {})
+
+
+async def test_mention_detection_reads_only_own_plain_components(participant):
+    from astrbot.core.message.components import At, Forward, Plain, Reply
+
+    participant.settings.update(
+        participation_mode="off", mentioned_bot_reply=True, mention_names=["小夏"]
+    )
+    for components in [
+        [Reply(id="old", message_str="小夏在吗"), Plain("这个观点不错")],
+        [At(qq="someone", name="小夏"), Plain("你说呢")],
+        [Forward(id="forward")],
+    ]:
+        incoming = event(text="小夏在吗")
+        incoming.message_obj.message = components
+        assert not ParticipationFilter().filter(incoming, {})
+    incoming.message_obj.message = [Reply(id="old"), Plain("我想问问小夏")]
+    assert ParticipationFilter().filter(incoming, {})
+
+
+async def test_mention_checks_permissions_commands_and_late_switches(
+    participant, monkeypatch
+):
+    from astrbot.core.star.filter.command import CommandFilter
+
+    participant.settings.update(mentioned_bot_reply=True, mention_names=["小夏"])
+    incoming = event(text="小夏说说看")
+    assert ParticipationFilter().filter(incoming, {})
+    incoming.set_extra(
+        "activated_handlers", [SimpleNamespace(event_filters=[CommandFilter("小夏")])]
+    )
+    assert await requests(participant, incoming) == []
+    assert not incoming.is_at_or_wake_command
+    incoming.set_extra("activated_handlers", [])
+    participant.settings["allowed_sessions"] = ["another-session"]
+    assert await requests(participant, incoming) == []
+    assert not incoming.is_at_or_wake_command
+    participant.settings["allowed_sessions"] = []
+    monkeypatch.setattr(
+        SessionServiceManager, "is_session_enabled", AsyncMock(return_value=False)
+    )
+    assert await requests(participant, incoming) == []
+    assert not incoming.is_at_or_wake_command
+    monkeypatch.setattr(
+        SessionServiceManager, "is_session_enabled", AsyncMock(return_value=True)
+    )
+    assert await requests(participant, incoming) == []
+    assert incoming.is_at_or_wake_command
+    participant.settings["mentioned_bot_reply"] = False
+    await participant.apply_participation(incoming, ProviderRequest())
+    assert incoming.is_stopped()
+    incoming.set_result(incoming.plain_result("应当取消的旧回复"))
+    await participant.guard_participation_result(incoming)
+    assert incoming.get_result() is None
+    participant.context.llm_generate.assert_not_awaited()
+
+
+async def test_mention_settings_save_through_native_panel(participant):
+    from astrbot_plugin_ovenheart.page_api import PageAPI
+
+    api = PageAPI(participant)
+    response = await api_call(
+        api.action,
+        {
+            "action": "settings",
+            "settings_revision": participant.settings_revision,
+            "payload": {
+                "mentioned_bot_reply": True,
+                "mention_names": [" 小夏 ", "小夏", "夏夏"],
+            },
+        },
+    )
+    assert response["status"] == "ok"
+    assert participant.settings["mention_names"] == ["小夏", "夏夏"]
+    assert participant.config["mentioned_bot_reply"] is True
+    assert participant.config["mention_names"] == ["小夏", "夏夏"]

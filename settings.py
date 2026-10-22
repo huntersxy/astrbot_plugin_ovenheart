@@ -41,6 +41,8 @@ DEFAULTS = {
     "semantic_threshold": 0.25,
     "habit_half_life": 90,
     "participation_mode": "off",
+    "mentioned_bot_reply": False,
+    "mention_names": [],
     "participation_min_messages": 3,
     "participation_debounce": 2,
     "participation_cooldown": 90,
@@ -142,7 +144,12 @@ def validate_settings(values: dict) -> dict:
         elif not isinstance(value, str) or len(value) > 256:
             raise ValueError(f"{key} 必须为长度不超过 256 的字符串。")
     result = values.copy()
-    for key in ("blocked_senders", "autonomous_tools", "autonomous_tool_denylist"):
+    for key in (
+        "blocked_senders",
+        "autonomous_tools",
+        "autonomous_tool_denylist",
+        "mention_names",
+    ):
         if key in result:
             result[key] = list(dict.fromkeys(v.strip() for v in result[key]))
     return result

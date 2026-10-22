@@ -46,6 +46,19 @@ The default allowlist permits only selected tools already available on the nativ
 
 Prompt edits also invalidate pending learning and selector results. Learning material survives a rejected late commit; a cancelled save still publishes committed wording. Superseded editors cannot overwrite newer templates, and switching templates protects unsaved drafts. Already-dispatched provider requests may still complete; this does not promise to revoke computation or billing.
 
+## Reply target binding (0.20.1)
+
+The planner chooses the message it is answering from the recent window and returns that message's `target_sequence` with its goal. Before the host decorates the generated result, the plugin points native quote and mention decoration at the selected message and sender. An aside meant for the user therefore no longer appears under the newest message, such as another bot's answer.
+
+| Case | Behavior |
+| --- | --- |
+| Target is one of the recent messages | Quote/@ points at that message or sender; the host still generates the reply body |
+| Target is the bot's own message | The decision is rejected and the reason is recorded in 学习与参与 |
+| Target is outside the window or malformed | The decision is rejected; sources and context are preserved |
+| An older custom planner prompt omits the target | Falls back to the newest non-self message, preserving pre-upgrade behavior |
+
+Binding changes only the host's quote/@ recipient. It does not rewrite generated text, add an @ component, or loosen tool permissions. Wait and observe plans never carry a target.
+
 ## Install and open
 
 Requires AstrBot `>=4.29.1,<5` and a configured chat provider. Install the release ZIP through the local plugin installer, or copy the plugin directory to the host's `data/plugins/astrbot_plugin_ovenheart` and reload it. Open the native plugin View named **人格工坊** (Persona workshop).
@@ -190,8 +203,8 @@ Every prompt this plugin sends lives in the 提示词 tab as an editable templat
 | Learning extractor | extracts personality, expression, jargon and behavior from raw chat | `{{persona}}` `{{profile}}` `{{observations}}` `{{memory}}` `{{context}}` `{{known_traits}}` `{{language_features}}` `{{enabled_kinds}}` `{{min_evidence}}` |
 | Learning reviewer | checks each learned entry against its cited evidence | `{{persona}}` `{{profile}}` `{{observations}}` `{{context}}` `{{memory}}` `{{candidates}}` |
 | Application style | the preamble inserted before supplementary habits | `{{profile}}` |
-| Participation: system | opening of the system prompt appended to an autonomous reply request | `{{goal}}` `{{reason}}` `{{profile}}` `{{scope}}` |
-| Participation: temporary context | the chat-context note attached to this turn only | `{{reply_goal}}` `{{messages}}` `{{profile}}` `{{scope}}` |
+| Participation: system | opening of the system prompt appended to an autonomous reply request | `{{goal}}` `{{reason}}` `{{target}}` `{{profile}}` `{{scope}}` |
+| Participation: temporary context | the chat-context note attached to this turn only | `{{reply_goal}}` `{{target}}` `{{messages}}` `{{profile}}` `{{scope}}` |
 
 Variables are substituted at call time: text is spliced as-is, while message lists, candidates and profiles are serialized as JSON and booleans become `true`/`false`. A misspelled name is left literal, double braces included, and the editor lists it under unknown references. That is deliberate: silently deleting it would drop a whole constraint without any provider error.
 
@@ -221,7 +234,7 @@ Version 0.3 renames the internal 学习记录 tab to 学习与参与 without cha
 
 Default gates are three fresh messages, two seconds of input debounce, a 90-second reply cooldown and 12 autonomous admissions per rolling hour, shared by isolated sessions in the same physical group. Cooldown and quotas survive reload. A native send-stage reply also postpones autonomous participation. Planning starts at most every 30 seconds per scope (or the configured cooldown when shorter), with two global planning slots. Unmet gates wait for a new message rather than running an independent polling reply loop.
 
-The planner chooses reply, observe or one bounded wait followed by one reassessment. New input cancels obsolete work. Provider failure, timeout or invalid plans preserve observation. Plans state reasons and conversational goals; they cannot execute tools. The resulting native request binds a conversation and reloads history through the host's session lock, preserving persona/history. Input, permission, profile and settings changes are checked again before generation.
+The planner chooses reply, observe or one bounded wait followed by one reassessment. New input cancels obsolete work. Provider failure, timeout or invalid plans preserve observation. Plans state reasons, conversational goals and the recent message being answered; they cannot execute tools. The resulting native request binds a conversation and reloads history through the host's session lock, preserving persona/history. Before sending, the plugin points the host's quote and @ decoration at that message and sender instead of the newest message, which may be another bot's answer. Input, permission, profile and settings changes are checked again before generation.
 
 Autonomous tool access is an exact-name subset of tools already present in the native request. An empty allowlist means text-only; an empty denylist adds no restriction. Direct-wake tool policy is unaffected. When the host Agent runner uses the `skills_like` schema mode, an empty allowlist keeps the original tool entries with `active` cleared instead of handing over an empty set: AstrBot 4.29.1 returns early from that runner's reset for a falsy tool set and the reply then fails with `'ToolLoopAgentRunner' object has no attribute 'stats'`. Both modes expose only the allowed names to the provider. Explicitly allowing a tool permits the host Agent to invoke it autonomously under existing permissions. No model weight training is involved, and this is not a copy of every MaiBot subsystem.
 
@@ -252,10 +265,17 @@ The test suite covers SQLite transactions, evidence validation and native AstrBo
 
 Enable **学习设置 → 调试日志 → 启用 Debug 模式** and save, or set `debug_enabled: true` in host plugin configuration. Default: off. Panel and native plugin settings are synchronized. Search AstrBot INFO logs for `OvenHeart debug`; the host must allow INFO logging. Disabling immediately stops subsequent debug events.
 
-`persona_injection` and `participation_injection` contain the exact, untruncated system additions and temporary user context appended by this plugin, with scope, persona, delivery mode, included IDs or allowed tools. They do not dump unrelated host prompts or claim to represent later downstream mutations. `retrieval` includes the actual query, selected entries, scores, reasons and fallback messages; `application_skipped` identifies an invalidated or disabled application.
+`persona_injection` and `participation_injection` contain the exact, untruncated system additions and temporary user context appended by this plugin, with scope, persona, delivery mode, included IDs, reply target or allowed tools. `participation_target` records the message, sender and message ID bound before sending. They do not dump unrelated host prompts or claim to represent later downstream mutations. `retrieval` includes the actual query, selected entries, scores, reasons and fallback messages; `application_skipped` identifies an invalidated or disabled application.
 
 Learning diagnostics include batch source IDs, the full extraction/format-correction request and original model completion, self-check request/response and committed audit. Planner request/response and parsed participation plans are also logged. Capture skips, cancellation and safe error/cause class names help explain failures while preserving sources. JSON string newlines use `\n` and round-trip without truncation.
 
 Only explicit business fields are serialized. Provider configuration credentials, HTTP authorization headers and arbitrary provider exception messages are never collected for debug logs. Conversation excerpts, persona and memory excerpts are included; turn debug off after diagnosis.
 
 ![Saved Debug setting with illustrative data](../assets/debug-settings-v0.17.jpg)
+## Immediate name mentions (0.21)
+
+Open Workshop → Learning settings → 提及时马上回复. The existing autonomous-participation section stays in place; name wakes have a separate default-off switch and an empty alias list. Enable the switch and enter one bot name/alias per line. These controls synchronize with native plugin config keys `mentioned_bot_reply` and `mention_names`.
+
+A case-sensitive substring match anywhere in the current group message's own plain text starts AstrBot's normal direct-wake reply. Quoted/forwarded contents and other users' @ display names do not match. Avoid short or common names. This works independently of off/observe/auto participation modes and bypasses autonomous message counts, debounce, cooldown, hourly quota and the planner model.
+
+The host still owns permissions, whitelists, rate limits, safety checks, the LLM switch, conversation, persona, history and tool policy. Autonomous tool lists apply only to ordinary autonomous participation. Native @, reply-to-bot and wake-prefix handling does not produce a second reply, and command handlers retain priority. Disabling the switch or removing the matched alias cancels pending mention output before generation/delivery. Immediate means immediate native dispatch; model generation and transport still take time.

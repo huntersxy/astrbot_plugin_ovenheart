@@ -5,6 +5,18 @@ import test from 'node:test';
 
 const source = readFileSync(new URL('../views/workshop/app.js', import.meta.url), 'utf8');
 
+test('mention switch and aliases save independently of participation mode', () => {
+  const {context,element}=fixture();
+  runInContext(`data={settings:{mentioned_bot_reply:false,mention_names:[],participation_mode:'off',blocked_senders:[],target_senders:[],allowed_sessions:[],autonomous_tools:[]},memory:{}};renderSettings();globalThis.saved=null;mutate=(action,payload)=>saved=payload;`,context);
+  assert.ok(element('#content').innerHTML.includes('提及时马上回复'));
+  assert.ok(element('#content').innerHTML.includes('沿用宿主工具权限'));
+  const inputs={mentioned_bot_reply:{checked:true},mention_names:{value:'小夏\n 夏夏 '},participation_mode:{value:'off'}};
+  element('#settings-form').onsubmit({preventDefault(){},currentTarget:{elements:{namedItem:key=>inputs[key]||null}}});
+  assert.equal(runInContext('saved.mentioned_bot_reply',context),true);
+  assert.equal(runInContext('saved.mention_names.join(",")',context),'小夏,夏夏');
+  assert.equal(runInContext('saved.participation_mode',context),'off');
+});
+
 function fixture() {
   const nodes = new Map();
   let confirmations = [];

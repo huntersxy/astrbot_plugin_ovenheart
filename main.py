@@ -20,6 +20,8 @@ from astrbot.api.provider import ProviderRequest
 from astrbot.api.star import Context, Star, StarTools
 from astrbot.core.agent.message import TextPart
 from astrbot.core.agent.tool import ToolSet
+from astrbot.core.message.components import Plain
+from astrbot.core.platform.astrbot_message import MessageMember
 from astrbot.core.star.filter.command import CommandFilter
 from astrbot.core.star.filter.command_group import CommandGroupFilter
 from astrbot.core.star.filter.regex import RegexFilter
@@ -118,7 +120,7 @@ class ObservationFilter(filter.CustomFilter):
 
 
 class ParticipationFilter(filter.CustomFilter):
-    """Admit optional group planning without intercepting direct wakes or commands."""
+    """Admit name mentions or group planning after native direct-wake detection."""
 
     def filter(self, event: AstrMessageEvent, cfg) -> bool:
         """Perform cheap admission; the native host runs its access checks next.
@@ -136,7 +138,6 @@ class ParticipationFilter(filter.CustomFilter):
             or not plugin.ready
             or plugin.closing
             or not plugin.settings["enabled"]
-            or plugin.settings["participation_mode"] == "off"
         ):
             return False
         if (
@@ -146,12 +147,32 @@ class ParticipationFilter(filter.CustomFilter):
         ):
             return False
         text = event.get_message_str().strip()
-        return bool(
+        admitted = bool(
             text
             and not any(
                 p and text.startswith(p) for p in ["/", *cfg.get("wake_prefix", [])]
             )
             and "[CQ:forward" not in text
+        )
+        if not admitted:
+            return False
+        # Match only this message's own text, never quoted or forwarded content
+        # or another user's @ display name. Empty component lists occur in
+        # text-only adapters; their message string is the original plain input.
+        components = event.get_messages()
+        plain = (
+            "\n".join(part.text for part in components if isinstance(part, Plain))
+            if components
+            else text
+        )
+        name = next(
+            (name for name in plugin.settings["mention_names"] if name in plain), ""
+        )
+        event.set_extra(
+            "ovenheart_mention", name if plugin.settings["mentioned_bot_reply"] else ""
+        )
+        return bool(event.get_extra("ovenheart_mention")) or (
+            plugin.settings["participation_mode"] != "off"
         )
 
 
@@ -548,7 +569,7 @@ class PersonaPlugin(Star):
 
     @filter.custom_filter(ParticipationFilter, False, priority=-40000)
     async def participate(self, event: AstrMessageEvent):
-        """Yield a native agent request only after a positive participation decision.
+        """Wake native chat on a name mention, otherwise consider participation.
 
         Args:
             event: Group event after host access, rate and content checks.
@@ -571,6 +592,20 @@ class PersonaPlugin(Star):
                 for f in handler.event_filters
             ):
                 return
+        if event.get_extra("ovenheart_mention"):
+            if not await self.check_mention(event):
+                return
+            self.participation.notice(event)
+            self.debug(
+                "mention_reply",
+                name=event.get_extra("ovenheart_mention"),
+                origin=event.unified_msg_origin,
+            )
+            # Let ProcessStage invoke its normal direct-wake Agent path once.
+            # Do not set call_llm: the native stage uses it to suppress a second
+            # invocation after a plugin has already yielded a ProviderRequest.
+            event.is_at_or_wake_command = True
+            return
         plan = await self.participation.consider(event)
         if plan:
             manager = self.context.conversation_manager
@@ -590,6 +625,21 @@ class PersonaPlugin(Star):
             yield event.request_llm(
                 prompt=event.get_message_str(), conversation=conversation
             )
+
+    async def check_mention(self, event: AstrMessageEvent) -> bool:
+        """Recheck a name-triggered wake before dispatch, generation and delivery.
+
+        Args:
+            event: Native event tagged with the matched name by the filter.
+
+        Returns:
+            Whether this name still enables a reply in the permitted session.
+        """
+        return bool(
+            self.settings["mentioned_bot_reply"]
+            and event.get_extra("ovenheart_mention") in self.settings["mention_names"]
+            and await self.permitted(event)
+        )
 
     async def check_participation(self, event: AstrMessageEvent, req=None) -> bool:
         """Recheck the same admission before generation and before host sending.
@@ -658,10 +708,35 @@ class PersonaPlugin(Star):
         Args:
             event: Native event whose generated result is about to be decorated.
         """
+        if event.get_extra("ovenheart_mention") and not await self.check_mention(event):
+            event.stop_event()
+            event.clear_result()
+            return
         plan = event.get_extra("ovenheart_decision")
         if not plan:
             return
         if await self.check_participation(event):
+            target = plan.get("target") or {}
+            target_id = str(target.get("message_id") or "")
+            if target_id and target_id != str(event.message_obj.message_id or ""):
+                # The host decorator quotes event.message_obj.message_id after this
+                # hook, so binding it here makes the visible quote match the person
+                # the planner actually answered instead of the newest message.
+                event.message_obj.message_id = target_id
+            sender_id = str(target.get("sender_id") or "")
+            if sender_id and sender_id != str(event.get_sender_id() or ""):
+                # The host may also decorate with an @ of the triggering sender.
+                event.message_obj.sender = MessageMember(
+                    sender_id, target.get("sender") or ""
+                )
+            if target:
+                self.debug(
+                    "participation_target",
+                    scope=plan["scope"],
+                    sequence=target.get("sequence"),
+                    sender=target.get("sender"),
+                    message_id=target_id,
+                )
             return
         # Stopping the event is not enough to drop the chain: the result decorate
         # stage returns before the responder when a handler stops the event, so
@@ -679,6 +754,9 @@ class PersonaPlugin(Star):
             event: Native event carrying a validated participation admission.
             req: Fully prepared native request with host persona and toolset.
         """
+        if event.get_extra("ovenheart_mention") and not await self.check_mention(event):
+            event.stop_event()
+            return
         plan = event.get_extra("ovenheart_decision")
         if not plan:
             return
@@ -699,23 +777,36 @@ class PersonaPlugin(Star):
             skills_like=tool_schema_mode(host_config) == "skills_like",
         )
         profile = plan.get("profile", {})
+        target = plan.get("target") or {}
+        target_label = target.get("sender") or "群聊"
         system_injection = self.template(
             "participation_system",
             goal=plan["intent"],
             reason=plan["reason"],
+            target=target_label,
             profile=profile,
             scope=plan["scope"],
         ) + json.dumps(
-            {"goal": plan["intent"], "reason": plan["reason"]}, ensure_ascii=False
+            {
+                "goal": plan["intent"],
+                "reason": plan["reason"],
+                "reply_target": target_label,
+            },
+            ensure_ascii=False,
         )
         user_injection = self.template(
             "participation_user",
             reply_goal=plan["intent"],
+            target=target_label,
             messages=plan["messages"],
             profile=profile,
             scope=plan["scope"],
         ) + json.dumps(
-            {"reply_goal": plan["intent"], "messages": plan["messages"]},
+            {
+                "reply_goal": plan["intent"],
+                "reply_target": target_label,
+                "messages": plan["messages"],
+            },
             ensure_ascii=False,
         )
         if self.settings["guidance_delivery"] == "cached":
@@ -820,6 +911,9 @@ class PersonaPlugin(Star):
         query = ("\n".join(reversed(recent)) + "\n当前输入：" + query[:1000]).strip()
         if plan and plan["scope"] == scope:
             query += "\n本轮回复目标：" + plan["intent"][:240]
+            target = plan.get("target") or {}
+            if target.get("sender"):
+                query += "；回应对象：" + str(target["sender"])[:40]
         settings = self.settings.copy()
         prompts_revision = self.prompts_revision
         provider_id, identity = None, ""
@@ -1002,6 +1096,9 @@ class PersonaPlugin(Star):
                         "sequence": window["sequence"],
                         "source": "bot:" + uuid4().hex,
                         "sender": "机器人（自己）",
+                        "sender_id": "",
+                        "message_id": "",
+                        "self": True,
                         "text": result.get_plain_text()[:1200],
                         "time": time.time(),
                     }

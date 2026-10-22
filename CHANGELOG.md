@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.21.0
+
+- Add an independent, default-off “Reply immediately when mentioned” switch and a list of bot names/aliases in both Panel Settings and native plugin config. Match case-sensitive substrings in the current message's own plain text, excluding quoted/forwarded content and @ display names.
+- Dispatch matching group messages through AstrBot's native direct-wake path once, preserving its current conversation, persona, tools, access checks, rate limits and safety checks. Bypass autonomous message counts, debounce, cooldown, quota and planner calls, including in off/observe mode. Native @/reply/prefix wakes and command handlers keep precedence.
+- Recheck mention configuration and session permission before generation and delivery; cancel stale mention results after disabling the feature or removing its matched alias.
+
+## 0.20.1
+
+- Bind autonomous replies to the message the planner actually answered. The planner now returns a `target_sequence` from the recent-message window; the pre-send hook points AstrBot's own quote and mention decoration at that message and sender, so a reply intended for an earlier participant no longer appears under the newest message, such as another bot's answer.
+- Reject self-authored, out-of-window or malformed targets. Older custom planner prompts that omit the field keep the previous behavior and fall back to the newest non-self message. Wait and observe plans never carry a target.
+- Carry the selected participant into both participation injections and Debug output, and cover earlier-target binding, latest-message fallback, self-target rejection and malformed targets with regression tests.
+
 ## 0.20.0
 
 - Replace the autonomous tool-name textarea with a searchable picker backed by AstrBot's current plugin, MCP and built-in tool registry. Add checkbox and filtered bulk selection, refresh, manual name import, disabled-tool labels and retained unregistered names.
