@@ -1002,7 +1002,13 @@ class Store:
                         (trait_scope, expected["id"]),
                     ).fetchone()
                     if current is None or any(
-                        current[key] != value for key, value in expected.items()
+                        (
+                            [e["text"] for e in json.loads(current["examples"])]
+                            != value
+                            if key == "examples"
+                            else current[key] != value
+                        )
+                        for key, value in expected.items()
                     ):
                         raise ValueError(
                             "合并目标在自检后已修改，旧结果未保存、素材已保留，请重新学习。"

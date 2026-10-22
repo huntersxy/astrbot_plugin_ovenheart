@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.39.1
+
+- Include old expression sample text in stable known-habit descriptions for extraction templates and payloads, and in the explicit merge target seen by admission review. Do not expose source metadata or treat old samples as new evidence.
+- Atomically recheck reviewed target sample text, including empty-to-nonempty changes, before merging. If another update changes only samples, discard the stale result and retain its materials. Metadata-only differences do not invalidate a judgment that used text only.
+- Reuse one ID-ordered description list, keeping dynamic support statistics after stable habit fields. Preserve existing model-call counts, source validation and activation rules.
+- Pass three focused native checks for successful sample-aware reinforcement and concurrent changes from both populated and empty sample sets. No external provider or production database was used.
+
 ## 0.39.0
 
 - Learn optional grounded expression samples alongside abstract style rules: at most three literal spans of up to 60 characters, each from the first 300 characters of the candidate's own cited human observation. Invalid origin fails without consuming the batch; missing samples remain compatible.

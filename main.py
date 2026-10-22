@@ -1906,6 +1906,8 @@ class PersonaPlugin(Star):
                     key: target[key]
                     for key in ("id", "kind", "situation", "content", "status")
                 }
+                if target["kind"] == "expression":
+                    trait["_merge_target"]["examples"] = target.get("examples", [])
         candidates = [
             {
                 "candidate_id": index,
@@ -2302,6 +2304,15 @@ class PersonaPlugin(Star):
             observations = [
                 {k: m[k] for k in ("id", "sender", "text", "created")} for m in batch
             ]
+            known_descriptions = [
+                {k: t[k] for k in ("id", "kind", "situation", "content", "status")}
+                | (
+                    {"examples": [e["text"] for e in t.get("examples", [])]}
+                    if t["kind"] == "expression"
+                    else {}
+                )
+                for t in known
+            ]
             task = self.template(
                 "learning",
                 persona=anchor["prompt"][:4000] if anchor else "",
@@ -2309,10 +2320,7 @@ class PersonaPlugin(Star):
                 observations=observations,
                 memory=memories,
                 context=conversation_context,
-                known_traits=[
-                    {k: t[k] for k in ("id", "kind", "situation", "content", "status")}
-                    for t in known
-                ],
+                known_traits=known_descriptions,
                 known_trait_stats=[
                     {k: t[k] for k in ("id", "support_count", "meaning_stage")}
                     for t in known
@@ -2328,19 +2336,7 @@ class PersonaPlugin(Star):
                     "profile": selected["profile"],
                     "enabled_kinds": [k for k in KINDS if settings[f"learn_{k}"]],
                     "min_evidence": settings["min_evidence"],
-                    "known_traits": [
-                        {
-                            k: t[k]
-                            for k in (
-                                "id",
-                                "kind",
-                                "situation",
-                                "content",
-                                "status",
-                            )
-                        }
-                        for t in known
-                    ],
+                    "known_traits": known_descriptions,
                     "known_trait_stats": [
                         {k: t[k] for k in ("id", "support_count", "meaning_stage")}
                         for t in known

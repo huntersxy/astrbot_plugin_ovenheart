@@ -78,7 +78,7 @@ SPECS = {
             "observations": "本批可学习的原始消息，created 为 Unix 秒数的采集时间",
             "memory": "LivingMemory 检索到的长期记忆",
             "context": "邻近发言、引用原文与 self=true 的机器人发言，仅辅助理解",
-            "known_traits": "已存习惯，仅作合并对照",
+            "known_traits": "已存习惯及表达片段，仅作合并对照，不是本批证据",
             "known_trait_stats": "已有习惯的动态批次计数与细化阶段，按 ID 关联",
             "language_features": "按对象统计的表达特征",
             "enabled_kinds": "本次启用的学习类别",

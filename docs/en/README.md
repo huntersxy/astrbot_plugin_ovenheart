@@ -2,6 +2,16 @@
 
 ## Grounded expression samples (0.39)
 
+Since 0.39.1, expression entries in `known_traits` also carry old sample text in
+`examples`, alongside stable ID/condition/rule/status fields and before dynamic
+support statistics. Admission review sees the same text in `merge_target.examples`,
+including an empty array for unsampled expressions. Old samples expose no source
+metadata and are not current evidence. Reviewed merges atomically recheck target
+sample text: sample-only and empty-to-nonempty concurrent changes cancel the stale
+result without consuming materials. Metadata-only differences do not invalidate
+a text-only judgment. Three native simulated checks cover reinforcement and both
+concurrent-change cases, with no additional model stage.
+
 Expressions may retain three short source spans alongside their rule. The existing
 extractor can return `examples: [{"evidence_id": 1, "text": "..."}]`. Each span
 must be at most 60 characters and literally occur in the first 300 characters of
