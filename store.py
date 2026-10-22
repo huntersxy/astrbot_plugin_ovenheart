@@ -1078,16 +1078,39 @@ class Store:
                         target["content"],
                         support["status"],
                     )
-                    # Refine jargon only as independent batches accumulate: 2, 4, 8, 16.
+                    # Reuse bounded independent-batch stages for reviewed refinements.
+                    # Active wording remains stable when the operator returns to review mode.
+                    refine_habit = (
+                        trait["kind"] != "jargon"
+                        and trait.get("refine") is True
+                        and trait.get("merge_id") == target["id"]
+                        and trait.get("_review_approved") is True
+                        and settings["learning_review_enabled"]
+                        and (
+                            status == "pending"
+                            or (
+                                settings["activation_mode"] == "auto"
+                                and confidence >= settings["auto_confidence"]
+                            )
+                        )
+                        and (
+                            settings["activation_mode"] != "auto"
+                            or trait["confidence"] >= settings["auto_confidence"]
+                        )
+                        and (
+                            trait["content"] != content
+                            or trait["situation"] != situation
+                        )
+                    )
                     if (
-                        trait["kind"] == "jargon"
-                        and not target["manual"]
+                        not target["manual"]
                         and stage < 4
                         and count >= 2 ** (stage + 1)
+                        and (trait["kind"] == "jargon" or refine_habit)
                     ):
                         old_term = jargon_term(content)
                         new_term = jargon_term(trait["content"])
-                        if old_term and old_term == new_term:
+                        if refine_habit or (old_term and old_term == new_term):
                             stage += 1
                             situation, content = trait["situation"], trait["content"]
                             if (

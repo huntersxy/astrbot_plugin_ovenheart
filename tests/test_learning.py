@@ -55,6 +55,23 @@ def test_evidence_is_resolved_from_real_batch():
     assert result[0]["kind"] == "expression"
 
 
+def test_refinement_requires_a_boolean_flag_and_an_explicit_known_target():
+    known = [{"id": 8, "kind": "expression", "content": "旧习惯"}]
+    assert parse_candidates(
+        candidates(refine=True, merge_id=8), MESSAGES, DEFAULTS, known
+    )[0]["refine"]
+    assert not parse_candidates(candidates(refine=True), MESSAGES, DEFAULTS)[0][
+        "refine"
+    ]
+    assert not parse_candidates(candidates(merge_id=8), MESSAGES, DEFAULTS, known)[0][
+        "refine"
+    ]
+    with pytest.raises(LearningFormatError, match="布尔"):
+        parse_candidates(
+            candidates(refine="true", merge_id=8), MESSAGES, DEFAULTS, known
+        )
+
+
 @pytest.mark.parametrize(
     "wrapper",
     [

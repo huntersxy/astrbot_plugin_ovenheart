@@ -1717,6 +1717,7 @@ class PersonaPlugin(Star):
                 **{key: t[key] for key in ("kind", "situation", "content")},
                 "evidence_ids": [e["id"] for e in t["evidence"]],
                 "merge_target": t.get("_merge_target"),
+                "refine": t.get("refine", False),
             }
             for index, t in enumerate(traits, 1)
         ]
@@ -1804,6 +1805,7 @@ class PersonaPlugin(Star):
                     **{key: trait[key] for key in ("kind", "situation", "content")},
                     "evidence_ids": [e["id"] for e in trait["evidence"]],
                     "merge_target": trait.get("_merge_target"),
+                    "refine": trait.get("refine", False),
                 }
             )
         return [

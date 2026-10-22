@@ -1,5 +1,13 @@
 # OvenHeart workshop guide
 
+## Evidence-backed habit refinement (0.29)
+
+Personality, expression and behavior entries can now refine their initial wording/conditions rather than only accumulating support. A candidate must explicitly supply `merge_id` and boolean `refine=true`, with real batch evidence and an affirmative admission review. Ordinary paraphrases need no flag. Review compares the proposed and stored meaning, subject and conditions; refinement cannot reverse intent, broaden applicability or change core identity.
+
+Existing four-stage independent-batch thresholds (2, 4, 8, 16) apply. Duplicate candidates in one batch cannot advance several stages. Only unlocked entries qualify: pending entries may refine before human approval; auto mode additionally requires proposal confidence, and cumulative confidence when replacing active content, to meet the activation threshold. Low-confidence proposals or switching back to review mode preserve old active wording. Manual approval/edit/rejection/disable decisions remain authoritative. With admission review off, non-jargon entries still accumulate evidence without automatic refinement.
+
+No extra model calls, database tables or configuration switches are added. Existing snapshots remain available; review inputs/audits carry `refine`. Saved custom prompts can adopt the new default wording, while older formats without the flag retain their behavior. Jargon keeps its existing meaning-refinement policy.
+
 Since 0.28.1, jargon refinement uses the same term normalization as extraction validation. Balanced/nested quotes and Unicode width differences no longer prevent a valid same-term definition update at existing independent-batch thresholds. `LUX`/`ＬＵＸ` and `『好家伙』`/`“好家伙”` compare consistently, while still requiring an explicit merge target or existing exact alias. Manual locks, rejection/disable state, local vocabulary isolation and activation policy remain unchanged. No bulk data rewrite occurs on upgrade.
 
 ## Batch-grounded memory recall (0.28)

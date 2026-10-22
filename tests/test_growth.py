@@ -19,17 +19,19 @@ async def store(tmp_path):
     return instance
 
 
-async def batch(store, number, **patch):
+async def batch(store, number, settings=None, **patch):
     """Commit an independent source batch describing a repeated habit.
 
     Args:
         store: Temporary SQLite store.
         number: Independent source batch number.
+        settings: Optional effective activation and review settings.
         **patch: Candidate fields to vary.
 
     Returns:
         Current scope detail.
     """
+    settings = settings or DEFAULTS
     for i in range(2):
         await store.call(
             "capture",
@@ -40,7 +42,7 @@ async def batch(store, number, **patch):
             f"{number}:{i}",
             "user",
             "好家伙还是你懂我",
-            DEFAULTS,
+            settings,
         )
     sources = await store.call("batch", SCOPE, 30)
     trait = {
@@ -61,7 +63,7 @@ async def batch(store, number, **patch):
         **patch,
     }
     run = await store.call("start_run", SCOPE)
-    await store.call("finish_run", run, SCOPE, sources, [trait], DEFAULTS, "")
+    await store.call("finish_run", run, SCOPE, sources, [trait], settings, "")
     return await store.call("state", SCOPE)
 
 
@@ -95,6 +97,90 @@ async def test_paraphrases_merge_but_never_overwrite_human_edits(store):
     await store.call("mutate", SCOPE, "trait", {"id": identifier, "status": "rejected"})
     state = await batch(store, 4, merge_id=identifier, content="换个措辞再学回来")
     assert len(state["traits"]) == 1 and state["traits"][0]["status"] == "rejected"
+
+
+@pytest.mark.parametrize("kind", ["expression", "behavior", "personality"])
+async def test_reviewed_non_jargon_refinements_advance_once_then_respect_manual_lock(
+    store, kind
+):
+    first = await batch(store, 1, kind=kind)
+    identifier = first["traits"][0]["id"]
+    improved = "对方愿意轻松互动时，用简短反问接住玩笑"
+    second = await batch(
+        store,
+        2,
+        kind=kind,
+        merge_id=identifier,
+        refine=True,
+        _review_approved=True,
+        content=improved,
+    )
+    assert second["traits"][0]["content"] == improved
+    assert second["traits"][0]["meaning_stage"] == 1
+    assert second["traits"][0]["status"] == "pending"
+    third = await batch(
+        store,
+        3,
+        kind=kind,
+        merge_id=identifier,
+        refine=True,
+        _review_approved=True,
+        content="另一种尚未达到批次门槛的细化",
+    )
+    assert third["traits"][0]["content"] == improved
+    await store.call(
+        "mutate",
+        SCOPE,
+        "trait",
+        {"id": identifier, "content": "人工保留的表达", "status": "active"},
+    )
+    fourth = await batch(
+        store,
+        4,
+        kind=kind,
+        merge_id=identifier,
+        refine=True,
+        _review_approved=True,
+        content="不能覆盖人工底稿的提议",
+    )
+    assert fourth["traits"][0]["content"] == "人工保留的表达"
+    assert fourth["traits"][0]["meaning_stage"] == 1
+
+
+@pytest.mark.parametrize(
+    "condition",
+    [
+        "no_flag",
+        "unreviewed",
+        "review_disabled",
+        "active_in_review_mode",
+        "low_confidence",
+    ],
+)
+async def test_non_jargon_refinement_does_not_bypass_approval_or_activation_policy(
+    store, condition
+):
+    settings = DEFAULTS | {"activation_mode": "auto"}
+    first = await batch(store, 1, settings=settings)
+    old = first["traits"][0]
+    assert old["status"] == "active" and not old["manual"]
+    if condition == "review_disabled":
+        settings = settings | {"learning_review_enabled": False}
+    if condition == "active_in_review_mode":
+        settings = settings | {"activation_mode": "review"}
+    second = await batch(
+        store,
+        2,
+        settings=settings,
+        merge_id=old["id"],
+        content="不应自动应用的细化",
+        refine=condition != "no_flag",
+        _review_approved=None if condition == "unreviewed" else True,
+        confidence=0.6 if condition == "low_confidence" else 0.95,
+    )
+    assert second["traits"][0]["content"] == old["content"]
+    assert second["traits"][0]["status"] == "active"
+    assert second["traits"][0]["meaning_stage"] == 0
 
 
 async def test_jargon_is_refined_at_independent_batch_thresholds(store):

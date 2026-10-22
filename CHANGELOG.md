@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.29.0
+
+- Allow explicitly requested, reviewed refinements of unlocked personality, expression and behavior entries using optional boolean `refine` with a known `merge_id`. Ordinary paraphrases continue reinforcing evidence without rewriting stored wording.
+- Reuse independent-batch refinement stages, existing snapshots and admission review. Preserve human locks, reject unreviewed/disabled-review updates, and keep old active content in review mode or below automatic confidence thresholds.
+- Include refinement intent in reviewer inputs/audits without adding provider calls, schema tables or settings. Older outputs without the flag remain compatible; jargon behavior is unchanged.
+- Pass eleven focused parser, SQLite and native learning/review checks covering refinement, stages, manual locks, policy/confidence boundaries and the end-to-end submission path. Actual learned phrasing quality remains pending production evaluation.
+
 ## 0.28.1
 
 - Use the existing shared jargon-term normalizer during stored definition refinement, matching extraction validation for quoted, nested-quoted and full-width/ASCII names. Previously these valid same-term merges accumulated evidence without advancing the refinement stage or updating the definition.

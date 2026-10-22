@@ -249,6 +249,47 @@ async def test_review_only_receives_memories_linked_to_cited_observations(plugin
     assert len(base["memory_context"]) == 3
 
 
+async def test_native_learning_refines_an_unlocked_habit_only_after_review(plugin):
+    plugin.settings.update(
+        activation_mode="auto", learning_review_enabled=True, learn_jargon=False
+    )
+    reviewed = []
+
+    async def generate(**kwargs):
+        payload = json.loads(kwargs["prompt"])
+        if "candidates" in payload:
+            reviewed.append(payload["candidates"])
+            return SimpleNamespace(completion_text='{"approved_ids":[1],"flagged":[]}')
+        known = payload["known_traits"]
+        candidate = {
+            "kind": "expression",
+            "situation": "朋友轻松调侃时",
+            "content": "双方愿意玩笑时，用简短反问接住语气"
+            if known
+            else "简短反问接住玩笑",
+            "confidence": 0.95,
+            "evidence_ids": [m["id"] for m in payload["observations"]],
+        }
+        if known:
+            candidate.update(merge_id=known[0]["id"], refine=True)
+        return SimpleNamespace(completion_text=json.dumps({"traits": [candidate]}))
+
+    plugin.context.llm_generate = AsyncMock(side_effect=generate)
+    scope = await sources(plugin)
+    assert (await plugin.learn(scope))["status"] == "success"
+    first = (await plugin.store.call("state", scope))["traits"][0]
+    await plugin.capture(event("refine-1", text="哈哈，还是你会接话"))
+    await plugin.capture(event("refine-2", text="愿意开玩笑时你这句反问挺自然"))
+    assert (await plugin.learn(scope))["status"] == "success"
+    current = (await plugin.store.call("state", scope))["traits"][0]
+    assert current["id"] == first["id"] and current["meaning_stage"] == 1
+    assert current["content"].startswith("双方愿意玩笑时")
+    assert current["status"] == "active" and not current["manual"]
+    assert reviewed[-1][0]["refine"] is True
+    assert reviewed[-1][0]["merge_target"]["content"] == first["content"]
+    assert plugin.context.llm_generate.await_count == 4
+
+
 async def test_empty_extraction_does_not_spend_a_review_request(plugin):
     plugin.settings["learning_review_enabled"] = True
     scope = await sources(plugin)

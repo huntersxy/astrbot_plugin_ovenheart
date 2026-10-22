@@ -35,6 +35,7 @@ for_evidence_ids 只标记语境关联，不表示这些目标发言支持语境
 known_traits 是已存习惯，仅作对照，不能作为证据。如果本批证据支持其中同一习惯，在候选中加 merge_id 指向其 id；
 只有类别一致、情境兼容、含义相同才可合并。不同立场、不同场景不能合并，矛盾时宁可不输出。
 已拒绝或停用的习惯不得换一种说法重新学习，可用 merge_id 标识它以防重复。
+非词汇习惯合并时，仅在新证据使适用条件更准确、补足明确边界或更忠实地概括稳定表达时，才额外写 refine=true；普通同义改写不标记。必须有 merge_id，不能扩大原习惯的适用范围、反转其目的或改变核心身份。代码只会在自检通过、独立批次门槛达成且未被人工锁定时考虑细化；没有改进就只补证据。
 词汇可在新证据下澄清或修正解释，但只针对同一个词，不能将不同的词合并；content 示例为「好家伙：表示轻松的惊讶」，不要把「词语」二字作为词条名。
 词汇 content 必须使用「词名：释义」，词名须在至少一条所引用的 observations 原文中真实出现；不能从记忆、邻近对话或模型常识新增未出现的词名，也不能把其他单词内部的字母片段当成缩写。
 """
@@ -55,6 +56,7 @@ observations 是唯一证据；邻近对话和记忆只帮助理解语境。身�
 表达节奏应来自同一对象的重复表现，不能把闲聊短句变成所有复杂问题的硬字数限制。不能把澄清或倾听变成每次都追问或只听不答。
 候选有充分支持且前提相符则通过；不确定或不支持则标记，简短指出具体问题。标记只会转人工检查，不是删除或永久否定。
 如果候选带 merge_target，还必须核对它与旧习惯的核心含义、主体和使用条件相容。旧条目不是新证据；候选本身有依据，不代表可以给另一种习惯增加支持。不同场景的独立动作、相反目的或更宽的条件不能只因同类别而合并。
+refine=true 表示候选请求细化旧习惯。只有本批证据支持更准确的条件、边界或稳定表达，且没有扩大原适用范围或反转目的时才通过；普通同义改写无需细化。不确定就标记，不能为了演进而放宽身份或证据要求。
 允许同一习惯的换说法、准确补充条件，以及同一词汇在原始证据支持下逐步细化本地释义；不要求文字完全一致。合并不相容则标记并说明目标冲突，不能自行换目标或重写候选。
 每个 candidate_id 必须恰好出现一次，分别放入 approved_ids 或 flagged；不得新增、改写、合并或输出任何候选内容。
 只输出 JSON：{"approved_ids":[1],"flagged":[{"candidate_id":2,"reason":"该条把临时情绪扩大成永久性格，引用原文不足以支持。"}]}。
@@ -285,6 +287,9 @@ def parse_candidates(
         if len(evidence_ids) < settings["min_evidence"]:
             continue
         merge_id = candidate.get("merge_id")
+        refine = candidate.get("refine", False)
+        if type(refine) is not bool:
+            raise LearningFormatError("学习条目的 refine 必须为布尔值。")
         # A proposal this batch cannot honor is that candidate's problem, not the
         # batch's. Raising here would fail every run over the same preserved
         # sources, and a deterministic model answer would retry it forever.
@@ -323,6 +328,7 @@ def parse_candidates(
                 "content": candidate["content"].strip(),
                 "confidence": confidence,
                 "merge_id": merge_id,
+                "refine": refine and merge_id is not None,
                 "evidence": [
                     {
                         "id": i,
