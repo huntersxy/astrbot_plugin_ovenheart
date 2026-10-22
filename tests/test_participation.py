@@ -612,6 +612,9 @@ async def test_autonomous_reply_binds_the_planner_target_message_and_sender(
         "newest", text="咕噜？看本鲸的？", sender="whale", sender_name="小鲸"
     )
     request = (await requests(participant, newest))[0]
+    assert request.prompt == older.get_message_str()
+    assert newest.get_message_str() == "咕噜？看本鲸的？"
+    assert newest.get_sender_id() == "whale"
     await participant.apply_participation(newest, request)
     injection = request.system_prompt + "".join(
         part.text for part in request.extra_user_content_parts
@@ -634,12 +637,74 @@ async def test_autonomous_reply_binds_the_planner_target_message_and_sender(
 async def test_autonomous_reply_keeps_the_latest_message_as_target_by_default(
     participant,
 ):
-    incoming = event("latest", sender="alice", sender_name="汐兮雨")
-    await requests(participant, incoming)
+    text = "最新长消息：" + "完整保留" * 400
+    incoming = event("latest", text=text, sender="alice", sender_name="汐兮雨")
+    request = (await requests(participant, incoming))[0]
+    assert len(text) > 1200 and request.prompt == text
     incoming.set_result(incoming.plain_result("回复"))
     await participant.guard_participation_result(incoming)
     assert incoming.message_obj.message_id == "latest"
     assert incoming.get_sender_id() == "alice"
+
+
+async def test_reply_target_outside_final_window_survives_native_request_collection(
+    participant,
+):
+    from astrbot.core.astr_main_agent import (
+        MainAgentBuildConfig,
+        collect_initial_request,
+    )
+
+    participant.settings.update(participation_min_messages=30, participation_cooldown=0)
+    older = event("old-target", text="这句话里的这个结果是什么意思？", sender="alice")
+    older.message_obj.message = [
+        Reply(
+            id="old-quote", sender_id="bob", message_str="TARGET_QUOTE：测试结果待确认"
+        )
+    ]
+    assert await requests(participant, older) == []
+    for index in range(14):
+        assert (
+            await requests(
+                participant,
+                event(
+                    f"background-{index}", text=f"其他人的新话题{index}", sender="peer"
+                ),
+            )
+            == []
+        )
+    participant.context.llm_generate.assert_not_awaited()
+    participant.settings["participation_min_messages"] = 1
+    participant.context.llm_generate.return_value = decision(target_sequence=1)
+    newest = event("newest-trigger", text="LATEST_ONLY：另一件事", sender="whale")
+    request = (await requests(participant, newest))[0]
+    plan = newest.get_extra("ovenheart_decision")
+    assert all(m["sequence"] != 1 for m in plan["messages"])
+    assert request.prompt == older.get_message_str()
+    await participant.apply_participation(newest, request)
+    injection = "".join(p.text for p in request.extra_user_content_parts)
+    payload = json.JSONDecoder().raw_decode(
+        injection[injection.index('{"reply_goal"') :]
+    )[0]
+    assert payload["reply_message"]["sequence"] == 1
+    assert payload["reply_message"]["sender_id"] == "alice"
+    assert payload["reply_message"]["text"] == older.get_message_str()
+    assert (
+        payload["reply_message"]["reply_to"]["text"] == "TARGET_QUOTE：测试结果待确认"
+    )
+    newest.set_extra("provider_request", request)
+    current, _ = await collect_initial_request(
+        newest, participant.context, MainAgentBuildConfig(tool_call_timeout=30)
+    )
+    assert current.prompt == older.get_message_str()
+    assert current.contexts[-1]["content"] == "上次聊到这里"
+    assert all(
+        p.model_dump_for_context()["_no_save"] for p in current.extra_user_content_parts
+    )
+    assert newest.message_obj.message_id == "newest-trigger"
+    assert newest.get_sender_id() == "whale"
+    assert newest.get_message_str() == "LATEST_ONLY：另一件事"
+    participant.context.llm_generate.assert_awaited_once()
 
 
 async def test_planner_decoration_inserts_real_quote_and_mention_once(participant):

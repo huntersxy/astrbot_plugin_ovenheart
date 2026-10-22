@@ -838,9 +838,15 @@ class PersonaPlugin(Star):
             # and the next planner's own-reply context run before/after delivery.
             event.set_extra("enable_streaming", False)
             event.call_llm = True
-            yield event.request_llm(
-                prompt=event.get_message_str(), conversation=conversation
+            target = plan.get("target") or {}
+            # Keep the full original input when answering the triggering message;
+            # older targets are available only as the planner's bounded text.
+            prompt = (
+                event.get_message_str()
+                if target.get("source") == plan["room_source"]
+                else target.get("text") or event.get_message_str()
             )
+            yield event.request_llm(prompt=prompt, conversation=conversation)
 
     async def check_mention(self, event: AstrMessageEvent) -> bool:
         """Recheck a name-triggered wake before dispatch, generation and delivery.
@@ -1129,12 +1135,14 @@ class PersonaPlugin(Star):
             reply_goal=plan["intent"],
             target=target_label,
             messages=plan["messages"],
+            reply_message=target,
             profile=profile,
             scope=plan["scope"],
         ) + json.dumps(
             {
                 "reply_goal": plan["intent"],
                 "reply_target": target_label,
+                "reply_message": target,
                 "decoration": plan.get("decoration"),
                 "messages": plan["messages"],
             },
@@ -1157,6 +1165,7 @@ class PersonaPlugin(Star):
         self.debug(
             "participation_injection",
             scope=plan["scope"],
+            prompt=req.prompt,
             system=system_injection,
             temporary_user=user_injection,
             allowed_tools=sorted(allowed),

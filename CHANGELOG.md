@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.33.1
+
+- Bind autonomous request prompts to the actual planner-selected message instead of always sending the latest triggering input. Preserve the full original input for current-message targets; older targets retain the planner's existing 1,200-character bound.
+- Include explicit `reply_message` data with sender, text and inbound quote in temporary participation context, even when the target falls outside the final twelve-message window. Add the editable placeholder and explain how trigger-event sender metadata differs from the reply target.
+- Keep native conversation binding, history reload, access checks, source identity during generation and existing send-stage decoration intact. Add the request prompt to opt-in injection diagnostics, without extra calls or settings.
+- Pass three focused native checks for older-target binding, untruncated current inputs and out-of-window quote preservation through native request collection. LivingMemory runtime query/scope still follow the original event; this change does not rebind that separate integration.
+
 ## 0.33.0
 
 - Use configured embedding/rerank recall before participation planning instead of lexical-only habit ranking. Lexical mode remains lexical; contextual mode uses hybrid candidate recall here because the planner itself judges applicability, without a second chat-selector call.

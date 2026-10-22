@@ -1,5 +1,11 @@
 # OvenHeart workshop guide
 
+Since 0.33.1, autonomous request prompts use the planner's actual reply target. If one member asks a question and another member later triggers planning, a decision to answer the earlier member sends that question as the primary prompt. Current-message targets retain the full original input; earlier targets use the existing 1,200-character window text without fetching platform history.
+
+Temporary participation context now explicitly carries `reply_message`, including sender, text, sequence and inbound quote, even when the target is no longer among the final twelve context messages. Custom templates can use `{{reply_message}}`; the structured payload always supplies it. Default wording distinguishes trigger-event sender metadata from the actual reply target. Opt-in `participation_injection` diagnostics also include the request prompt at that hook.
+
+Native conversation binding, history reload, permissions and existing send-stage quote/mention decoration remain. The triggering event is not rebound to another user during generation. The current LivingMemory runtime integration still derives its query and scope from the original event, potentially the newer trigger; correcting `prompt` alone does not change that behavior. Batch-learning memory recall retains its existing real-anchor permissions, and no LivingMemory changes or extra memory calls are included here.
+
 ## Habit recall before participation planning (0.33)
 
 The participation planner now uses configured embedding/rerank providers instead of lexical-only habit ranking. Its query contains up to 2,400 characters from the latest six native-scope messages and quotes. Lexical mode makes neither call. Hybrid/contextual modes use configured semantic recall and reranking; contextual mode does not add a chat-selector call here because the existing planner judges candidate applicability. Final reply selection keeps its original configured behavior.
