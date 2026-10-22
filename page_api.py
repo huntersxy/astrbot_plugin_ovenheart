@@ -50,9 +50,47 @@ class PageAPI:
             self.plugin.settings["blocked_senders"],
             not self.plugin.settings["session_isolation"],
         )
+        tools = {
+            "available": False,
+            "items": [],
+            "message": "暂时无法读取 AstrBot 工具列表，可刷新或手动补充名称。",
+        }
+        try:
+            manager = self.plugin.context.get_llm_tool_manager()
+            registered = manager.get_full_tool_set()
+            entries = {
+                tool.name: {
+                    "name": tool.name,
+                    "description": (tool.description or "")[:600],
+                    "active": bool(tool.active),
+                }
+                for tool in registered.tools
+            }
+            builtins = getattr(manager, "iter_builtin_tools", None)
+            if callable(builtins):
+                for tool in builtins():
+                    entries.setdefault(
+                        tool.name,
+                        {
+                            "name": tool.name,
+                            "description": (tool.description or "")[:600],
+                            "active": bool(tool.active),
+                        },
+                    )
+            tools = {
+                "available": True,
+                "items": [entries[name] for name in sorted(entries)[:1000]],
+                "message": f"AstrBot 当前注册 {len(entries)} 个工具。此处选择只缩小自主回复的工具范围，实际调用仍受宿主会话、人格与工具权限限制。",
+                "truncated": len(entries) > 1000,
+            }
+        except Exception as exc:
+            logger.debug(
+                "OvenHeart tool inventory unavailable (%s)", type(exc).__name__
+            )
         state.update(
             settings=self.plugin.settings,
             settings_revision=self.plugin.settings_revision,
+            tools=tools,
             prompts_revision=self.plugin.prompts_revision,
             memory=self.plugin.memory.status(),
             busy=list(self.plugin.busy),
@@ -105,7 +143,7 @@ class PageAPI:
                 raise ValueError("请求不是有效的 JSON。") from exc
             if not isinstance(body, dict) or not isinstance(body.get("prompts"), dict):
                 raise ValueError("请提交要保存的提示词。")
-            await self.plugin.update_prompts(body["prompts"])
+            await self.plugin.update_prompts(body["prompts"], body.get("revision"))
             return {
                 "status": "ok",
                 "data": {

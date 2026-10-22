@@ -50,6 +50,8 @@ DEFAULTS = {
     "planner_reply_threshold": 0.7,
     "planner_max_wait": 30,
     "autonomous_tools": [],
+    "autonomous_tool_policy": "allowlist",
+    "autonomous_tool_denylist": [],
 }
 KINDS = ("personality", "expression", "jargon", "behavior")
 PROFILE_DEFAULTS = {
@@ -134,11 +136,13 @@ def validate_settings(values: dict) -> dict:
         elif key == "participation_mode":
             if value not in ("off", "observe", "auto"):
                 raise ValueError("参与方式必须为 off、observe 或 auto。")
+        elif key == "autonomous_tool_policy":
+            if value not in ("allowlist", "denylist"):
+                raise ValueError("自主工具策略必须为白名单或黑名单。")
         elif not isinstance(value, str) or len(value) > 256:
             raise ValueError(f"{key} 必须为长度不超过 256 的字符串。")
     result = values.copy()
-    if "blocked_senders" in result:
-        result["blocked_senders"] = list(
-            dict.fromkeys(v.strip() for v in result["blocked_senders"])
-        )
+    for key in ("blocked_senders", "autonomous_tools", "autonomous_tool_denylist"):
+        if key in result:
+            result[key] = list(dict.fromkeys(v.strip() for v in result[key]))
     return result

@@ -26,6 +26,7 @@ os.environ["ASTRBOT_ROOT"] = str(
 from astrbot.api import AstrBotConfig  # noqa: E402
 from astrbot.api.star import StarTools  # noqa: E402
 from astrbot.api.web import PluginRequest, bind_request_context  # noqa: E402
+from astrbot.core.agent.tool import FunctionTool, ToolSet  # noqa: E402
 from fastapi import FastAPI, Request  # noqa: E402
 from fastapi.responses import FileResponse, HTMLResponse, Response  # noqa: E402
 
@@ -83,6 +84,33 @@ async def lifespan(app):
             get_config=lambda umo: {"plugin_set": ["*"], "platform_settings": {}},
             get_current_chat_provider_id=AsyncMock(return_value="fixture"),
             llm_generate=generate,
+            get_llm_tool_manager=lambda: SimpleNamespace(
+                get_full_tool_set=lambda: ToolSet(
+                    [
+                        FunctionTool(
+                            name=name,
+                            description=description,
+                            parameters={"type": "object", "properties": {}},
+                            active=active,
+                        )
+                        for name, description, active in (
+                            ("qq_group_info", "查看当前群的简介与基本资料", True),
+                            ("qq_group_member_list", "读取当前群成员列表", True),
+                            ("qq_send_message", "向指定的群或用户发送消息", True),
+                            (
+                                "qq_group_member_manage",
+                                "管理群成员；演示中由宿主停用",
+                                False,
+                            ),
+                            (
+                                "astrbot_file_read_tool",
+                                "读取宿主允许目录中的文本文件",
+                                True,
+                            ),
+                        )
+                    ]
+                )
+            ),
             persona_manager=SimpleNamespace(
                 get_persona_v3_by_id=lambda name: {"prompt": "演示人格"}
             ),
@@ -92,7 +120,12 @@ async def lifespan(app):
         )
         config = AstrBotConfig(
             str(Path(directory) / "ovenheart_config.json"),
-            default_config=DEFAULTS | {"learning_enabled": False},
+            default_config=DEFAULTS
+            | {
+                "learning_enabled": False,
+                "autonomous_tools": ["qq_group_info", "legacy_tool_missing"],
+                "autonomous_tool_denylist": ["qq_group_member_manage"],
+            },
         )
         plugin = PersonaPlugin(context, config)
         await plugin.initialize()

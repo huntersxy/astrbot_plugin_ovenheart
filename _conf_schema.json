@@ -232,10 +232,10 @@
     "default": 30
   },
   "autonomous_tools": {
-    "description": "自主回复允许使用的工具",
+    "description": "自主回复工具白名单",
     "type": "list",
     "default": [],
-    "hint": "工具名称列表；默认仅文字回复。只限制自主参与，直接唤醒仍使用原有工具策略。"
+    "hint": "白名单模式仅允许这些精确名称；留空仅文字回复。也可在工坊从 AstrBot 当前工具列表快捷勾选。"
   },
   "blocked_senders": {
     "description": "学习黑名单用户 ID",
@@ -254,5 +254,21 @@
     "type": "bool",
     "default": false,
     "hint": "默认共用人格底稿及人格、表达、行为学习结果；群聊词汇始终按来源会话与人格隔离。开启后其他设置与学习也分别生效；两种模式的数据分别保留。聊天历史、临时上下文及权限始终按真实会话隔离。"
+  },
+  "autonomous_tool_policy": {
+    "description": "自主回复工具名单模式",
+    "type": "string",
+    "default": "allowlist",
+    "options": [
+      "allowlist",
+      "denylist"
+    ],
+    "hint": "allowlist：仅允许白名单，留空禁用全部工具；denylist：排除黑名单，其他宿主允许的工具可用。只影响自主参与，直接唤醒沿用宿主策略。"
+  },
+  "autonomous_tool_denylist": {
+    "description": "自主回复工具黑名单",
+    "type": "list",
+    "default": [],
+    "hint": "黑名单模式排除这些精确工具名称；留空允许宿主原本可用的工具，不会启用宿主已停用或无权限的工具。"
   }
 }

@@ -36,6 +36,16 @@ The workshop polls about every five seconds and refreshes untouched settings for
 
 ![Settings saved and synchronized; illustrative local acceptance](../assets/config-sync-v0.18.2.jpg)
 
+## Autonomous tool picker (0.20)
+
+Open **Learning settings → Autonomous participation → 自主回复可用工具**. Choose allowlist or denylist, then search and select from AstrBot's registered plugin, MCP and built-in tools. Bulk actions affect the current search results; Clear affects only the current list. Refresh preserves unsaved selections. Inactive and unregistered names remain visible, and manual name import remains available.
+
+The default allowlist permits only selected tools already available on the native request; an empty allowlist means text-only. Denylist removes selected names from that same native tool set; an empty denylist adds no extra restriction. Both lists are preserved when switching modes. Legacy `autonomous_tools` remains the allowlist, alongside `autonomous_tool_policy=allowlist/denylist` and `autonomous_tool_denylist`, synchronized to native config. This never activates tools, adds tools to a request, bypasses host invocation permissions or changes direct-wake tools. The existing skills_like compatibility behavior remains intact.
+
+![Current tool catalog and policy picker; illustrative local fixture](../assets/autonomous-tools-v0.20.jpg)
+
+Prompt edits also invalidate pending learning and selector results. Learning material survives a rejected late commit; a cancelled save still publishes committed wording. Superseded editors cannot overwrite newer templates, and switching templates protects unsaved drafts. Already-dispatched provider requests may still complete; this does not promise to revoke computation or billing.
+
 ## Install and open
 
 Requires AstrBot `>=4.29.1,<5` and a configured chat provider. Install the release ZIP through the local plugin installer, or copy the plugin directory to the host's `data/plugins/astrbot_plugin_ovenheart` and reload it. Open the native plugin View named **人格工坊** (Persona workshop).
@@ -185,7 +195,7 @@ Every prompt this plugin sends lives in the 提示词 tab as an editable templat
 
 Variables are substituted at call time: text is spliced as-is, while message lists, candidates and profiles are serialized as JSON and booleans become `true`/`false`. A misspelled name is left literal, double braces included, and the editor lists it under unknown references. That is deliberate: silently deleting it would drop a whole constraint without any provider error.
 
-A template only changes wording. The structured JSON payload appended after it, the participation goal and reason, permission checks, tool allowlists, cooldown and hourly quota stay under plugin control, so rewriting the planner cannot loosen admission. Saving validates non-empty and the 8000 character limit, republishes the effective map immediately and aborts in-flight learning batches and participation windows; Restore default deletes that override. Overrides live in the `prompts` table, survive a plugin reload and disappear with the plugin database.
+A template only changes wording. The structured JSON payload appended after it, the participation goal and reason, permission checks, tool allowlists, cooldown and hourly quota stay under plugin control, so rewriting the planner cannot loosen admission. Saving validates non-empty and the 8000 character limit, republishes the effective map immediately and invalidates superseded learning results and participation windows; Restore default deletes that override. Overrides live in the `prompts` table, survive a plugin reload and disappear with the plugin database.
 
 The rendered body is also sent as that request's system prompt and recorded under Debug (`planner_request`, `planner_response`, and the learning and retrieval entries), so what you inspect is the wording that actually ran. To give the planner a sense of relationship or mood, put that relationship into the host persona — it reaches the planner through `{{persona}}` — and add the concrete scenario requirement to the planner template itself.
 
@@ -213,7 +223,7 @@ Default gates are three fresh messages, two seconds of input debounce, a 90-seco
 
 The planner chooses reply, observe or one bounded wait followed by one reassessment. New input cancels obsolete work. Provider failure, timeout or invalid plans preserve observation. Plans state reasons and conversational goals; they cannot execute tools. The resulting native request binds a conversation and reloads history through the host's session lock, preserving persona/history. Input, permission, profile and settings changes are checked again before generation.
 
-Autonomous tool access is an exact-name subset of tools already present in the native request. Empty means text-only. Direct-wake tool policy is unaffected. When the host Agent runner uses the `skills_like` schema mode, an empty allowlist keeps the original tool entries with `active` cleared instead of handing over an empty set: AstrBot 4.29.1 returns early from that runner's reset for a falsy tool set and the reply then fails with `'ToolLoopAgentRunner' object has no attribute 'stats'`. Both modes expose only the allowed names to the provider. Explicitly allowing a tool permits the host Agent to invoke it autonomously under existing permissions. No model weight training is involved, and this is not a copy of every MaiBot subsystem.
+Autonomous tool access is an exact-name subset of tools already present in the native request. An empty allowlist means text-only; an empty denylist adds no restriction. Direct-wake tool policy is unaffected. When the host Agent runner uses the `skills_like` schema mode, an empty allowlist keeps the original tool entries with `active` cleared instead of handing over an empty set: AstrBot 4.29.1 returns early from that runner's reset for a falsy tool set and the reply then fails with `'ToolLoopAgentRunner' object has no attribute 'stats'`. Both modes expose only the allowed names to the provider. Explicitly allowing a tool permits the host Agent to invoke it autonomously under existing permissions. No model weight training is involved, and this is not a copy of every MaiBot subsystem.
 
 The conversation window holds at most 30 messages from the last ten minutes in memory; at most 12 are passed to the reply request. Decision reasons, goals and timestamps persist separately. The UI shows the latest 30; storage preserves the latest 100 plus admissions needed for the rolling quota. Clearing raw learning material does not clear decision records. An admission records handoff to the host, not successful generation or delivery.
 

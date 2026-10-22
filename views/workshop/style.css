@@ -170,3 +170,24 @@ button.text { border-color: transparent; background: transparent; }
   .prompt-body { min-height: 280px; }
 }
 
+
+.tool-picker { margin-top: 20px; min-width: 0; }
+.tool-picker h3 { margin-bottom: 14px; }
+.tool-search-row { display: flex; gap: 12px; align-items: flex-end; }
+.tool-search-row .field { flex: 1; min-width: 0; margin-bottom: 0; }
+.tool-search-row button { flex-shrink: 0; margin-bottom: 1px; }
+.tool-picker > .muted { margin-top: 10px; }
+.tool-bulk { flex-wrap: wrap; margin: 12px 0; }
+.tool-choices { max-height: 310px; overflow: auto; border: 1px solid var(--line); border-radius: 8px; }
+.tool-option { display: grid; grid-template-columns: 18px minmax(0,1fr); gap: 10px; padding: 12px; margin: 0; font-weight: 400; cursor: pointer; }
+.tool-option + .tool-option { border-top: 1px solid var(--line); }
+.tool-option:hover { background: var(--ground); }
+.tool-option input { margin: 4px 0 0; accent-color: var(--accent); }
+.tool-option strong, .tool-option small { display: block; overflow-wrap: anywhere; }
+.tool-option strong { font-size: 13px; font-weight: 600; }
+.tool-state { color: var(--warning); }
+.tool-empty { padding: 14px; }
+.tool-manual { margin-top: 12px; }
+.tool-manual label { margin-top: 12px; }
+.tool-manual button { margin-top: 10px; }
+@media (max-width: 620px) { .tool-search-row { align-items: stretch; flex-direction: column; } .tool-search-row button { align-self: flex-start; } .tool-bulk button { padding: 8px 10px; } }

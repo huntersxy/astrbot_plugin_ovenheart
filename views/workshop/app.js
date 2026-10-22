@@ -180,7 +180,7 @@ function renderSettings() {
     <section class="settings-group participation-settings"><h2>自主参与群聊</h2><p>根据最近聊天与已生效的习惯，决定参与、等待或旁观。直接唤醒、私聊和命令继续按宿主原有规则处理。自动回复使用 AstrBot 本地 Agent 运行器。</p><div class="two-col"><div>
       <div class="field"><label for="participation_mode">参与方式</label><select id="participation_mode" name="participation_mode"><option value="off" ${s.participation_mode === "off" ? "selected" : ""}>关闭自主参与</option><option value="observe" ${s.participation_mode === "observe" ? "selected" : ""}>仅观察，记录决策</option><option value="auto" ${s.participation_mode === "auto" ? "selected" : ""}>自动参与，交由宿主回复</option></select><small>建议先用「仅观察」检查决策。记录在「学习与参与」中。</small></div>
       <div class="number-fields">${field("participation_min_messages","最少新消息",s.participation_min_messages,"条；十分钟内保留最多 30 条上下文",{type:"number",min:1,max:30})}${field("participation_debounce","连续输入等待",s.participation_debounce,"秒；新输入会取消旧决策",{type:"number",min:0,max:10})}${field("participation_cooldown","回复冷却",s.participation_cooldown,"秒；直接唤醒的回复也会推迟自主参与",{type:"number",min:5,max:3600})}${field("participation_hourly_limit","每小时参与上限",s.participation_hourly_limit,"次；同群的隔离会话共享限额",{type:"number",min:1,max:120})}</div>
-      </div><details><summary>决策模型与工具</summary>${field("planner_provider_id","参与决策模型 ID",s.planner_provider_id,"留空使用学习模型或当前会话模型。",{type:"text"})}<div class="number-fields">${field("planner_timeout","决策请求超时",s.planner_timeout,"秒；异常时保持旁观",{type:"number",min:3,max:90})}${field("planner_reply_threshold","最低参与把握",s.planner_reply_threshold,"由模型评估，不等同于统计概率",{type:"number",min:.5,max:1,step:.01})}${field("planner_max_wait","单次最长等待",s.planner_max_wait,"秒；最多等待后再判断一次",{type:"number",min:1,max:120})}</div>${field("autonomous_tools","自主回复可用工具",s.autonomous_tools.join("\n"),"每行一个精确工具名称。留空仅发文字，不改变直接唤醒的工具权限。",{maxlength:16000})}</details></div>
+      </div><div><details><summary>决策模型与工具</summary>${field("planner_provider_id","参与决策模型 ID",s.planner_provider_id,"留空使用学习模型或当前会话模型。",{type:"text"})}<div class="number-fields">${field("planner_timeout","决策请求超时",s.planner_timeout,"秒；异常时保持旁观",{type:"number",min:3,max:90})}${field("planner_reply_threshold","最低参与把握",s.planner_reply_threshold,"由模型评估，不等同于统计概率",{type:"number",min:.5,max:1,step:.01})}${field("planner_max_wait","单次最长等待",s.planner_max_wait,"秒；最多等待后再判断一次",{type:"number",min:1,max:120})}</div></details><div id="autonomous-tool-picker"></div></div></div>
     </section>
     <section class="settings-group"><h2>学习与生效</h2><p>可以先审核，也可以让证据充足的结果自动加入习惯。</p>
       ${switchField("enabled", "启用人格工坊", "关闭后停止采集、学习和应用", s.enabled)}${switchField("learning_enabled", "启用素材采集与后台学习", "关闭后继续保留并应用已生效的习惯", s.learning_enabled)}${switchField("apply_enabled", "应用人格与学习结果", "可先积累，准备好后再启用", s.apply_enabled)}
@@ -212,6 +212,7 @@ function renderSettings() {
     </section>
 </div><div class="form-end"><button class="primary" type="submit">保存学习设置</button><span class="muted">保存后立即生效，并同步到 AstrBot 插件配置。另一页面刷新后可见。</span></div></form>
     ${data.scope && data.scope.id !== data.shared_scope?.id ? '<div class="form-end"><button id="clear-messages" class="danger">清除当前会话的原始素材</button><span class="muted">保留人格与学习证据摘录；清除后无法恢复原始素材。</span></div>' : ""}`;
+  const toolSelection = renderAutonomousTools(s);
   $("#settings-form").onsubmit = event => {
     event.preventDefault();
     const form = event.currentTarget;
@@ -221,9 +222,71 @@ function renderSettings() {
       if (!input) continue;
       patch[key] = typeof value === "boolean" ? input.checked : typeof value === "number" ? Number(input.value) : Array.isArray(value) ? input.value.split(key === "blocked_senders" ? /[\s,，;；]+/ : "\n").map(v => v.trim()).filter(Boolean) : input.value.trim();
     }
+    const tools = toolSelection();
+    if (!tools) return;
+    Object.assign(patch, tools);
     mutate("settings", patch, selectedScope, settingsRevision);
   };
   if ($("#clear-messages")) $("#clear-messages").onclick = async () => { if (await confirmAction("永久清除当前会话所有原始聊天素材？学习条目及其证据摘录会保留。")) mutate("clear_messages"); };
+}
+
+function renderAutonomousTools(settings) {
+  const selected = {allowlist:new Set(settings.autonomous_tools || []), denylist:new Set(settings.autonomous_tool_denylist || [])};
+  let inventory = data.tools || {items:[], message:"暂时无法读取 AstrBot 工具列表，可刷新或手动补充名称。"};
+  let visible = [];
+  const container = $("#autonomous-tool-picker");
+  container.innerHTML = `<section class="tool-picker" aria-labelledby="tool-picker-title"><h3 id="tool-picker-title">自主回复可用工具</h3><div class="field"><label for="autonomous_tool_policy">工具名单模式</label><select id="autonomous_tool_policy" name="autonomous_tool_policy"><option value="allowlist">白名单：仅允许选中的工具</option><option value="denylist">黑名单：排除选中的工具</option></select><small id="tool-policy-help"></small></div><div class="tool-search-row"><div class="field"><label for="tool-search">搜索 AstrBot 当前工具</label><input id="tool-search" type="search" placeholder="工具名称或功能说明" autocomplete="off"></div><button type="button" id="tool-refresh" class="tonal">刷新工具</button></div><p id="tool-inventory-status" class="muted"></p><p id="tool-selection-count" class="muted" role="status" aria-live="polite"></p><div class="actions tool-bulk"><button type="button" id="tool-select-visible">选择搜索结果</button><button type="button" id="tool-clear-visible">取消搜索结果</button><button type="button" id="tool-clear-all">清空当前名单</button></div><div id="tool-choices" class="tool-choices" role="group" aria-label="自主工具名单"></div><details class="tool-manual"><summary>手动补充工具名称</summary><label for="tool-extra">工具名称</label><textarea id="tool-extra" placeholder="每行一个精确工具名称"></textarea><small>支持换行、空格和逗号。可添加到当前名单，或直接保存设置；尚未注册的名称也会保留。</small><button type="button" id="tool-add-names" class="tonal">添加到当前名单</button></details></section>`;
+  const policy = $("#autonomous_tool_policy");
+  policy.value = settings.autonomous_tool_policy || "allowlist";
+  function renderChoices() {
+    const mode = policy.value || "allowlist", chosen = selected[mode];
+    const registered = new Map((inventory.items || []).map(item => [item.name,item]));
+    const rows = [...registered.values(), ...[...chosen].filter(name => !registered.has(name)).map(name => ({name,description:"尚未注册，名称会保留；不会因此加载或启用工具。",missing:true}))];
+    const query = $("#tool-search").value.trim().toLowerCase();
+    const matches = rows.filter(item => `${item.name} ${item.description}`.toLowerCase().includes(query));
+    visible = matches.map(item => item.name);
+    $("#tool-policy-help").textContent = mode === "allowlist" ? "只允许名单内且宿主原本可用的工具。名单为空时仅文字回复。" : "排除名单内工具，其余宿主原本可用的工具都可用于自主回复。黑名单为空时不额外排除。";
+    $("#tool-inventory-status").textContent = (inventory.message || "") + (inventory.truncated ? " 当前展示前 1000 个，其他工具可手动补充。" : "");
+    $("#tool-selection-count").textContent = `${mode === "allowlist" ? "白名单" : "黑名单"}已选 ${chosen.size} 个 · 当前显示 ${matches.length} 个`;
+    $("#tool-select-visible").disabled = $("#tool-clear-visible").disabled = !visible.length;
+    $("#tool-choices").innerHTML = matches.length ? matches.map(item => `<label class="tool-option"><input type="checkbox" data-autonomous-tool="${escape(item.name)}" ${chosen.has(item.name) ? "checked" : ""}><span><strong>${escape(item.name)}</strong>${item.missing ? '<small class="tool-state">未注册</small>' : !item.active ? '<small class="tool-state">宿主已停用</small>' : ""}<small>${escape(item.description || "暂无功能说明")}</small></span></label>`).join("") : '<p class="muted tool-empty">没有匹配的工具，可更换关键词或手动补充。</p>';
+    for (const input of document.querySelectorAll("[data-autonomous-tool]")) input.onchange = () => {
+      if (input.checked) chosen.add(input.dataset.autonomousTool); else chosen.delete(input.dataset.autonomousTool);
+      dirty = true;
+      $("#tool-selection-count").textContent = `${mode === "allowlist" ? "白名单" : "黑名单"}已选 ${chosen.size} 个 · 当前显示 ${matches.length} 个`;
+    };
+  }
+  policy.onchange = () => { dirty = true; renderChoices(); };
+  $("#tool-search").oninput = renderChoices;
+  $("#tool-select-visible").onclick = () => { for (const name of visible) selected[policy.value || "allowlist"].add(name); dirty = true; renderChoices(); };
+  $("#tool-clear-visible").onclick = () => { for (const name of visible) selected[policy.value || "allowlist"].delete(name); dirty = true; renderChoices(); };
+  $("#tool-clear-all").onclick = () => { selected[policy.value || "allowlist"].clear(); dirty = true; renderChoices(); };
+  $("#tool-add-names").onclick = () => {
+    for (const name of $("#tool-extra").value.split(/[\s,，;；]+/).filter(Boolean)) selected[policy.value || "allowlist"].add(name);
+    $("#tool-extra").value = "";
+    dirty = true;
+    renderChoices();
+  };
+  const refresh = $("#tool-refresh");
+  refresh.onclick = async () => {
+    refresh.disabled = true;
+    try {
+      const next = await api("state");
+      if ($("#autonomous-tool-picker") !== container) return;
+      inventory = next.tools || {items:[], message:"暂时无法读取工具列表，已选名称仍保留。"};
+      renderChoices();
+    } catch (error) { notify(error.message || "工具列表刷新失败，已选名称仍保留。", true); }
+    finally { refresh.disabled = false; }
+  };
+  renderChoices();
+  return () => {
+    for (const name of $("#tool-extra").value.split(/[\s,，;；]+/).filter(Boolean)) selected[policy.value || "allowlist"].add(name);
+    if (Object.values(selected).some(names => names.size > 500 || [...names].some(name => name.length > 256))) {
+      notify("每份名单最多 500 个名称，每个名称不超过 256 字。", true);
+      return null;
+    }
+    return {autonomous_tool_policy:policy.value || "allowlist", autonomous_tools:[...selected.allowlist].sort(), autonomous_tool_denylist:[...selected.denylist].sort()};
+  };
 }
 
 function promptPlaceholder(name) {
@@ -240,27 +303,28 @@ function renderPrompts() {
   }
   if (!items.some(entry => entry.key === selectedPrompt)) selectedPrompt = items[0].key;
   const item = items.find(entry => entry.key === selectedPrompt);
+  const promptsRevision = data.prompts.revision;
   const variables = item.placeholders.length ? item.placeholders.map(p => `<li><code>${escape(promptPlaceholder(p.name))}</code> ${escape(p.description)}</li>`).join("") : "<li>这段提示词不接受变量。</li>";
   const unknown = item.unknown.length ? `<p class="prompt-unknown">未识别的引用：${escape(item.unknown.map(promptPlaceholder).join("、"))}。它们会原样保留，不会被替换。</p>` : "";
-  $("#content").innerHTML = `<h2>提示词</h2><p class="section-intro">这里写的是本插件自己发出的每一条提示词。用两个花括号引用运行时内容，例如 <code>{{persona}}</code> 的宿主人格，或 <code>{{recent_messages}}</code> 的最近群聊。保存后立即生效；正在进行的请求会中止，下一轮使用新措辞。目标、候选与上下文仍由插件按结构追加，模板只改变说明文字。留空的变量保持为空字符串。</p>
+  $("#content").innerHTML = `<h2>提示词</h2><p class="section-intro">这里写的是本插件自己发出的每一条提示词。用两个花括号引用运行时内容，例如 <code>{{persona}}</code> 的宿主人格，或 <code>{{recent_messages}}</code> 的最近群聊。保存后立即生效；正在学习或筛选的旧结果会被丢弃，素材保留，后续请求使用新措辞。目标、候选与上下文仍由插件按结构追加，模板只改变说明文字。留空的变量保持为空字符串。</p>
     <div class="prompts"><div class="trait-list">${items.map(entry => `<button type="button" class="trait-row" data-prompt="${escape(entry.key)}" aria-pressed="${entry.key === item.key}"><span class="row-meta"><span>${escape(entry.title)}</span><span class="badge ${entry.customized ? "active" : ""}">${entry.customized ? "已自定义" : "出厂默认"}</span></span><strong>${escape(entry.description)}</strong></button>`).join("")}</div>
     <div class="prompt-editor"><form id="prompt-form"><div class="field"><label for="field-prompt-body">${escape(item.title)}</label><textarea id="field-prompt-body" name="body" class="large prompt-body" maxlength="8000" spellcheck="false">${escape(item.body)}</textarea><small>${item.body.length} / 8000 字 · 保存后立即生效</small></div>${unknown}<details class="prompt-placeholders"><summary>可用变量</summary><ul>${variables}</ul></details><div class="form-end"><button class="primary" type="submit">保存这段提示词</button><button type="button" class="tonal" id="prompt-reset" ${item.customized ? "" : "disabled"}>恢复默认</button></div></form><details class="prompt-default"><summary>查看出厂默认</summary><pre>${escape(item.default)}</pre></details></div></div>`;
-  for (const button of document.querySelectorAll("[data-prompt]")) button.onclick = () => { selectedPrompt = button.dataset.prompt; renderPrompts(); };
+  for (const button of document.querySelectorAll("[data-prompt]")) button.onclick = async () => { if (dirty && !await confirmAction("切换提示词会放弃未保存的编辑，继续？")) return; dirty = false; selectedPrompt = button.dataset.prompt; renderPrompts(); };
   $("#prompt-form").onsubmit = event => {
     event.preventDefault();
     const body = $("#field-prompt-body").value;
     if (!body.trim()) return notify("提示词内容不能为空；如需还原，请使用「恢复默认」。", true);
     if (body.length > 8000) return notify("提示词最多 8000 字，请精简后再保存。", true);
-    return savePrompts({[item.key]: body});
+    return savePrompts({[item.key]: body}, promptsRevision);
   };
   $("#prompt-reset").onclick = async () => {
-    if (await confirmAction(`把「${item.title}」恢复为出厂默认？保存后立即生效，当前措辞不再保留。`)) await savePrompts({[item.key]: null});
+    if (await confirmAction(`把「${item.title}」恢复为出厂默认？保存后立即生效，当前措辞不再保留。`)) await savePrompts({[item.key]: null}, promptsRevision);
   };
 }
 
-async function savePrompts(patch) {
+async function savePrompts(patch, revision) {
   return guarded(async () => {
-    const result = await api("prompts/save", {prompts:patch});
+    const result = await api("prompts/save", {prompts:patch, ...(revision !== undefined ? {revision} : {})});
     notify(result.message || "提示词已保存。");
     dirty = false;
     await load();
@@ -286,8 +350,8 @@ async function mutate(action, payload = {}, scope = selectedScope, settingsRevis
   });
 }
 
-$("#content").addEventListener("input", event => { if (event.target.closest("form")?.id !== "preview-form") dirty = true; });
-$("#content").addEventListener("change", event => { if (event.target.closest("form")) dirty = true; });
+$("#content").addEventListener("input", event => { if (event.target.id !== "tool-search" && event.target.closest("form")?.id !== "preview-form") dirty = true; });
+$("#content").addEventListener("change", event => { if (event.target.id !== "tool-search" && event.target.closest("form")) dirty = true; });
 $("#scope").onchange = async event => {
   const next = event.target.value; event.target.value = selectedScope;
   if (dirty && !await confirmAction("切换会话会放弃未保存的编辑，继续？")) return;

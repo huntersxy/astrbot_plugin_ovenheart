@@ -830,6 +830,7 @@ class Store:
         expected_blocked=None,
         shared=False,
         expected_isolation=None,
+        expected_prompts=None,
     ):
         """Commit candidates and consume exactly the successful batch atomically.
 
@@ -849,6 +850,7 @@ class Store:
             expected_blocked: Blacklist captured before generation.
             shared: Share non-jargon learning while keeping jargon and sources local.
             expected_isolation: Mode captured before generation.
+            expected_prompts: Prompt overrides captured before generation.
 
         Returns:
             Count of newly inserted candidates.
@@ -866,6 +868,11 @@ class Store:
         if run["status"] != "running":
             return 0
         if not error:
+            if (
+                expected_prompts is not None
+                and self.prompt_overrides(db) != expected_prompts
+            ):
+                raise ValueError("提示词在学习期间已修改，旧结果未保存，素材保留。")
             settings = settings | self.settings(db)
             if (
                 expected_isolation is not None

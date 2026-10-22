@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.20.0
+
+- Replace the autonomous tool-name textarea with a searchable picker backed by AstrBot's current plugin, MCP and built-in tool registry. Add checkbox and filtered bulk selection, refresh, manual name import, disabled-tool labels and retained unregistered names.
+- Add independent allowlist and denylist settings. Preserve the empty allowlist default and legacy allowlist names; switching policies retains both lists. Apply exact-name filtering only to the native autonomous request, never activate inactive tools, retain host permission wrappers and preserve the skills_like runner workaround. Direct replies keep their original tool policy.
+- Prevent edited prompt templates from publishing superseded learning or selector results, including a persisted-override check at the learning transaction. Publish committed templates even when a client cancels, reject stale prompt forms and unknown reset keys, and protect drafts when switching editors.
+- Cover both schema modes, inactive tools, catalog discovery, policy persistence, escaped metadata, refresh preservation and prompt-edit races with native SDK, SQLite and frontend regression tests.
+
 ## 0.19.2
 
 - Stop delivering a cancelled autonomous reply twice. The pre-send guard stopped the event but kept the generated chain, and AstrBot's decorate stage returns before the responder when a handler stops the event, so the responder is reached as a sibling stage while the process stage yields more than once — the same chain was sent again. The guard now discards the result before stopping the event, so a reply that lost its admission is not delivered at all and cannot be replayed.

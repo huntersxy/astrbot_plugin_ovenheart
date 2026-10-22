@@ -69,9 +69,10 @@ test('all participation controls are available with host schema defaults', () =>
   const settings=Object.fromEntries(Object.entries(schema).map(([key,value])=>[key,value.default]));
   runInContext(`data={settings:${JSON.stringify(settings)},memory:{message:'未启用'},scope:null}; renderSettings();`,context);
   const html=element('#content').innerHTML;
-  for (const name of ['participation_mode','participation_min_messages','participation_debounce','participation_cooldown','participation_hourly_limit','planner_provider_id','planner_timeout','planner_reply_threshold','planner_max_wait','autonomous_tools','debug_enabled','session_isolation']) {
+  for (const name of ['participation_mode','participation_min_messages','participation_debounce','participation_cooldown','participation_hourly_limit','planner_provider_id','planner_timeout','planner_reply_threshold','planner_max_wait','debug_enabled','session_isolation']) {
     assert.ok(html.includes('name="'+name+'"'),name);
   }
+  assert.ok(element('#autonomous-tool-picker').innerHTML.includes('name="autonomous_tool_policy"'));
   assert.ok(html.includes('value="off" selected'));
   assert.ok(html.includes('value="contextual" selected'));
   assert.ok(html.includes('name="rerank_provider_id"'));
@@ -178,12 +179,12 @@ test('prompt editor lists variables, saves one body and restores the default', a
 
   element('#field-prompt-body').value='新正文 {{persona}}';
   await element('#prompt-form').onsubmit({preventDefault(){},currentTarget:{}});
-  assert.deepEqual(JSON.parse(JSON.stringify(runInContext('posts',context))),[["prompts/save",{prompts:{planner:'新正文 {{persona}}'}}]]);
+  assert.deepEqual(JSON.parse(JSON.stringify(runInContext('posts',context))),[["prompts/save",{prompts:{planner:'新正文 {{persona}}'},revision:'r1'}]]);
   assert.equal(runInContext('dirty',context),false);
 
   confirmations.push(true);
   await element('#prompt-reset').onclick();
-  assert.deepEqual(JSON.parse(JSON.stringify(runInContext('posts[1]',context))),["prompts/save",{prompts:{planner:null}}]);
+  assert.deepEqual(JSON.parse(JSON.stringify(runInContext('posts[1]',context))),["prompts/save",{prompts:{planner:null},revision:'r1'}]);
 });
 
 test('prompt save rejects a blank body without posting', async () => {
@@ -200,4 +201,53 @@ test('settings submission retains the revision from the rendered form', () => {
   runInContext(`data={settings:{blocked_senders:[],target_senders:[],allowed_sessions:[],autonomous_tools:[]},settings_revision:'rendered',memory:{}};renderSettings();data.settings_revision='newer';globalThis.savedRevision=null;mutate=(action,payload,scope,revision)=>savedRevision=revision;`,context);
   element('#settings-form').onsubmit({preventDefault(){},currentTarget:{elements:{namedItem:()=>null}}});
   assert.equal(runInContext('savedRevision',context),'rendered');
+});
+
+test('tool picker searches current tools and preserves both policy lists and missing names', () => {
+  const {context,element}=fixture();
+  runInContext(`data={settings:{blocked_senders:[],target_senders:[],allowed_sessions:[],autonomous_tools:['qq_group_info','legacy_tool'],autonomous_tool_denylist:['existing_ban'],autonomous_tool_policy:'allowlist'},memory:{},tools:{available:true,items:[{name:'qq_group_info',description:'群资料',active:true},{name:'qq_member_manage',description:'管理成员',active:false}]}};renderSettings();globalThis.saved=null;mutate=(action,payload)=>saved=payload;`,context);
+  assert.ok(element('#tool-choices').innerHTML.includes('legacy_tool'));
+  assert.ok(element('#tool-choices').innerHTML.includes('宿主已停用'));
+  element('#tool-search').value='管理';element('#tool-search').oninput();
+  assert.ok(!element('#tool-choices').innerHTML.includes('qq_group_info'));
+  element('#tool-select-visible').onclick();
+  element('#autonomous_tool_policy').value='denylist';element('#autonomous_tool_policy').onchange();
+  element('#tool-select-visible').onclick();
+  element('#autonomous_tool_policy').value='allowlist';element('#autonomous_tool_policy').onchange();
+  element('#tool-extra').value='extra_custom, qq_group_info';
+  element('#settings-form').onsubmit({preventDefault(){},currentTarget:{elements:{namedItem:()=>null}}});
+  assert.deepEqual(JSON.parse(runInContext('JSON.stringify(saved.autonomous_tools)',context)),['extra_custom','legacy_tool','qq_group_info','qq_member_manage']);
+  assert.deepEqual(JSON.parse(runInContext('JSON.stringify(saved.autonomous_tool_denylist)',context)),['existing_ban','qq_member_manage']);
+  assert.equal(runInContext('saved.autonomous_tool_policy',context),'allowlist');
+});
+
+test('tool refresh keeps the unsaved choice when its tool is no longer registered', async () => {
+  const {context,element}=fixture();
+  runInContext(`data={settings:{blocked_senders:[],target_senders:[],allowed_sessions:[],autonomous_tools:['old_tool'],autonomous_tool_denylist:[]},memory:{},tools:{items:[{name:'old_tool',description:'旧工具',active:true}]}};renderSettings();bridge.apiGet=async()=>({tools:{items:[{name:'new_tool',description:'新工具',active:true}]}});globalThis.saved=null;mutate=(action,payload)=>saved=payload;`,context);
+  await element('#tool-refresh').onclick();
+  assert.ok(element('#tool-choices').innerHTML.includes('new_tool'));
+  assert.ok(element('#tool-choices').innerHTML.includes('old_tool'));
+  assert.ok(element('#tool-choices').innerHTML.includes('未注册'));
+  element('#settings-form').onsubmit({preventDefault(){},currentTarget:{elements:{namedItem:()=>null}}});
+  assert.deepEqual(JSON.parse(runInContext('JSON.stringify(saved.autonomous_tools)',context)),['old_tool']);
+});
+
+test('tool choices escape provider descriptions and names', () => {
+  const {context,element}=fixture();
+  runInContext(`data={settings:{blocked_senders:[],target_senders:[],allowed_sessions:[],autonomous_tools:[]},memory:{},tools:{items:[{name:'<tool>',description:'<img src=x onerror=alert(1)>',active:true}]}};renderSettings();`,context);
+  assert.ok(!element('#tool-choices').innerHTML.includes('<img'));
+  assert.ok(element('#tool-choices').innerHTML.includes('&lt;tool&gt;'));
+});
+
+for (const approved of [false,true]) test(`switching prompt editor protects an unsaved body ${approved}`, async () => {
+  const {context,element,confirmations}=fixture();
+  const buttons=[{dataset:{prompt:'review'}}];
+  context.document.querySelectorAll=selector=>selector==='[data-prompt]'?buttons:[];
+  runInContext(`data={prompts:{revision:'r1',items:[{key:'planner',title:'决策',description:'规则',placeholders:[],default:'默认',body:'旧规则',customized:true,unknown:[]},{key:'review',title:'自检',description:'核对',placeholders:[],default:'默认',body:'核对规则',customized:true,unknown:[]}]}};selectedPrompt='planner';dirty=true;renderPrompts();`,context);
+  const before=element('#content').innerHTML;
+  confirmations.push(approved);
+  await buttons[0].onclick();
+  assert.equal(runInContext('selectedPrompt',context),approved?'review':'planner');
+  assert.equal(runInContext('dirty',context),!approved);
+  if (!approved) assert.equal(element('#content').innerHTML,before);
 });

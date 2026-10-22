@@ -84,7 +84,9 @@ def narrow_toolset(toolset: ToolSet | None, allowed: set[str], *, skills_like: b
     if toolset is None:
         return None
     if not skills_like:
-        return ToolSet([tool for tool in toolset.tools if tool.name in allowed])
+        return ToolSet(
+            [tool for tool in toolset.tools if tool.name in allowed and tool.active]
+        )
     narrowed = []
     for tool in toolset.tools:
         if tool.name in allowed:
@@ -192,17 +194,20 @@ class PersonaPlugin(Star):
         """
         return prompts.render(self.prompts[key], variables)
 
-    async def update_prompts(self, payload: dict):
+    async def update_prompts(self, payload: dict, expected_revision=None):
         """Persist operator-edited prompt templates and publish them atomically.
 
         Args:
             payload: Template bodies keyed by identifier; None restores a default.
+            expected_revision: Optional revision captured by the rendered editor.
 
         Raises:
             ValueError: If a key is unknown or a body is blank or oversized.
         """
         if not isinstance(payload, dict) or not payload:
             raise ValueError("请选择要保存的提示词。")
+        if set(payload) - prompts.SPECS.keys():
+            raise ValueError("请选择有效的提示词。")
         patch = {
             key: None if body is None else prompts.validate(key, body)
             for key, body in payload.items()
@@ -210,13 +215,29 @@ class PersonaPlugin(Star):
         async with self.settings_lock:
             if self.closing or not self.ready:
                 raise ValueError("插件正在重载，请稍后刷新提示词。")
-            self.prompt_overrides = await self.store.call("prompt_overrides", patch)
+            if (
+                expected_revision is not None
+                and expected_revision != self.prompts_revision
+            ):
+                raise ValueError(
+                    "提示词已在另一页面修改，请刷新后重新编辑，旧表单未保存。"
+                )
+            commit = asyncio.create_task(self.store.call("prompt_overrides", patch))
+            cancelled = False
+            try:
+                overrides = await asyncio.shield(commit)
+            except asyncio.CancelledError:
+                overrides = await commit
+                cancelled = True
+            self.prompt_overrides = overrides
             self.prompts = prompts.merge(self.prompt_overrides)
             self.retriever.templates = self.prompts
             self.prompts_revision = uuid4().hex
             # Prompt edits must not leave in-flight requests on the old wording.
             self.learning_context.clear()
             self.participation.close()
+            if cancelled:
+                raise asyncio.CancelledError
 
     def debug(self, stage: str, **payload):
         """Emit opt-in diagnostics without collecting transport credentials.
@@ -664,6 +685,13 @@ class PersonaPlugin(Star):
         if not await self.check_participation(event, req):
             return
         allowed = set(self.settings["autonomous_tools"])
+        if self.settings["autonomous_tool_policy"] == "denylist":
+            blocked = set(self.settings["autonomous_tool_denylist"])
+            allowed = (
+                {tool.name for tool in req.func_tool.tools if tool.name not in blocked}
+                if req.func_tool is not None
+                else set()
+            )
         host_config = self.context.get_config(event.unified_msg_origin)
         req.func_tool = narrow_toolset(
             req.func_tool,
@@ -704,6 +732,7 @@ class PersonaPlugin(Star):
             temporary_user=user_injection,
             allowed_tools=sorted(allowed),
             tool_schema_mode=tool_schema_mode(host_config),
+            tool_policy=self.settings["autonomous_tool_policy"],
             visible_tools=[
                 tool.name
                 for tool in (req.func_tool.tools if req.func_tool else [])
@@ -792,6 +821,7 @@ class PersonaPlugin(Star):
         if plan and plan["scope"] == scope:
             query += "\n本轮回复目标：" + plan["intent"][:240]
         settings = self.settings.copy()
+        prompts_revision = self.prompts_revision
         provider_id, identity = None, ""
         if settings["selection_mode"] == "contextual" and state["traits"]:
             anchor = self.context.persona_manager.get_persona_v3_by_id(persona)
@@ -834,6 +864,7 @@ class PersonaPlugin(Star):
             not await self.permitted(event)
             or not self.settings["apply_enabled"]
             or self.settings != settings
+            or self.prompts_revision != prompts_revision
             or current_scope != scope
             or not latest["scope"]
             or not latest["scope"]["profile"]["apply_enabled"]
@@ -1297,6 +1328,8 @@ class PersonaPlugin(Star):
         batch = []
         try:
             settings = self.settings.copy()
+            prompts_revision = self.prompts_revision
+            prompt_overrides = self.prompt_overrides.copy()
             state = await self.store.call(
                 "state", scope, None, None, not self.settings["session_isolation"]
             )
@@ -1497,6 +1530,8 @@ class PersonaPlugin(Star):
             base = json.loads(prompt)
             pass_inputs = []
             for word_pass in (False, True):
+                if self.prompts_revision != prompts_revision:
+                    raise ValueError("提示词在学习期间已修改，旧结果未保存，素材保留。")
                 if (
                     not self.settings["enabled"]
                     or not self.settings["learning_enabled"]
@@ -1564,6 +1599,8 @@ class PersonaPlugin(Star):
                 await asyncio.gather(*pass_tasks, return_exceptions=True)
             # Preserve pass order even when vocabulary finishes before style learning.
             traits = [trait for result in results for trait in result]
+            if self.prompts_revision != prompts_revision:
+                raise ValueError("提示词在学习期间已修改，旧结果未保存，素材保留。")
             if (
                 self.settings["learning_review_enabled"]
                 != settings["learning_review_enabled"]
@@ -1632,6 +1669,8 @@ class PersonaPlugin(Star):
                 selected["umo"], PLUGIN_NAME
             ):
                 raise ValueError("当前会话或插件已停用，结果未保存，素材保留。")
+            if self.prompts_revision != prompts_revision:
+                raise ValueError("提示词在学习期间已修改，旧结果未保存，素材保留。")
             count = await self.store.call(
                 "finish_run",
                 run_id,
@@ -1648,6 +1687,7 @@ class PersonaPlugin(Star):
                 settings["blocked_senders"],
                 not settings["session_isolation"],
                 settings["session_isolation"],
+                prompt_overrides,
             )
             self.debug(
                 "learning_committed",
