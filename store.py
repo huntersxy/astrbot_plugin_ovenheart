@@ -136,6 +136,12 @@ class Store:
             CREATE TABLE IF NOT EXISTS participation_state (
                 scope TEXT PRIMARY KEY, last_reply REAL NOT NULL DEFAULT 0
             );
+            CREATE TABLE IF NOT EXISTS learning_sender_state (
+                scope TEXT NOT NULL, sender TEXT NOT NULL, last_order INTEGER NOT NULL,
+                updated REAL NOT NULL, PRIMARY KEY(scope,sender)
+            );
+            CREATE INDEX IF NOT EXISTS learning_sender_updated ON learning_sender_state(updated);
+            CREATE INDEX IF NOT EXISTS learning_sender_order ON learning_sender_state(scope,last_order);
             CREATE TABLE IF NOT EXISTS prompts (
                 key TEXT PRIMARY KEY, body TEXT NOT NULL, updated REAL NOT NULL
             );
@@ -325,7 +331,7 @@ class Store:
         return values
 
     def prune(self, db, retention_days):
-        """Expire raw observations even when no new messages arrive.
+        """Expire raw observations and derived speaker-sampling metadata.
 
         Args:
             db: Open database connection.
@@ -333,6 +339,10 @@ class Store:
         """
         db.execute(
             "DELETE FROM messages WHERE created < ?",
+            (time.time() - retention_days * 86400,),
+        )
+        db.execute(
+            "DELETE FROM learning_sender_state WHERE updated < ?",
             (time.time() - retention_days * 86400,),
         )
 
@@ -783,7 +793,8 @@ class Store:
                 speakers are explicitly selected; capacity still bounds coverage.
 
         Returns:
-            Retained observations in arrival order.
+            Retained observations in arrival order, with private sampling
+            positions for successful-commit ordering, never model evidence.
         """
         targets = list(dict.fromkeys(target_senders or []))
         sender_filter = (
@@ -803,7 +814,8 @@ class Store:
             )
         messages = []
         order = (
-            "(ROW_NUMBER() OVER (PARTITION BY sender ORDER BY id) - 1) / ?, id"
+            "(ROW_NUMBER() OVER (PARTITION BY sender ORDER BY id) - 1) / ?, "
+            "COALESCE((SELECT last_order FROM learning_sender_state s WHERE s.scope=messages.scope AND s.sender=messages.sender),0), id"
             if len(targets) > 1
             else "id"
         )
@@ -818,6 +830,7 @@ class Store:
             ),
         ):
             item = dict(row)
+            item["_sampling_order"] = len(messages)
             try:
                 quote = normalize_quote(json.loads(item.pop("reply_context")), blocked)
             except (ValueError, TypeError):
@@ -924,7 +937,8 @@ class Store:
             db: Open database connection.
             run_id: Run being completed.
             scope: Session/persona key.
-            messages: Exact batch snapshot, never newly arrived messages.
+            messages: Exact batch snapshot including private sampling positions
+                when available, never newly arrived messages.
             traits: Validated candidates.
             settings: Activation settings at commit time.
             memory: Integration status description.
@@ -1275,6 +1289,28 @@ class Store:
                 "UPDATE messages SET consumed=1 WHERE scope=? AND id=?",
                 [(scope, m["id"]) for m in messages],
             )
+            if messages:
+                previous = db.execute(
+                    "SELECT COALESCE(MAX(last_order),0) FROM learning_sender_state WHERE scope=?",
+                    (scope,),
+                ).fetchone()[0]
+                # Use the last position in scheduler order, not restored chat
+                # chronology, so arrival-order ties cannot repeatedly favor one
+                # early speaker after a capacity-limited successful batch.
+                positions = {
+                    m["sender"]: m.get("_sampling_order", index)
+                    for index, m in enumerate(messages)
+                    if m.get("sender")
+                }
+                db.executemany(
+                    "INSERT INTO learning_sender_state VALUES (?,?,?,?) ON CONFLICT(scope,sender) DO UPDATE SET last_order=excluded.last_order, updated=excluded.updated",
+                    [
+                        (scope, sender, previous + index, now)
+                        for index, sender in enumerate(
+                            sorted(positions, key=positions.get), 1
+                        )
+                    ],
+                )
         db.execute(
             "UPDATE runs SET status=?, finished=?, count=?, message=?, memory=?, review=? WHERE id=?",
             (
@@ -1508,6 +1544,7 @@ class Store:
                         )
         elif action == "clear_messages":
             db.execute("DELETE FROM messages WHERE scope=?", (scope,))
+            db.execute("DELETE FROM learning_sender_state WHERE scope=?", (scope,))
         else:
             raise ValueError("不支持的操作。")
         db.execute(

@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.45.0
+
+- Rotate explicit target evidence groups across successful batches when one batch cannot cover everyone. Break same-group ties by the least recently processed speaker in that native scope, retaining the scheduler's own order separately from restored chat chronology.
+- Atomically advance a compact per-speaker order only when a batch succeeds, including successful empty extraction. Failed/retried batches retain their source selection and scheduling position. Persist across restart without changing messages, evidence IDs, model payloads or batch/call budgets.
+- Add a separate scope/sender/order/timestamp table with indexes for retention and ordering. Expire its rows with the raw-material retention period and clear them with that scope's raw materials; habit snapshots do not rewind operational scheduling. All-speaker and single-target selection remain FIFO.
+- Pass four focused SQLite cases for capacity-limited rotation/restart, failure/scoping and expiry/clear, plus the existing native coverage check confirming private scheduling fields never enter model prompts. Production coverage/quality remain unverified.
+
 ## 0.44.0
 
 - Let operators mark individual expression samples for removal in the existing library edit form. Commit choices with Save or the existing review actions; checkbox drafts use normal dirty-state protection and can be unchecked before saving.

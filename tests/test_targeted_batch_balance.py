@@ -139,6 +139,7 @@ async def test_native_learning_receives_both_selected_objects_without_another_mo
         "alice": 4,
         "bob": 4,
     }
+    assert "_sampling_order" not in json.dumps(seen[0])
     plugin.context.llm_generate.assert_awaited_once()
     state = await plugin.store.call("state", scope)
     assert state["scope"]["pending"] == 36

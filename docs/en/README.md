@@ -25,6 +25,25 @@ shows the remaining sample and unchanged rule.
 
 ## Grouped sampling for multiple explicit targets (0.43)
 
+Since 0.45, same-group ties prefer the least recently successfully processed
+speaker in the native scope, then original message order. Targets omitted by a
+capacity-limited batch move ahead in later successful batches. Retain scheduler
+order separately from chat chronology so earlier arrivals cannot reclaim priority
+when committing. Advance atomically with successful source consumption, including
+successful empty extraction; failures/cancellation/retries do not advance it.
+All-speaker and single-target selection remain FIFO.
+
+The additive `learning_sender_state` table stores only native scope, sender ID,
+processing order and update time, never text, evidence, confidence or feedback.
+Private scheduling positions do not enter model payloads. Legacy libraries start
+empty without inferring history or rewriting IDs. State survives restart, expires
+under raw-material retention and clears with that scope's raw materials. Habit
+snapshot restore does not rewind operational processing; global habit sharing does
+not share scheduling records. Four SQLite checks and one native regression cover
+rotation/restart, failure, scoping, cleanup and prompt exclusion. Capacity, source
+expiry/caps, evidence and activation rules still apply without extra model calls;
+production quality remains unverified.
+
 With two or more explicitly selected learning targets, select oldest eligible
 messages in per-speaker groups of `min_evidence`: consider each speaker's first
 group before second groups, with original message order breaking same-group ties.
