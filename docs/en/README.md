@@ -1,5 +1,9 @@
 # OvenHeart workshop guide
 
+Since 0.32.1, learning capture accepts nonempty single-character human responses, including acknowledgements, punctuation and plain-text Unicode emoji. These retain quoted context and participate in extraction, review and existing language statistics in both all-speaker and selected-speaker modes. Own replies remain context only; whitespace, commands, blacklist and access filtering are unchanged.
+
+Short responses count toward existing batch thresholds and may trigger scheduled learning sooner, without extra calls per batch or lower evidence/activation requirements. Default prompts require context to distinguish assent, listening, questions and disagreement, rather than inferring full agreement, stable personality or a local definition from terse assent or repeated symbols. Custom templates stay unchanged and can be updated using the new defaults as a reference. Production semantic quality remains to be evaluated.
+
 ## Learning from human replies to the bot (0.32)
 
 Extraction and review can now use the bot's preceding message to understand a human response. This works with both all-speaker and selected-speaker learning, even when autonomous participation is off, and adds no model calls. Own text remains context rather than something to imitate or reinforce.

@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.32.1
+
+- Retain nonempty single-character human responses such as acknowledgements, questions and Unicode emoji. Previously the two-character capture minimum silently removed them from learning, timing statistics and linked quote/self context; participation already accepted them.
+- Keep whitespace, command, self-message, blacklist, selected-speaker, evidence and activation rules intact. Default extraction/review prompts require context for terse responses and reject inferring personality, full agreement or local definitions from assent or repeated symbols alone.
+- Count these responses toward existing batch thresholds and language statistics without adding per-batch model calls or settings. This can make existing scheduled batches eligible sooner.
+- Reproduce both all-speaker and selected-speaker failures, then pass the two focused native capture-to-review checks, including quote/self linkage, statistics and excluded sources. Actual semantic interpretation remains pending production evaluation.
+
 ## 0.32.0
 
 - Supply native send-stage self replies as volatile learning context, including ordinary conversations with autonomous participation disabled. Require an eligible captured human anchor and a matching native model-request scope; support both all-speaker and target-speaker learning.

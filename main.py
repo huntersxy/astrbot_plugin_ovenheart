@@ -655,7 +655,7 @@ class PersonaPlugin(Star):
             return
         text = event.get_message_str().strip()
         sender = event.get_sender_id()
-        if not text or len(text) < 2 or sender == event.get_self_id():
+        if not text or sender == event.get_self_id():
             return
         if sender in self.settings["blocked_senders"]:
             self.debug("capture_skipped", sender=sender, reason="blocked_sender")
