@@ -1215,6 +1215,7 @@ class PersonaPlugin(Star):
                 provider_id=provider_id,
                 identity=identity,
                 literal_query=literal_query[:2400],
+                recent_expression_ids=state.get("recent_expression_ids", []),
             )
         )
         self.debug(
@@ -1223,6 +1224,7 @@ class PersonaPlugin(Star):
             query=query,
             active_count=len(state["traits"]),
             selection=selection,
+            recent_expression_ids=state.get("recent_expression_ids", []),
         )
         # Retrieval may await a remote service; pausing must still prevent late application.
         latest = await self.store.call(

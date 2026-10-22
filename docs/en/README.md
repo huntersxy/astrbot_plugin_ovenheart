@@ -1,5 +1,13 @@
 # OvenHeart workshop guide
 
+## Recent expression references and variety (0.27)
+
+Contextual selection receives `recent_expression_ids` from the native session/persona's last three exposure records within ten minutes. Only still-active, unchanged expressions count. A generated or previewed reference does not count before the send stage. Exposure is not proof of wording adoption, platform delivery or satisfaction. Shared personality does not share this recent-use history between conversations.
+
+The default selector may prefer another equally suitable expression to avoid repeatedly offering the same phrasing. Applicability and identity stay primary; the model may reuse the best expression or choose nothing. Jargon, personality and behavior rules are excluded from the hint. Lexical and hybrid ranking retain their existing behavior.
+
+The feature reuses existing exposure records without storing additional conversation text or adding model calls. IDs appear after stable candidates, beside the changing conversation at the request tail; default system/candidate prefixes remain stable for the same candidate set. Debug `retrieval` includes these IDs. Custom selector templates may use `{{recent_expression_ids}}`; placing a dynamic variable in a custom system template intentionally makes that template change.
+
 ## Quote-aware learning (0.26)
 
 Extraction and admission review now receive explicit quote relationships to interpret which source a reply answers and why. This works both when learning everyone and when selecting particular speakers, without additional configuration or model calls. Native `Reply.message_str` or plain-text chain parts are used; old platform messages are not fetched. `relation=reply_to` and `for_evidence_ids` link quote context to real batch observations. Quoted authors remain distinct from responders, and quotes cannot supply independent evidence, instructions, autobiographies or wording to learn.

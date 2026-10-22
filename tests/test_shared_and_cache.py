@@ -2,6 +2,8 @@
 
 import asyncio
 import json
+import time
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
@@ -28,6 +30,107 @@ async def shared_plugin(plugin):
     )
     assert result["status"] == "ok"
     return plugin
+
+
+async def test_recent_expression_hints_are_send_stage_scoped_and_keep_selector_prefix_stable(
+    shared_plugin,
+):
+    plugin = shared_plugin
+    scope = await sources(plugin)
+    await plugin.learn(scope)
+    traits = (await plugin.store.call("guidance", scope, True))["traits"]
+    expression = next(t for t in traits if t["kind"] == "expression")
+    behavior = next(t for t in traits if t["kind"] == "behavior")
+    plugin.settings["selection_mode"] = "contextual"
+    plugin.context.llm_generate.side_effect = None
+    plugin.context.llm_generate.return_value = SimpleNamespace(
+        completion_text=json.dumps({"selected_ids": [expression["id"], behavior["id"]]})
+    )
+    first = event("first-style", text="请听我说一下")
+    await plugin.apply_persona(first, ProviderRequest(prompt=first.get_message_str()))
+    before = plugin.context.llm_generate.await_args.kwargs["prompt"]
+    assert json.loads(before)["recent_expression_ids"] == []
+    plugin.context.llm_generate.return_value = SimpleNamespace(
+        completion_text='{"selected_ids":[]}'
+    )
+    pending = event("not-delivered-yet", text=first.get_message_str())
+    await plugin.apply_persona(
+        pending, ProviderRequest(prompt=pending.get_message_str())
+    )
+    assert (
+        json.loads(plugin.context.llm_generate.await_args.kwargs["prompt"])[
+            "recent_expression_ids"
+        ]
+        == []
+    )
+    first.set_result(first.plain_result("嗯，我听着。"))
+    await plugin.record_delivery(first)
+    follow = event("next-style", text=first.get_message_str())
+    await plugin.apply_persona(follow, ProviderRequest(prompt=follow.get_message_str()))
+    after = plugin.context.llm_generate.await_args.kwargs["prompt"]
+    assert json.loads(after)["recent_expression_ids"] == [expression["id"]]
+    assert (
+        before.split('"recent_expression_ids":')[0]
+        == after.split('"recent_expression_ids":')[0]
+    )
+    foreign = event("other-room-style", text=first.get_message_str(), session="456")
+    await plugin.apply_persona(
+        foreign, ProviderRequest(prompt=foreign.get_message_str())
+    )
+    assert (
+        json.loads(plugin.context.llm_generate.await_args.kwargs["prompt"])[
+            "recent_expression_ids"
+        ]
+        == []
+    )
+
+
+async def test_recent_expressions_expire_after_three_exposures_time_or_edit(
+    shared_plugin, monkeypatch
+):
+    from astrbot_plugin_ovenheart import store as store_module
+
+    plugin = shared_plugin
+    scope = await sources(plugin)
+    await plugin.learn(scope)
+    traits = (await plugin.store.call("guidance", scope, True))["traits"]
+    expression = next(t for t in traits if t["kind"] == "expression")
+    behavior = next(t for t in traits if t["kind"] == "behavior")
+    now = [time.time()]
+    monkeypatch.setattr(store_module.time, "time", lambda: now[0])
+    await plugin.store.call(
+        "applied", scope, "first", [expression["id"]], "contextual", True
+    )
+    assert (await plugin.store.call("guidance", scope, True))[
+        "recent_expression_ids"
+    ] == [expression["id"]]
+    for index in range(3):
+        await plugin.store.call(
+            "applied", scope, f"behavior-{index}", [behavior["id"]], "contextual", True
+        )
+    assert (await plugin.store.call("guidance", scope, True))[
+        "recent_expression_ids"
+    ] == []
+    await plugin.store.call(
+        "applied", scope, "second", [expression["id"]], "contextual", True
+    )
+    now[0] += 601
+    assert (await plugin.store.call("guidance", scope, True))[
+        "recent_expression_ids"
+    ] == []
+    await plugin.store.call(
+        "applied", scope, "third", [expression["id"]], "contextual", True
+    )
+    now[0] += 1
+    await plugin.store.call(
+        "mutate",
+        SHARED_SCOPE,
+        "trait",
+        {"id": expression["id"], "content": "人工更新后的表达参考"},
+    )
+    assert (await plugin.store.call("guidance", scope, True))[
+        "recent_expression_ids"
+    ] == []
 
 
 async def test_default_shared_profile_can_be_edited_before_first_message(shared_plugin):

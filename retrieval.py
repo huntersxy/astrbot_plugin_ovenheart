@@ -21,6 +21,7 @@ identity_anchor 是机器人已有身份与人工底稿，候选不得与之冲�
 保留自然的表达空间：不要把同义、重复或互相矛盾的策略一起选入；没有明显合适的就不选。
 可以利用上下文理解简短回应，但不能让旧话题压过当前输入；人格倾向也须符合本次交流。
 候选的前提必须在本次对话成立；例如只想倾诉、不需要方案、双方欢迎调侃等限制不能省略。不要因为参考内容温柔或通用就忽略它的前提。
+recent_expression_ids 是本会话最近送到发送阶段的表达参考，不代表实际采用或用户满意。两种表达同样贴合时，可优先尚未反复提供的表达，避免每轮同一句式或口头禅；不能为了变化选不合情境的内容，也不妨碍必要时继续选最合适的表达。词汇释义、身份与行为准则不因新鲜感而改变。
 只输出一个 JSON 对象 {"selected_ids":[1,2]}，不解释、不改写候选、不输出候选以外的 ID。
 """
 
@@ -184,6 +185,7 @@ class HabitRetriever:
         provider_id=None,
         identity="",
         literal_query="",
+        recent_expression_ids=(),
     ):
         """Recall, optionally rerank, then select habits within bounded deadlines.
 
@@ -197,6 +199,8 @@ class HabitRetriever:
             identity: Host persona and manual profile; never learned autobiographies.
             literal_query: Actual reply-target text and its inbound quote, up to
                 2,400 characters, excluding unrelated history and planner goals.
+            recent_expression_ids: Recently exposed expressions from this native
+                scope only; a soft preference for contextual selection.
 
         Returns:
             Habits, retrieval mode and a visible fallback explanation.
@@ -274,7 +278,12 @@ class HabitRetriever:
                 self.selecting += 1
                 try:
                     selected = await self.contextual_ids(
-                        pool, query, settings, provider_id, identity
+                        pool,
+                        query,
+                        settings,
+                        provider_id,
+                        identity,
+                        recent_expression_ids,
                     )
                     offered = {t["id"]: t for t in pool}
                     result.update(
@@ -386,7 +395,9 @@ class HabitRetriever:
             )
         return sorted(ordered, key=lambda t: t["_rerank"], reverse=True)
 
-    async def contextual_ids(self, pool, query, settings, provider_id, identity):
+    async def contextual_ids(
+        self, pool, query, settings, provider_id, identity, recent_expression_ids=()
+    ):
         """Choose only offered identifiers without allowing rewriting or tools.
 
         Args:
@@ -395,6 +406,8 @@ class HabitRetriever:
             settings: Timeout and maximum application count.
             provider_id: Native learning or current chat provider.
             identity: Host and manually authored persona anchor.
+            recent_expression_ids: Scope-local send-stage exposure IDs, used only
+                as a soft variety hint, never as evidence or a rejection list.
 
         Returns:
             Validated selected IDs; an empty list intentionally applies no habits.
@@ -408,6 +421,14 @@ class HabitRetriever:
             {k: t[k] for k in ("id", "kind", "situation", "content")}
             for t in sorted(pool, key=lambda t: t["id"])
         ]
+        offered_expressions = {t["id"] for t in pool if t["kind"] == "expression"}
+        recent = sorted(
+            {
+                identifier
+                for identifier in recent_expression_ids
+                if type(identifier) is int and identifier in offered_expressions
+            }
+        )
         task = render(
             self.templates.get("selector", SELECTION_SYSTEM),
             {
@@ -415,6 +436,7 @@ class HabitRetriever:
                 "conversation": query[:2400],
                 "max_selected": maximum,
                 "candidates": candidates,
+                "recent_expression_ids": recent,
             },
         )
         payload = {
@@ -422,6 +444,7 @@ class HabitRetriever:
             "identity_anchor": identity[:6000],
             "max_selected": maximum,
             "candidates": candidates,
+            "recent_expression_ids": recent,
             "conversation": query[:2400],
         }
         response = await asyncio.wait_for(

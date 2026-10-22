@@ -36,6 +36,20 @@ def test_empty_selection_and_complete_json_wrappers_are_valid():
     assert parse_selection('结果：```json\n{"selected_ids":[2]}\n```', TRAITS, 5) == [2]
 
 
+async def test_recent_expression_hint_filters_ids_without_forbidding_reuse(retrieval):
+    retriever, _ = retrieval
+    retriever.context.llm_generate = AsyncMock(
+        return_value=SimpleNamespace(completion_text='{"selected_ids":[1]}')
+    )
+    word = TRAITS[0] | {"id": 5, "kind": "jargon", "content": "LUX：平安到家"}
+    selected = await retriever.contextual_ids(
+        TRAITS + [word], "我想说说心情", DEFAULTS, "chat", "小夏", [1, 1, 5, True, 999]
+    )
+    payload = json.loads(retriever.context.llm_generate.await_args.kwargs["prompt"])
+    assert payload["recent_expression_ids"] == [1]
+    assert selected == [1]
+
+
 async def test_contextual_selection_can_recover_synonyms_and_choose_nothing(retrieval):
     retriever, _ = retrieval
     retriever.context.llm_generate = AsyncMock(

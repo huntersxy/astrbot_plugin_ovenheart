@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.27.0
+
+- Give contextual selection native-scope expression exposure IDs from its last three send-stage records within ten minutes. Exclude inactive or subsequently updated expressions, and keep recency local even when personality is shared.
+- Encourage variety only between equally suitable expressions. Reuse remains allowed; vocabulary facts, personality and behavior rules are unaffected, as are lexical/hybrid ranking modes.
+- Reuse existing application records without adding model calls or stored reply text. Place dynamic IDs after stable selector candidates, expose them in retrieval debug output and add an editable selector placeholder.
+- Verify three focused checks for native send-stage accounting, scope, expiry, edits, stable default prefixes, valid offered IDs and permitted reuse. Production repetition/naturalness remains unverified.
+
 ## 0.26.0
 
 - Supply explicitly linked inbound quote context to both learning extraction and admission review, for all-speaker and target-speaker learning. Distinguish quoted authors from responders instead of relying solely on neighboring message order.

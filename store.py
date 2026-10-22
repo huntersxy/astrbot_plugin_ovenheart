@@ -788,21 +788,39 @@ class Store:
             shared: Share non-jargon habits and profile, keeping jargon source-local.
 
         Returns:
-            Profile and compact ranking records, without dashboard history.
+            Profile, compact ranking records and recent expression exposure IDs
+            from this native scope, without dashboard history or reply text.
         """
         row = db.execute(
             "SELECT profile FROM scopes WHERE id=?",
             (SHARED_SCOPE if shared else scope,),
         ).fetchone()
+        traits = [
+            dict(t)
+            for t in db.execute(
+                "SELECT id,kind,situation,content,confidence,status,created,updated,support_count,evidence_count,last_seen,use_count,rating FROM traits WHERE status='active' AND ((kind='jargon' AND scope=? AND scope<>?) OR (kind<>'jargon' AND (scope=? OR ?))) ORDER BY updated DESC LIMIT 1000",
+                (scope, SHARED_SCOPE, scope, shared),
+            )
+        ]
+        expressions = {
+            t["id"]: t["updated"] for t in traits if t["kind"] == "expression"
+        }
+        recent = list(
+            dict.fromkeys(
+                identifier
+                for application in db.execute(
+                    "SELECT trait_ids,created FROM applications WHERE scope=? AND created>? ORDER BY id DESC LIMIT 3",
+                    (scope, time.time() - 600),
+                )
+                for identifier in json.loads(application["trait_ids"])
+                if identifier in expressions
+                and expressions[identifier] <= application["created"]
+            )
+        )
         return {
             "scope": {"profile": json.loads(row[0])} if row else None,
-            "traits": [
-                dict(t)
-                for t in db.execute(
-                    "SELECT id,kind,situation,content,confidence,status,created,updated,support_count,evidence_count,last_seen,use_count,rating FROM traits WHERE status='active' AND ((kind='jargon' AND scope=? AND scope<>?) OR (kind<>'jargon' AND (scope=? OR ?))) ORDER BY updated DESC LIMIT 1000",
-                    (scope, SHARED_SCOPE, scope, shared),
-                )
-            ],
+            "traits": traits,
+            "recent_expression_ids": recent,
         }
 
     def start_run(self, db, scope):

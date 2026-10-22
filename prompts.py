@@ -60,6 +60,7 @@ SPECS = {
             "conversation": "当前输入与最近上下文，最多 2400 字",
             "max_selected": "本次最多可选的习惯条数",
             "candidates": "候选习惯，含 id、类别、情境与内容",
+            "recent_expression_ids": "本会话最近三次发送阶段提供的表达 ID，仅用于适度变化",
         },
     },
     "learning": {
