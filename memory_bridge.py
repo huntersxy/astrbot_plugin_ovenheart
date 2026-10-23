@@ -54,6 +54,7 @@ class MemoryBridge:
         if not metadata or not metadata.activated or metadata.star_cls is None:
             return {
                 "available": False,
+                "reply_source_binding": False,
                 "message": "未启用 LivingMemory；可继续独立学习。",
             }
         try:
@@ -62,11 +63,24 @@ class MemoryBridge:
         except AttributeError:
             return {
                 "available": False,
+                "reply_source_binding": False,
                 "message": "LivingMemory 接口与当前适配版本不兼容。",
             }
+        binding = callable(
+            getattr(
+                getattr(metadata.star_cls, "event_handler", None),
+                "bind_reply_source",
+                None,
+            )
+        )
         return {
             "available": bool(ready),
-            "message": "已连接 LivingMemory"
+            "reply_source_binding": bool(ready and binding),
+            "message": (
+                "已连接 LivingMemory，支持实际回复来源绑定。"
+                if binding
+                else "已连接 LivingMemory；未安装回复来源适配，自主回复仍按触发消息处理记忆。"
+            )
             if ready
             else "LivingMemory 尚未初始化完成。",
         }

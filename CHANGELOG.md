@@ -1,12 +1,17 @@
 # Changelog
 
+## 0.53.1
+
+- Show actual reply-source binding capability in LivingMemory status. A loaded memory engine alone no longer hides a missing autonomous-target adapter; ordinary native replies retain their existing memory path.
+- Forward-port the paired LivingMemory build to `2.7.1+ovenheart.1`, preserving upstream 2.7.1 behavior. Source checks, three consistent SQLite backups and native Panel hot reload precede production validation. No OvenHeart learning/review decisions or custom configuration are replaced.
+
 ## 0.53.0
 
 - Remove both contextual limits of five: selection and literal-definition priority now honor `max_traits` (1–24) in every retrieval mode. Keep zero-choice behavior, candidate bounds, current status checks, final character budgets and existing cache fingerprinting.
 - Add `reply_context_messages` (12, 0–20) and `reply_context_budget` (12000, 0–24000 serialized characters) for extra group context in direct/autonomous final requests. Retain a complete recent suffix and recheck limits before assembly. Zero disables the extra window; target/quote, adjacent same-member context, native history and planner decision window remain separate.
 - Add per-native-scope `turn_traces` metadata: target/route, participation/cancellation reasons, selected/included IDs, character/count budgets and selector/rerank cache flags. Keep prepared/send-hook/cancelled states idempotent without increasing habit exposure. Show 30 recent rows, retain 200 per scope and expire with raw-material retention. Store no full prompts, original messages or response bodies; reasons may summarize context.
 - Extend existing settings/history without renaming navigation. Preserve open trace details during polling and distinguish assembly/send observations from actual delivery or provider KV caching. Diagnostics failures do not block native replies.
-- Pass focused native-SDK checks for limits above five, literal priority, bounded/zero context, retained older targets, cancellation, selected/included records, scope separation, repeated send hooks and native direct capabilities. Local settings save/reload and bounded desktop/mobile fixture checks, UI detector, JavaScript syntax and Ruff pass. Production remains at 0.52.1 after read-only inspection; this release is not deployed.
+- Pass focused native-SDK checks for limits above five, literal priority, bounded/zero context, retained older targets, cancellation, selected/included records, scope separation, repeated send hooks and native direct capabilities. Local settings save/reload and bounded desktop/mobile fixture checks, UI detector, JavaScript syntax and Ruff pass. Subsequently deploy to production after source/config/data backup; native startup, Panel state, preserved settings and database integrity pass. Real QQ outcome and long-term quality still need observation.
 
 ## 0.52.1
 

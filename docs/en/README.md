@@ -715,11 +715,13 @@ improvements; focused checks used simulated providers only.
 
 ## Target-aware LivingMemory replies (0.34)
 
-Install OvenHeart 0.34 together with the local LivingMemory build
-`2.7.0-beta.3+ovenheart.1`, then reload both plugins. This is an integration build,
-not an upstream LivingMemory release. No configuration or data migration is
-required. Older LivingMemory builds remain usable with their previous native
-event-based behavior.
+Install OvenHeart 0.34 or later together with the local LivingMemory build
+`2.7.1+ovenheart.1`, then reload both plugins. This retains upstream 2.7.1 behavior
+and adds the source interface; it is not an upstream release. The older local
+`2.7.0-beta.3+ovenheart.1` build also supports this API. The adaptation adds no
+configuration or database migration. Unadapted builds keep their native
+event-based behavior. Since 0.53.1, memory status exposes `reply_source_binding`
+separately from engine readiness and explains a missing adapter.
 
 For an earlier-member autonomous target, OvenHeart retrieves a real native event
 from its bounded 128-anchor runtime cache, independently of learning. It checks
@@ -738,8 +740,10 @@ direct wakes and batch-learning recall retain their original paths. Binding adds
 no memory/model call.
 
 Opt-in `participation_memory_source` logs identify binding/compatibility status.
-Focused checks use native event interfaces and simulated downstream hooks; no
-real memory database, provider or QQ acceptance is claimed.
+Focused checks use native events and simulated downstream hooks. The paired
+2.7.1 build was backed up and hot-reloaded through production Panel; memory
+initialization, index consistency and status checks pass. Earlier-target QQ
+outcomes and long-term memory quality still require observation.
 
 Since 0.33.1, autonomous request prompts use the planner's actual reply target. If one member asks a question and another member later triggers planning, a decision to answer the earlier member sends that question as the primary prompt. Current-message targets retain the full original input; earlier targets use the existing 1,200-character window text without fetching platform history.
 
@@ -1083,7 +1087,7 @@ The rendered body is also sent as that request's system prompt and recorded unde
 
 ## LivingMemory and QQ Enhance
 
-LivingMemory is optional. The adapter targets the supplied `2.7.0-beta.3` interface and discovers the active instance at runtime. It respects LivingMemory access control, configured session/user/global scopes, persona filtering and host plugin switches. At most three memory excerpts are retrieved by default, only while learning. Missing, disabled, incompatible, unavailable or timed-out memory integration does not prevent independent learning. After reload, a scope without a new real event uses retained chat material only.
+LivingMemory is optional and discovered at runtime. The adapter respects its access control, session/user/global scopes, persona filtering and host plugin switches. Learning and participation use their existing background-retrieval budgets; final replies keep LivingMemory's native recall path. Actual autonomous-target binding requires the paired `2.7.1+ovenheart.1` build or another build supporting the same API, and status reports this capability. Missing, disabled, incompatible, unavailable or timed-out memory integration does not prevent independent learning. After reload, a scope without a new real event uses retained chat material only.
 
 Version 0.12 preserves LivingMemory's intentional unfiltered legacy scope when session filtering is off and no forced-isolation list exists. Persona filtering still applies independently. If isolation is configured, LivingMemory decides between the global pool and the isolated session. See [native memory integration acceptance](../evaluation/memory.md) for the synthetic two-plugin checks and their limits.
 
