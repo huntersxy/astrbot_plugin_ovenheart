@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.53.0
+
+- Remove both contextual limits of five: selection and literal-definition priority now honor `max_traits` (1–24) in every retrieval mode. Keep zero-choice behavior, candidate bounds, current status checks, final character budgets and existing cache fingerprinting.
+- Add `reply_context_messages` (12, 0–20) and `reply_context_budget` (12000, 0–24000 serialized characters) for extra group context in direct/autonomous final requests. Retain a complete recent suffix and recheck limits before assembly. Zero disables the extra window; target/quote, adjacent same-member context, native history and planner decision window remain separate.
+- Add per-native-scope `turn_traces` metadata: target/route, participation/cancellation reasons, selected/included IDs, character/count budgets and selector/rerank cache flags. Keep prepared/send-hook/cancelled states idempotent without increasing habit exposure. Show 30 recent rows, retain 200 per scope and expire with raw-material retention. Store no full prompts, original messages or response bodies; reasons may summarize context.
+- Extend existing settings/history without renaming navigation. Preserve open trace details during polling and distinguish assembly/send observations from actual delivery or provider KV caching. Diagnostics failures do not block native replies.
+- Pass focused native-SDK checks for limits above five, literal priority, bounded/zero context, retained older targets, cancellation, selected/included records, scope separation, repeated send hooks and native direct capabilities. Local settings save/reload and bounded desktop/mobile fixture checks, UI detector, JavaScript syntax and Ruff pass. Production remains at 0.52.1 after read-only inspection; this release is not deployed.
+
 ## 0.52.1
 
 - Encourage more active default participation in AI, bot, robot and language-model discussions, including experiences, interactions, personalities, fun and technical topics, without requiring a direct mention or question. Keep existing confidence and admission settings, with no keyword router or extra model stage.

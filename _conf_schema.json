@@ -123,7 +123,20 @@
   "max_traits": {
     "description": "每次最多应用习惯数",
     "type": "int",
-    "default": 8
+    "default": 8,
+    "hint": "所有检索模式统一使用此上限，范围 1–24。实际可少选或不选，最终还受补充内容字符预算限制。"
+  },
+  "reply_context_messages": {
+    "description": "额外群聊参考消息上限",
+    "type": "int",
+    "default": 12,
+    "hint": "范围 0–20，0 表示不附带额外群聊窗口。直接回复和自主回复共用，不裁剪当前目标、必要引用或宿主原生历史，也不改变 Planner 的判断窗口。"
+  },
+  "reply_context_budget": {
+    "description": "额外群聊参考字符预算",
+    "type": "int",
+    "default": 12000,
+    "hint": "范围 0–24000，按结构化消息文本（含字段与引用）计算，优先保留最近消息。0 不附带额外窗口；不是整个请求或模型 token 上限，自定义模板重复展开不计入此预算。"
   },
   "retention_days": {
     "description": "原始素材保留天数",

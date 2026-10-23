@@ -40,7 +40,7 @@ from .learning import (
     parse_learning_review,
 )
 from .memory_bridge import MemoryBridge
-from .participation import ParticipationController, event_source
+from .participation import ParticipationController, bound_reply_messages, event_source
 from .retrieval import HabitRetriever
 from .settings import (
     DEFAULTS,
@@ -1053,12 +1053,15 @@ class PersonaPlugin(Star):
             "reply_to": reply_to,
         }
         window = self.participation.windows.get(scope, {})
-        messages = [
-            item | {"text": item["text"][:300]}
-            for item in window.get("messages", [])
-            if event.created_at - 600 <= item["time"] <= event.created_at
-            and item["source"] != target["source"]
-        ][-12:]
+        messages = bound_reply_messages(
+            [
+                item | {"text": item["text"][:300]}
+                for item in window.get("messages", [])
+                if event.created_at - 600 <= item["time"] <= event.created_at
+                and item["source"] != target["source"]
+            ],
+            self.settings,
+        )
         context = {
             "scope": scope,
             "route": route,
@@ -1095,6 +1098,11 @@ class PersonaPlugin(Star):
                 plan["id"],
                 "自主参与条件已改变，取消排队中的回复。",
             )
+            await self.record_turn_trace(
+                event,
+                status="cancelled",
+                cancel_reason="自主参与条件已改变，取消排队中的回复。",
+            )
             event.stop_event()
             return False
         scope, _, _ = await self.resolve_scope(event, req)
@@ -1113,6 +1121,11 @@ class PersonaPlugin(Star):
                 plan["id"],
                 "人格或会话已改变，取消过时的参与决策。",
             )
+            await self.record_turn_trace(
+                event,
+                status="cancelled",
+                cancel_reason="人格或会话已改变，取消过时的参与决策。",
+            )
             event.stop_event()
             return False
         window = self.participation.windows.get(scope)
@@ -1128,6 +1141,11 @@ class PersonaPlugin(Star):
                 scope,
                 plan["id"],
                 "出现新输入或已有回复，取消过时的参与决策。",
+            )
+            await self.record_turn_trace(
+                event,
+                status="cancelled",
+                cancel_reason="出现新输入或已有回复，取消过时的参与决策。",
             )
             event.stop_event()
             return False
@@ -1447,11 +1465,10 @@ class PersonaPlugin(Star):
             return
         plan = event.get_extra("ovenheart_decision")
         if not plan:
-            if (
-                event.get_message_type() != MessageType.GROUP_MESSAGE
-                or not self.settings["apply_enabled"]
-                or not await self.permitted(event)
-            ):
+            if event.get_message_type() != MessageType.GROUP_MESSAGE:
+                await self.record_turn_trace(event, req)
+                return
+            if not self.settings["apply_enabled"] or not await self.permitted(event):
                 return
             scope, _, _ = await self.resolve_scope(event, req)
             state = await self.store.call(
@@ -1464,6 +1481,10 @@ class PersonaPlugin(Star):
             ):
                 return
             direct = self.direct_reply_context(event, scope)
+            direct = direct | {
+                "messages": bound_reply_messages(direct["messages"], self.settings)
+            }
+            event.set_extra("ovenheart_direct_context", direct)
             target = direct["reply_message"]
             if (
                 event.get_platform_name() == "aiocqhttp"
@@ -1552,12 +1573,14 @@ class PersonaPlugin(Star):
                     + self.decorate_request(req)
                 )
                 req.extra_user_content_parts.append(TextPart(text=text).mark_as_temp())
+                event.set_extra("ovenheart_context_chars", len(text))
                 self.debug(
                     "direct_reply_target",
                     route=direct["route"],
                     target=target,
                     temporary_user=text,
                 )
+            await self.record_turn_trace(event, req)
             return
         if not await self.check_participation(event, req):
             return
@@ -1621,6 +1644,8 @@ class PersonaPlugin(Star):
         profile = plan.get("profile", {})
         target = plan.get("target") or {}
         target_label = target.get("sender") or "群聊"
+        context_messages = bound_reply_messages(plan["messages"], self.settings)
+        event.set_extra("ovenheart_context_messages", context_messages)
         system_injection = self.template(
             "participation_system",
             goal=plan["intent"],
@@ -1643,7 +1668,7 @@ class PersonaPlugin(Star):
             "participation_user",
             reply_goal=plan["intent"],
             target=target_label,
-            messages=plan["messages"],
+            messages=context_messages,
             reply_message=target,
             reply_context=plan.get("reply_context", []),
             expression_intent=plan.get("expression_intent", {}),
@@ -1658,7 +1683,7 @@ class PersonaPlugin(Star):
                 "reply_context": plan.get("reply_context", []),
                 "expression_intent": plan.get("expression_intent", {}),
                 "decoration": plan.get("decoration"),
-                "messages": plan["messages"],
+                "messages": context_messages,
             },
             ensure_ascii=False,
         )
@@ -1676,6 +1701,7 @@ class PersonaPlugin(Star):
         req.extra_user_content_parts.append(
             TextPart(text=user_injection).mark_as_temp()
         )
+        event.set_extra("ovenheart_context_chars", len(user_injection))
         self.debug(
             "participation_injection",
             scope=plan["scope"],
@@ -1691,6 +1717,7 @@ class PersonaPlugin(Star):
                 if getattr(tool, "active", True)
             ],
         )
+        await self.record_turn_trace(event, req)
 
     @filter.on_llm_request()
     async def apply_persona(self, event: AstrMessageEvent, req: ProviderRequest):
@@ -1942,6 +1969,22 @@ class PersonaPlugin(Star):
                     "key": uuid4().hex,
                 },
             )
+        event.set_extra(
+            "ovenheart_trace_metrics",
+            {
+                "scope": scope,
+                "selected_ids": [t["id"] for t in selection["traits"]],
+                "included_ids": included_ids,
+                "habit_chars": len(guidance) + len(user_guidance),
+                "habit_user_chars": len(user_guidance),
+                "habit_budget": settings["prompt_budget"],
+                "max_traits": settings["max_traits"],
+                "retrieval_mode": selection["mode"],
+                "retrieval_message": selection["message"][:800],
+                "selector_cache_hit": selection.get("selector_cache_hit"),
+                "rerank_cache_hit": selection.get("rerank_cache_hit"),
+            },
+        )
         self.debug(
             "persona_injection",
             scope=scope,
@@ -1951,6 +1994,76 @@ class PersonaPlugin(Star):
             system=system_injection,
             temporary_user=user_injection,
         )
+
+    async def record_turn_trace(
+        self, event, req=None, status="prepared", cancel_reason=""
+    ):
+        """Record request assembly separately from native send-stage observations.
+
+        Args:
+            event: Native event carrying request-local selection metadata.
+            req: Prepared provider request, only while assembling its trace.
+            status: prepared, send_hook or cancelled, without claiming delivery.
+            cancel_reason: Actual cancellation condition, when known.
+        """
+        if not await self.permitted(event):
+            return
+        metrics = event.get_extra("ovenheart_trace_metrics")
+        if not metrics:
+            return
+        previous = event.get_extra("ovenheart_turn_trace")
+        if req is None:
+            if not previous:
+                return
+            details = previous["details"] | (
+                {"cancel_reason": cancel_reason} if cancel_reason else {}
+            )
+        else:
+            plan = event.get_extra("ovenheart_decision") or {}
+            direct = event.get_extra("ovenheart_direct_context") or {}
+            target = plan.get("target") or direct.get("reply_message") or {}
+            messages = event.get_extra(
+                "ovenheart_context_messages", direct.get("messages", [])
+            )
+            details = metrics | {
+                "route": "autonomous" if plan else direct.get("route", "native"),
+                "target_sender": str(
+                    target.get("sender") or event.get_sender_name() or ""
+                )[:80],
+                "target_sender_id": str(
+                    target.get("sender_id") or event.get_sender_id() or ""
+                )[:128],
+                "target_message_id": str(
+                    target.get("message_id")
+                    or getattr(event.message_obj, "message_id", "")
+                    or ""
+                )[:128],
+                "reason": plan.get("reason", "宿主直接应答；无需参与决策。")[:240],
+                "context_count": len(messages),
+                "context_chars": len(json.dumps(messages, ensure_ascii=False))
+                if messages
+                else 0,
+                "context_limit": self.settings["reply_context_messages"],
+                "context_budget": self.settings["reply_context_budget"],
+                "temporary_chars": metrics["habit_user_chars"]
+                + event.get_extra("ovenheart_context_chars", 0),
+            }
+            previous = {
+                "key": previous["key"] if previous else uuid4().hex,
+                "details": details,
+            }
+            event.set_extra("ovenheart_turn_trace", previous)
+        try:
+            await self.store.call(
+                "trace_turn", metrics["scope"], previous["key"], status, details
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            # Diagnostics must not block the native response path.
+            self.debug(
+                "turn_trace_failed", scope=metrics["scope"], error=type(exc).__name__
+            )
 
     @filter.after_message_sent()
     async def record_delivery(self, event: AstrMessageEvent):
@@ -1963,6 +2076,7 @@ class PersonaPlugin(Star):
         Args:
             event: Native message event after the send pipeline.
         """
+        await self.record_turn_trace(event, status="send_hook")
         application = event.get_extra("ovenheart_application")
         learning_source = event.get_extra("ovenheart_learning_source")
         if (

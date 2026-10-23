@@ -294,6 +294,45 @@ async def lifespan(app):
                 "observed",
                 plugin.settings,
             )
+        for trait in (await plugin.store.call("state", scope, None, None, True))[
+            "traits"
+        ]:
+            if trait["kind"] != "personality":
+                await plugin.store.call(
+                    "mutate",
+                    trait["scope"],
+                    "trait",
+                    {"id": trait["id"], "status": "active"},
+                )
+        trace_traits = (await plugin.store.call("guidance", scope, True))["traits"]
+        trace_ids = [trait["id"] for trait in trace_traits][:3]
+        await plugin.store.call(
+            "trace_turn",
+            scope,
+            "demo-turn",
+            "send_hook",
+            {
+                "route": "quote",
+                "target_sender": "演示用户",
+                "target_sender_id": "demo-user",
+                "target_message_id": "demo-message",
+                "reason": "演示：引用上一条回答，直接应答。",
+                "selected_ids": trace_ids,
+                "included_ids": trace_ids[:2],
+                "habit_chars": 1420,
+                "habit_budget": 1500,
+                "max_traits": 8,
+                "context_count": 4,
+                "context_limit": 12,
+                "context_chars": 1060,
+                "context_budget": 12000,
+                "temporary_chars": 2570,
+                "selector_cache_hit": True,
+                "rerank_cache_hit": False,
+                "retrieval_mode": "contextual",
+                "retrieval_message": "演示：情境筛选选中了三条参考，最终按字符预算组装。",
+            },
+        )
         second_scope = "b" * 24
         await plugin.store.call(
             "touch_scope",

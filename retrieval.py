@@ -510,11 +510,7 @@ class HabitRetriever:
             )
         if literal:
             direct_ids = {t["id"] for t in literal}
-            maximum = (
-                min(5, settings["max_traits"])
-                if settings["selection_mode"] == "contextual"
-                else settings["max_traits"]
-            )
+            maximum = settings["max_traits"]
             result["traits"] = (
                 [t | {"_reason": "当前输入直接命中本群词汇"} for t in literal]
                 + [t for t in result["traits"] if t["id"] not in direct_ids]
@@ -715,7 +711,7 @@ class HabitRetriever:
             asyncio.TimeoutError: If the selector exceeds its separate budget.
             SelectorBusyError: If two remote selectors are already running.
         """
-        maximum = min(5, settings["max_traits"])
+        maximum = settings["max_traits"]
         candidates = [
             {k: t[k] for k in ("id", "kind", "situation", "content")}
             | (

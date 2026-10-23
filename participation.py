@@ -56,6 +56,29 @@ class ParticipationFormatError(ValueError):
     """Distinguish safe schema diagnostics from arbitrary provider exceptions."""
 
 
+def bound_reply_messages(messages: list, settings: dict) -> list:
+    """Keep the most recent complete extra-context records within both budgets.
+
+    Args:
+        messages: Same-scope records already admitted by the caller.
+        settings: Current message-count and serialized-character limits.
+
+    Returns:
+        Chronological suffix that fits, without changing source records or targets.
+    """
+    count = settings["reply_context_messages"]
+    budget = settings["reply_context_budget"]
+    selected = []
+    if not count or not budget:
+        return selected
+    for item in reversed(messages[-count:]):
+        candidate = [item, *selected]
+        if len(json.dumps(candidate, ensure_ascii=False)) > budget:
+            break
+        selected = candidate
+    return selected
+
+
 def event_source(event) -> str:
     """Return a native ID or one stable fallback for this event's hook lifetime.
 
@@ -608,7 +631,7 @@ class ParticipationController:
                     return plan | {
                         "scope": scope,
                         "id": decision["id"],
-                        "messages": messages[-12:],
+                        "messages": bound_reply_messages(messages, settings),
                         "reply_context": reply_context,
                         "sequence": sequence,
                         "profile": state["scope"]["profile"],

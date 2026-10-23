@@ -126,6 +126,12 @@ class Store:
                 id INTEGER PRIMARY KEY, scope TEXT NOT NULL, event_key TEXT NOT NULL UNIQUE,
                 trait_ids TEXT NOT NULL, mode TEXT NOT NULL, created REAL NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS turn_traces (
+                id INTEGER PRIMARY KEY, scope TEXT NOT NULL, event_key TEXT NOT NULL UNIQUE,
+                status TEXT NOT NULL, details TEXT NOT NULL, created REAL NOT NULL,
+                updated REAL NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS turn_traces_scope ON turn_traces(scope,id);
             CREATE TABLE IF NOT EXISTS decisions (
                 id INTEGER PRIMARY KEY, scope TEXT NOT NULL, action TEXT NOT NULL,
                 confidence REAL NOT NULL, reason TEXT NOT NULL, intent TEXT NOT NULL,
@@ -345,6 +351,10 @@ class Store:
             "DELETE FROM learning_sender_state WHERE updated < ?",
             (time.time() - retention_days * 86400,),
         )
+        db.execute(
+            "DELETE FROM turn_traces WHERE created < ?",
+            (time.time() - retention_days * 86400,),
+        )
 
     def capture(
         self,
@@ -492,6 +502,7 @@ class Store:
             "runs": [],
             "revisions": [],
             "applications": [],
+            "turn_traces": [],
             "decisions": [],
         }
         selected = next((s for s in scopes if s["id"] == scope), None)
@@ -543,6 +554,13 @@ class Store:
                 dict(r)
                 for r in db.execute(
                     "SELECT * FROM decisions WHERE scope=? ORDER BY id DESC LIMIT 30",
+                    (scope,),
+                )
+            ]
+            result["turn_traces"] = [
+                dict(row) | {"details": json.loads(row["details"])}
+                for row in db.execute(
+                    "SELECT * FROM turn_traces WHERE scope=? ORDER BY id DESC LIMIT 30",
                     (scope,),
                 )
             ]
@@ -1359,6 +1377,40 @@ class Store:
                 (provider, scope, scope, SHARED_SCOPE),
             )
         }
+
+    def trace_turn(self, db, scope, event_key, status, details):
+        """Store bounded request metadata without counting it as habit exposure.
+
+        Args:
+            db: Open database connection.
+            scope: Native session/persona identity.
+            event_key: One identity retained across request and send hooks.
+            status: prepared, send_hook or cancelled; never proof of delivery.
+            details: Metadata assembled by the runtime, without prompt/chat bodies.
+        """
+        if status not in {"prepared", "send_hook", "cancelled"}:
+            raise ValueError("Unknown turn trace status")
+        now = time.time()
+        db.execute(
+            "INSERT INTO turn_traces(scope,event_key,status,details,created,updated) VALUES (?,?,?,?,?,?) "
+            "ON CONFLICT(event_key) DO UPDATE SET "
+            "status=CASE WHEN turn_traces.status='cancelled' OR excluded.status='prepared' THEN turn_traces.status ELSE excluded.status END,"
+            "details=CASE WHEN turn_traces.status='cancelled' OR (excluded.status='prepared' AND turn_traces.status<>'prepared') "
+            "THEN turn_traces.details ELSE excluded.details END,updated=excluded.updated WHERE turn_traces.scope=excluded.scope",
+            (
+                scope,
+                event_key,
+                status,
+                json.dumps(details, ensure_ascii=False),
+                now,
+                now,
+            ),
+        )
+        db.execute(
+            "DELETE FROM turn_traces WHERE scope=? AND id NOT IN "
+            "(SELECT id FROM turn_traces WHERE scope=? ORDER BY id DESC LIMIT 200)",
+            (scope, scope),
+        )
 
     def applied(self, db, scope, event_key, ids, mode, shared=False):
         """Record delivery once, without treating exposure as positive feedback.

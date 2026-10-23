@@ -1,5 +1,45 @@
 # OvenHeart workshop guide
 
+## Injection budgets and per-turn records (0.53)
+
+In the existing settings / memory-and-expression section, `max_traits` now
+controls every retrieval mode (8, range 1–24), including contextual selection and
+literal jargon priority. Both hidden five-item caps are removed. Zero-choice
+behavior and `prompt_budget` (3000, 500–8000 characters, including authored
+supplements) remain.
+
+New `reply_context_messages` (12, 0–20) and `reply_context_budget` (12000, 0–24000)
+bound extra group context in direct/autonomous final requests. Count serialized
+characters including fields/quotes, retain a complete recent suffix and preserve
+chronology. Either zero disables the extra window. Target/quote, adjacent
+same-member turns, native history, LivingMemory and other plugins remain separate;
+the planner decision window still offers twenty turns. This is not a whole-request
+or token cap. Repeated custom-template expansion counts separately.
+
+The existing history page gains per-turn records with target/route, participation
+and cancellation reasons, selected/included IDs, budgets and selector/rerank cache
+flags. Expanded details survive polling. Prepared means plugin assembly, not
+provider receipt; absence of a send observation is not proof of failure. Send-hook
+status is not delivery or model adoption. Cancelled reflects existing stale checks.
+Tracing does not increase habit exposure, change permissions or add model stages.
+
+Show thirty recent records, retain two hundred per native scope and expire with
+raw-material retention. Store names/user/message IDs, reasons and other metadata,
+without full prompts, original chat bodies or responses; reasons may summarize
+context. Keep scope separation in shared-learning mode. Trace-write failure does
+not block a reply. Existing databases gain an independent table, retaining habits.
+
+Navigation stays unchanged: budgets remain in settings / memory-and-expression;
+records appear in learning-and-participation. Focused native-SDK checks and local
+desktop/mobile fixture inspection pass. Production was inspected read-only and
+remains at 0.52.1; this release has not been deployed.
+
+![Local simulated turn details](../assets/injection-trace-v0.53-detail.jpg)
+
+[Desktop](../assets/injection-trace-v0.53-desktop.jpg) ·
+[Mobile](../assets/injection-trace-v0.53-mobile.jpg) ·
+[Settings](../assets/injection-settings-v0.53.jpg)
+
 ## AI / bot discussion preference (0.52.1)
 
 The default planner treats AI, bot, robot and language-model discussions as
