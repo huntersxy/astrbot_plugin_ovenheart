@@ -1,5 +1,45 @@
 # OvenHeart workshop guide
 
+## Native mention and bot-quote integration (0.52)
+
+The plugin enhances native requests without patching AstrBot. Native @, bot
+quotes, private messages and commands keep host wake handling. Group direct
+requests share frozen sender/message/quote context with habit selection and final
+generation, plus at most twelve existing same-scope turns from the preceding ten
+minutes, with 300-character body excerpts. No window means no invented group
+history. Explicit wakes keep one native agent invocation without autonomous
+planner, confidence/cooldown checks or autonomous tool restrictions. Host access
+and service controls remain; disabling plugin application leaves native replies.
+
+Retain the host-prepared prompt, multimodal data, history, tools, conversation and
+runner. LivingMemory keeps its own native hooks, without a duplicate memory chain.
+Application may create a scope while learning is paused or the input is quote/
+media-only; this does not manufacture learning evidence. Existing workshop entries
+"自主参与：系统提示" and "自主参与：临时上下文" retain their names and now also
+serve group direct replies. Custom text remains; avoid hardcoding members or
+requiring another participation decision for direct wakes. Both direct snippets
+are temporary tail content, preserving stable system/history prefixes. Direct
+`expression_intent` is empty; no extra expression-planning model is introduced.
+
+Native direct streaming settings are restored, superseding 0.51.1 full buffering.
+The host skips decoration hooks for streaming results. Wrap only this OneBot
+event's adapter call and lazily recognize a separated leading address, flushing
+undecidable pending text beyond 72 characters. Do not buffer the full answer.
+Keep traced iteration, native fallback flags, control/reasoning/audio/media chunks
+and the original adapter. Restore its method before consuming generation so tool/
+plugin streams cannot recurse; close guard/source iterators on completion or
+cancellation. Actual delivery/segmentation/audio capability remains host/platform
+dependent. Buffered direct replies retain existing correction/quote behavior;
+autonomous replies retain their buffered stale-plan checks.
+
+Native history still stores the model result; provider output and already sent
+content are not rewritten. Only separated leading addresses are corrected, not
+arbitrary inline semantics or existing real At components. Debug direct routes
+are `at`, `quote`, `name`, `native`; streaming correction uses
+`reply_addressee.path=direct_stream`. Focused checks exercise native wake/process/
+respond stages with simulated agents/adapters. Real QQ delivery, production tool
+execution, live audio and other runner/platform combinations remain unverified.
+
 ## Default participation preferences (0.51.2)
 
 The default planner now considers playful jealousy when an established close

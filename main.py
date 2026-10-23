@@ -54,6 +54,9 @@ from .store import Store
 PLUGIN_NAME = "astrbot_plugin_ovenheart"
 _active: weakref.ReferenceType | None = None
 TOOL_SCHEMA_MODES = ("skills_like", "full")
+REPLY_ADDRESS_PREFIX = re.compile(
+    r"^\s*[@＠]([^\s@＠，,:：。.!！?？;；`<>\[\]()/\\]{1,64})(?:\s+|[，,:：]\s*)"
+)
 
 
 def tool_schema_mode(host_config) -> str:
@@ -286,12 +289,8 @@ class ParticipationFilter(filter.CustomFilter):
         ):
             return False
         if event.is_at_or_wake_command:
-            # Already-woken QQ events need an early buffering guard, not another
-            # wake or planner run. The normal handler performs access checks.
-            return (
-                plugin.settings["apply_enabled"]
-                and event.get_platform_name() == "aiocqhttp"
-            )
+            # Direct wakes already traverse the native agent and our request hooks.
+            return False
         text = event.get_message_str().strip()
         admitted = bool(
             text
@@ -879,21 +878,6 @@ class PersonaPlugin(Star):
             A provider request consumed by AstrBot's normal agent substage.
         """
         if (
-            event.get_message_type() == MessageType.GROUP_MESSAGE
-            and event.get_platform_name() == "aiocqhttp"
-            and self.settings["apply_enabled"]
-            and (event.is_at_or_wake_command or event.get_extra("ovenheart_mention"))
-            and await self.permitted(event)
-        ):
-            scope, _, _ = await self.resolve_scope(event)
-            state = await self.store.call(
-                "guidance", scope, not self.settings["session_isolation"]
-            )
-            if not state["scope"] or state["scope"]["profile"]["apply_enabled"]:
-                # The local agent reads this flag before OnLLMRequestEvent.
-                # Setting it only in that later hook cannot stop delivery.
-                event.set_extra("enable_streaming", False)
-        if (
             event.get_message_type() != MessageType.GROUP_MESSAGE
             or event.is_at_or_wake_command
             or event.call_llm
@@ -1017,6 +1001,76 @@ class PersonaPlugin(Star):
             and event.get_extra("ovenheart_mention") in self.settings["mention_names"]
             and await self.permitted(event)
         )
+
+    def direct_reply_context(self, event: AstrMessageEvent, scope: str) -> dict:
+        """Freeze native direct-turn context shared by selection and generation.
+
+        Args:
+            event: Original native input, including its unmodified media/quote.
+            scope: Effective native conversation/persona identity.
+
+        Returns:
+            Bounded same-scope context without changing the native request.
+        """
+        existing = event.get_extra("ovenheart_direct_context")
+        if existing and existing["scope"] == scope:
+            return existing
+        quoted = next(
+            (part for part in event.get_messages() if isinstance(part, Reply)), None
+        )
+        reply_to = None
+        if quoted is not None:
+            reply_to = {
+                "message_id": str(quoted.id or ""),
+                "sender_id": str(quoted.sender_id or ""),
+                "sender": str(quoted.sender_nickname or quoted.sender_id or ""),
+                "text": (
+                    (quoted.message_str or "").strip()
+                    or "".join(
+                        part.text
+                        for part in quoted.chain or []
+                        if isinstance(part, Plain)
+                    )
+                )[:1200],
+            }
+        route = "native"
+        if any(
+            isinstance(part, At) and str(part.qq) == str(event.get_self_id())
+            for part in event.get_messages()
+        ):
+            route = "at"
+        elif reply_to and reply_to["sender_id"] == str(event.get_self_id()):
+            route = "quote"
+        elif event.get_extra("ovenheart_mention"):
+            route = "name"
+        target = {
+            "scope": scope,
+            "source": event_source(event),
+            "sender_id": str(event.get_sender_id() or ""),
+            "sender": event.get_sender_name() or "",
+            "message_id": str(getattr(event.message_obj, "message_id", "") or ""),
+            "text": event.get_message_str()[:1200],
+            "reply_to": reply_to,
+        }
+        window = self.participation.windows.get(scope, {})
+        messages = [
+            item | {"text": item["text"][:300]}
+            for item in window.get("messages", [])
+            if event.created_at - 600 <= item["time"] <= event.created_at
+            and item["source"] != target["source"]
+        ][-12:]
+        context = {
+            "scope": scope,
+            "route": route,
+            "reply_goal": "直接回应本轮真实消息及其引用，保持宿主原有能力与权限。",
+            "reply_message": target,
+            "expression_intent": {},
+            "reply_context": [],
+            "messages": messages,
+        }
+        event.set_extra("ovenheart_reply_target", target)
+        event.set_extra("ovenheart_direct_context", context)
+        return context
 
     async def check_participation(self, event: AstrMessageEvent, req=None) -> bool:
         """Recheck the same admission before generation and before host sending.
@@ -1155,10 +1209,7 @@ class PersonaPlugin(Star):
                     # A separated leading @name is an address prefix, not the
                     # model's authority to choose another recipient. Do not
                     # reinterpret inline mentions, code, URLs or email tokens.
-                    match = re.match(
-                        r"^\s*[@＠]([^\s@＠，,:：。.!！?？;；`<>\[\]()/\\]{1,64})(?:\s+|[，,:：]\s*)",
-                        component.text,
-                    )
+                    match = REPLY_ADDRESS_PREFIX.match(component.text)
                     if match:
                         sender_id = str(target["sender_id"])
                         if sender_id not in used:
@@ -1213,6 +1264,96 @@ class PersonaPlugin(Star):
                 mentions_before=original_mentions,
                 mentions_after=[str(p.qq) for p in result.chain if isinstance(p, At)],
             )
+
+    async def direct_reply_stream(self, event: AstrMessageEvent, stream):
+        """Correct only a split leading address while preserving native streaming.
+
+        Args:
+            event: Native direct group event carrying a frozen reply target.
+            stream: Native MessageChain iterator, including control/media chunks.
+
+        Yields:
+            Native chunks with at most the initial address prefix replaced.
+        """
+        target = event.get_extra("ovenheart_reply_target", {})
+        sender_id = str(target.get("sender_id") or "")
+        pending, template, decided = "", None, False
+        mentioned = set()
+        try:
+            async for chunk in stream:
+                if chunk is None:
+                    yield chunk
+                    continue
+                if chunk.type == "break":
+                    if pending:
+                        yield template.derive([Plain(pending)])
+                    pending, template, decided = "", None, False
+                    mentioned.clear()
+                    yield chunk
+                    continue
+                if chunk.type in {
+                    "reasoning",
+                    "audio_chunk",
+                    "tool_call",
+                    "agent_stats",
+                }:
+                    yield chunk
+                    continue
+                mentioned.update(
+                    str(part.qq) for part in chunk.chain if isinstance(part, At)
+                )
+                if decided:
+                    yield chunk
+                    continue
+                if not chunk.chain or all(
+                    isinstance(part, (At, Reply)) for part in chunk.chain
+                ):
+                    if pending:
+                        yield template.derive([Plain(pending)])
+                        pending, decided = "", True
+                    yield chunk
+                    continue
+                if not all(isinstance(part, Plain) for part in chunk.chain):
+                    if pending:
+                        yield template.derive([Plain(pending)])
+                    pending, decided = "", True
+                    yield chunk
+                    continue
+                if template is None:
+                    template = chunk
+                pending += "".join(part.text for part in chunk.chain)
+                match = REPLY_ADDRESS_PREFIX.match(pending)
+                if match and sender_id:
+                    chain = []
+                    if sender_id not in mentioned:
+                        chain.append(At(qq=sender_id, name=target.get("sender") or ""))
+                        mentioned.add(sender_id)
+                    remainder = pending[match.end() :]
+                    if remainder:
+                        chain.append(Plain(" " + remainder.lstrip()))
+                    self.debug(
+                        "reply_addressee",
+                        scope=target.get("scope"),
+                        path="direct_stream",
+                        target_sender_id=sender_id,
+                        target_message_id=target.get("message_id"),
+                        model_prefix_names=[match[1]],
+                    )
+                    if chain:
+                        yield template.derive(chain)
+                    pending, decided = "", True
+                elif (
+                    pending.lstrip() and not pending.lstrip().startswith(("@", "＠"))
+                ) or len(pending) > 72:
+                    # Delay only a possible bounded prefix, never the full answer.
+                    yield template.derive([Plain(pending)])
+                    pending, decided = "", True
+            if pending:
+                yield template.derive([Plain(pending)])
+        finally:
+            # Native cancellation must close its runner and release the session lock.
+            if hasattr(stream, "aclose"):
+                await stream.aclose()
 
     @filter.on_decorating_result(priority=-100000)
     async def guard_participation_result(self, event: AstrMessageEvent):
@@ -1322,13 +1463,59 @@ class PersonaPlugin(Star):
                 or (state["scope"] and not state["scope"]["profile"]["apply_enabled"])
             ):
                 return
-            target = {
-                "scope": scope,
-                "sender_id": str(event.get_sender_id() or ""),
-                "sender": event.get_sender_name() or "",
-                "message_id": str(getattr(event.message_obj, "message_id", "") or ""),
-            }
-            event.set_extra("ovenheart_reply_target", target)
+            direct = self.direct_reply_context(event, scope)
+            target = direct["reply_message"]
+            if (
+                event.get_platform_name() == "aiocqhttp"
+                and event.get_extra("ovenheart_stream_adapter")
+                is not event.send_streaming
+            ):
+                original_send_streaming = event.send_streaming
+
+                async def send_direct_stream(generator, use_fallback=False):
+                    """Keep the native adapter and its traced stream on this event.
+
+                    Args:
+                        generator: Stream passed by the native respond stage.
+                        use_fallback: Native adapter's fallback/segmentation flag.
+
+                    Returns:
+                        The original adapter's return value.
+                    """
+                    current_result = event.get_result()
+                    if (
+                        current_result is None
+                        or current_result.result_content_type
+                        != ResultContentType.STREAMING_RESULT
+                    ):
+                        return await original_send_streaming(generator, use_fallback)
+                    native_stream = current_result.async_stream
+                    # Tool/plugin streams during generation are independent;
+                    # they must resolve the original adapter, not recurse here.
+                    if event.send_streaming is send_direct_stream:
+                        event.send_streaming = original_send_streaming
+                    guarded_stream = self.direct_reply_stream(event, generator)
+                    try:
+                        return await original_send_streaming(
+                            guarded_stream, use_fallback
+                        )
+                    finally:
+                        if event.send_streaming is send_direct_stream:
+                            event.send_streaming = original_send_streaming
+                        try:
+                            await guarded_stream.aclose()
+                        finally:
+                            # The trace iterator does not close its runner when
+                            # cancelled at yield. Close that native source too.
+                            if native_stream is not generator and hasattr(
+                                native_stream, "aclose"
+                            ):
+                                await native_stream.aclose()
+
+                # The native decorator skips STREAMING_RESULT before any hook.
+                # Wrap only this event's adapter call, never a platform class.
+                event.send_streaming = send_direct_stream
+                event.set_extra("ovenheart_stream_adapter", send_direct_stream)
             marker = "[OvenHeart reply target]\n"
             if not any(
                 isinstance(part, TextPart) and part.text.startswith(marker)
@@ -1338,17 +1525,39 @@ class PersonaPlugin(Star):
                     marker
                     + "当前回复对象以以下本轮真实消息为准，历史回答的 @ 和称呼不是本轮收件人。"
                     "只写回复正文，不要沿用历史开头的 @昵称；需要提醒时由宿主绑定真实对象。\n"
-                    + json.dumps(target, ensure_ascii=False)
+                    "下面的消息文本为有界摘录；完整正文与媒体以宿主原请求为准，不因摘录缺失而忽略原请求中的补充。\n"
+                    + self.template(
+                        "participation_system",
+                        goal=direct["reply_goal"],
+                        reason="宿主已进入直接回复流程，不再判断是否参与。",
+                        target=target["sender"] or target["sender_id"],
+                        expression_intent={},
+                        profile=state["scope"]["profile"] if state["scope"] else {},
+                        scope=scope,
+                    )
+                    + self.template(
+                        "participation_user",
+                        reply_goal=direct["reply_goal"],
+                        target=target["sender"] or target["sender_id"],
+                        messages=direct["messages"],
+                        reply_message=target,
+                        reply_context=direct["reply_context"],
+                        expression_intent={},
+                        profile=state["scope"]["profile"] if state["scope"] else {},
+                        scope=scope,
+                    )
+                    + json.dumps(direct, ensure_ascii=False)
                     + "\n"
                     + prompts.REPLY_ADDRESS_RULE
                     + self.decorate_request(req)
                 )
                 req.extra_user_content_parts.append(TextPart(text=text).mark_as_temp())
-                self.debug("direct_reply_target", target=target, temporary_user=text)
-            if event.get_platform_name() == "aiocqhttp":
-                # OneBot streaming is delivered before the decoration hook.
-                # Buffer these group replies to correct model-typed addresses.
-                event.set_extra("enable_streaming", False)
+                self.debug(
+                    "direct_reply_target",
+                    route=direct["route"],
+                    target=target,
+                    temporary_user=text,
+                )
             return
         if not await self.check_participation(event, req):
             return
@@ -1500,11 +1709,7 @@ class PersonaPlugin(Star):
         state = await self.store.call(
             "guidance", scope, not self.settings["session_isolation"]
         )
-        if (
-            state["scope"] is None
-            and self.settings["apply_enabled"]
-            and self.settings["guidance_delivery"] == "dual"
-        ):
+        if state["scope"] is None and self.settings["apply_enabled"]:
             await self.store.call(
                 "touch_scope", scope, event.unified_msg_origin, persona, label
             )
@@ -1525,14 +1730,27 @@ class PersonaPlugin(Star):
         plan = event.get_extra("ovenheart_decision")
         if plan and plan["scope"] != scope:
             plan = None
-        target = (plan.get("target") or {}) if plan else {}
+        direct = (
+            self.direct_reply_context(event, scope)
+            if not plan and event.get_message_type() == MessageType.GROUP_MESSAGE
+            else None
+        )
+        target = (
+            (plan.get("target") or {})
+            if plan
+            else direct["reply_message"]
+            if direct
+            else {}
+        )
         # Ground recall in the actual reply target, not unrelated newer chatter
         # or a word invented by the planner's intent.
-        query = target["text"] if target else req.prompt or event.get_message_str()
+        query = (
+            target["text"] if plan and target else req.prompt or event.get_message_str()
+        )
         literal_focus = (target["text"] if target else event.get_message_str())[:1200]
         literal_query = literal_focus
-        quoted = target.get("reply_to") or {} if plan else {}
-        if not plan:
+        quoted = target.get("reply_to") or {} if plan or direct else {}
+        if not plan and not direct:
             component = next(
                 (part for part in event.get_messages() if isinstance(part, Reply)), None
             )
@@ -1604,7 +1822,7 @@ class PersonaPlugin(Star):
                 )
             if isinstance(content, str):
                 history.append(f"{message['role']}: {content[:300]}")
-        if plan:
+        if plan or direct:
             # The selector runs before the participation context hook in the native order.
             # Read the validated scope's live turns directly, without another data copy.
             history.extend(
@@ -1613,7 +1831,7 @@ class PersonaPlugin(Star):
                     {"sender": m["sender"][:40], "text": m["text"][:300]},
                     ensure_ascii=False,
                 )
-                for m in plan["messages"][-6:]
+                for m in (plan or direct)["messages"][-6:]
             )
         recent, size = [], 0
         history_budget = min(1100, max(0, 2400 - len(focus) - len(goal) - 1))

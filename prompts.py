@@ -111,7 +111,7 @@ SPECS = {
     },
     "participation_system": {
         "title": "自主参与：系统提示",
-        "description": "交给宿主的回复请求里追加的系统提示词开头，结构化目标由插件另行追加。",
+        "description": "原生直接回复与自主回复共用的目标说明，结构化目标另行追加；直接回复按临时尾部投递。",
         "placeholders": {
             "goal": "本轮回复目标",
             "reason": "参与理由",
@@ -123,7 +123,7 @@ SPECS = {
     },
     "participation_user": {
         "title": "自主参与：临时上下文",
-        "description": "随本轮请求附带的群聊上下文说明，发送前会被剔除，不写入历史。",
+        "description": "原生直接回复与自主回复共用的群聊上下文说明，按临时内容附带，不写入历史。",
         "placeholders": {
             "reply_goal": "本轮回复目标",
             "target": "本轮要回应的群成员；泛泛插话时为「群聊」",

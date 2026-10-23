@@ -25,9 +25,9 @@ async def test_direct_qq_reply_replaces_a_stale_leading_address(participant):
     )
     current.is_at_or_wake_command = True
     await participant.capture(current)
-    assert ParticipationFilter().filter(current, {})
+    assert not ParticipationFilter().filter(current, {})
     assert await requests(participant, current) == []
-    assert current.get_extra("enable_streaming") is False  # Before the agent starts.
+    assert current.get_extra("enable_streaming") is None
     request = ProviderRequest(
         prompt=current.get_message_str(),
         system_prompt="稳定人格",
@@ -57,7 +57,7 @@ async def test_direct_qq_reply_replaces_a_stale_leading_address(participant):
         current.get_sender_id() == "whale"
         and current.message_obj.message_id == "whale-question"
     )
-    assert current.get_extra("enable_streaming") is False
+    assert current.get_extra("enable_streaming") is None
     assert request.system_prompt == "稳定人格"
     assert request.extra_user_content_parts[-1].model_dump_for_context()["_no_save"]
     participant.context.llm_generate.assert_not_awaited()

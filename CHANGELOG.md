@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.52.0
+
+- Share frozen native direct-turn sender/message/quote context between habit selection and final generation, with bounded existing same-scope recent turns. Reuse editable participation system/user templates in temporary tail content for native @, bot quotes and name wakes; retain host prompts, history, multimodal inputs, tools, conversation and runner.
+- Keep explicit native wakes on the native one-agent path, independent of autonomous mode/confidence/cooldowns/tool lists. Do not add a planner or duplicate memory/model stage. Create an application scope when needed even with learning paused or quote-only input; do not collect empty/media-only inputs as learning evidence.
+- Restore the native direct-streaming option, replacing 0.51.1's forced full buffering. The host decorator skips streaming results, so intercept only the current OneBot event's adapter call and lazily correct a bounded possible leading address prefix. Preserve traced iteration, fallback flags, control/media chunks and native adapter results; restore the original adapter before generation so independent tool streams do not recurse. Close both guard and native source on cancellation. Autonomous generation keeps its existing buffered stale-plan checks.
+- Preserve existing structured mentions and normal inline content. Keep this correction limited to separated leading prefixes; do not promise semantic addressee inference or repair already delivered output. Direct debug context now distinguishes at/quote/name/native routes. No host edits, database schema, settings, dependencies or extra ports.
+- Validate native wake/process stages with simulated agents for @ and bot quotes, unchanged tools/media/history, quote-only input, streaming prefix splits through native RespondStage, incremental delivery, adapter restoration/cancellation and existing address/follow-up/name-wake paths. Real QQ delivery, provider/tool execution, live audio and other runner/platform combinations remain unverified.
+
 ## 0.51.2
 
 - Extend the default planner prompt with context-dependent playful jealousy toward an established close member interacting with another AI, more active participation when the bot is genuinely mentioned, and suitable meme/banter participation. Resolve relationships from existing identity/context and names from identity/configuration; hardcode no member or bot names.
