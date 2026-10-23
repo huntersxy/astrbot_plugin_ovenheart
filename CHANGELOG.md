@@ -9,6 +9,13 @@
   learning, editing and review behavior remain unchanged.
 - Refresh the Chinese and English layout instructions and local fixture screenshots.
 
+## 0.56.3
+
+- Replace the private LivingMemory reply-source API dependency with an OvenHeart-owned, reversible in-memory adapter around the upstream native recall/reflection hook entries. Official LivingMemory source files and version identifiers remain unchanged.
+- Reattach after LivingMemory load/reload and restore only entries still owned by OvenHeart on unload. Ordinary requests keep their native event and callback path; verified earlier targets use isolated snapshots with current request timestamps/checkpoints and live access/admission checks.
+- Suppress memory processing for missing/expired/revoked sources. Cancel cross-message autonomous replies when both upstream hooks cannot be routed, with a visible diagnostic instead of silently falling back to the wrong member.
+- Declare the full AstrBot 4.x range (`>=4.0.0,<5`), as requested. Current verification remains AstrBot 4.29.1; this declaration is not a claim that every 4.x release has been tested.
+
 ## 0.56.2
 
 - Merge a same-member empty native At into a still-running direct request within

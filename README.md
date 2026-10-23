@@ -10,7 +10,7 @@
 从聊天证据中积累习惯，由你决定它们如何生效。
 
 [![AstrBot](https://img.shields.io/badge/AstrBot-4.29.1%E2%80%934.x-49768b?style=flat-square)](https://github.com/AstrBotDevs/AstrBot)
-[![Version](https://img.shields.io/badge/version-0.56.2-49768b?style=flat-square)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.56.3-49768b?style=flat-square)](CHANGELOG.md)
 [![License](https://img.shields.io/badge/license-AGPL--3.0--or--later-68766b?style=flat-square)](LICENSE)
 
 [快速开始](#快速开始) · [功能](#从聊天到习惯) · [中文指南](docs/zh/README.md) · [English](docs/en/README.md) · [更新记录](CHANGELOG.md)
@@ -24,6 +24,8 @@ OvenHeart 在 AstrBot 已有的人格之上补充表达与相处习惯：理解�
 **原生 Panel 管理 · 无额外端口 · 无前端构建 · 无新增运行时依赖**
 
 插件市场分类：**AI 增强**。当前声明支持 **QQ / OneBot v11（aiocqhttp）**；其他平台尚未列入支持声明。
+
+记忆联动使用 **官方原版 LivingMemory**。回复来源适配由烤箱之心在运行时维护，无需修改对方文件或安装 `+ovenheart.1` 版本。声明支持 AstrBot 整个 4.x 系列，当前实际验证版本为 4.29.1。
 
 ## 从聊天到习惯
 

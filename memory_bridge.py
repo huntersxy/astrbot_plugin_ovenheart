@@ -3,9 +3,17 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import importlib
+import time
+from functools import partial
+from weakref import WeakKeyDictionary
 
+from astrbot.api import logger
+from astrbot.api.event import AstrMessageEvent
+from astrbot.api.platform import MessageType
 from astrbot.core.star.session_plugin_manager import SessionPluginManager
+from astrbot.core.star.star_handler import EventType, star_handlers_registry
 
 from .learning import normalize_quote
 
@@ -15,40 +23,196 @@ class MemoryBridge:
 
     def __init__(self, context):
         self.context = context
+        self._reply_sources = WeakKeyDictionary()
+        self._hooks = []
+        self._owner = None
 
-    def bind_reply_source(self, event, source, is_current) -> str:
-        """Use LivingMemory's optional same-session reply-source protocol.
+    def disconnect(self) -> None:
+        """Restore only dispatch entries still owned by this bridge."""
+        for entry, original, wrapper in self._hooks:
+            if entry.handler is wrapper:
+                entry.handler = original
+        self._hooks.clear()
+        self._owner = None
+        self._reply_sources.clear()
 
-        Args:
-            event: Native trigger carrying the admitted autonomous reply.
-            source: Verified real target event, or None to suppress wrong recall.
-            is_current: Synchronous live-admission guard used by both memory hooks.
+    def install(self) -> bool:
+        """Adapt native memory hooks in memory without changing plugin files.
 
         Returns:
-            A credential-free integration status, without making a memory call.
+            Whether both supported LivingMemory hooks are currently routed.
+        """
+        metadata = self.context.get_registered_star("astrbot_plugin_livingmemory")
+        plugin = metadata.star_cls if metadata and metadata.activated else None
+        if plugin is None:
+            self.disconnect()
+            return False
+        if (
+            self._owner is plugin
+            and all(
+                entry.enabled
+                and entry.handler is wrapper
+                and entry
+                in star_handlers_registry.get_handlers_by_event_type(
+                    entry.event_type, only_activated=False
+                )
+                for entry, _, wrapper in self._hooks
+            )
+            and len(self._hooks) == 2
+        ):
+            return True
+        self.disconnect()
+        selected = []
+        for event_type, name in (
+            (EventType.OnLLMRequestEvent, "handle_memory_recall"),
+            (EventType.OnLLMResponseEvent, "handle_memory_reflection"),
+        ):
+            matches = [
+                entry
+                for entry in star_handlers_registry.get_handlers_by_event_type(
+                    event_type, only_activated=False
+                )
+                if entry.handler_name == name
+                and (
+                    getattr(entry.handler, "__self__", None) is plugin
+                    or (
+                        isinstance(entry.handler, partial)
+                        and bool(entry.handler.args)
+                        and entry.handler.args[0] is plugin
+                    )
+                )
+            ]
+            if len(matches) != 1:
+                return False
+            selected.append(matches[0])
+        self._owner = plugin
+        for entry in selected:
+            original = entry.handler
+
+            async def routed(event, *args, _original=original, _owner=plugin, **kwargs):
+                await self._dispatch(_owner, _original, event, *args, **kwargs)
+
+            entry.handler = routed
+            self._hooks.append((entry, original, routed))
+        return True
+
+    def bind_reply_source(self, event, source, is_current) -> str:
+        """Retain a real target for the two native memory hook invocations.
+
+        Args:
+            event: Native trigger whose identity is preserved for every other plugin.
+            source: Captured same-session human target, or None to suppress memory.
+            is_current: Synchronous admission guard checked before each memory hook.
+
+        Returns:
+            Operator-readable routing state. An unsupported hook shape marks this
+            autonomous request blocked rather than silently using the wrong source.
         """
         metadata = self.context.get_registered_star("astrbot_plugin_livingmemory")
         if not metadata or not metadata.activated or metadata.star_cls is None:
             return "未启用 LivingMemory，无需绑定回复来源。"
-        handler = getattr(metadata.star_cls, "event_handler", None)
-        bind = getattr(handler, "bind_reply_source", None)
-        if not callable(bind):
-            return "当前 LivingMemory 不支持回复来源绑定，仍使用原始触发事件。请安装配套适配版。"
+        if not self.install():
+            event.set_extra("ovenheart_memory_source_blocked", True)
+            return "LivingMemory 钩子接口不兼容，已取消本轮跨消息主动回复，避免记忆来源错位。"
+        event.set_extra("ovenheart_memory_source_requested", True)
+        if len(self._reply_sources) >= 128 and event not in self._reply_sources:
+            del self._reply_sources[next(iter(self._reply_sources))]
+        self._reply_sources[event] = None
+        if (
+            not isinstance(source, AstrMessageEvent)
+            or event.get_message_type() != MessageType.GROUP_MESSAGE
+            or source.get_message_type() != MessageType.GROUP_MESSAGE
+            or source.unified_msg_origin != event.unified_msg_origin
+            or source.get_platform_name() != event.get_platform_name()
+            or source.get_self_id() != event.get_self_id()
+            or not source.get_sender_id()
+            or source.get_sender_id() == source.get_self_id()
+            or not 0 <= time.time() - source.created_at <= 600
+        ):
+            return "回复来源缺失或过期，本轮跳过 LivingMemory 召回与反思。"
+        view = copy.copy(source)
+        view.session = copy.copy(source.session)
+        view.platform_meta = copy.copy(source.platform_meta)
+        view.message_obj = copy.copy(source.message_obj)
+        if getattr(source.message_obj, "group", None) is not None:
+            view.message_obj.group = copy.copy(source.message_obj.group)
+        view.message_obj.sender = copy.copy(source.message_obj.sender)
+        view.message_obj.message = list(source.get_messages())
+        view._extras = {}
+        self._reply_sources[event] = (view, is_current, self._owner)
+        return "烤箱之心已绑定实际回复来源；兼容官方 LivingMemory，无需修改版。"
+
+    async def _dispatch(self, owner, original, event, *args, **kwargs):
+        """Route a single memory callback while retaining native hook semantics.
+
+        Args:
+            owner: LivingMemory instance owning this specific registered hook.
+            original: Original bound native hook, called exactly once when allowed.
+            event: Host trigger, unchanged for other plugins and tools.
+            *args: Native request or response arguments.
+            **kwargs: Native keyword arguments.
+        """
+        if event.get_extra("ovenheart_memory_source_requested", False) is not True:
+            # Pre-upgrade requests can outlive the retired private adapter.
+            if event.get_extra("livingmemory_reply_source_requested", False) is True:
+                return
+            await original(event, *args, **kwargs)
+            return
+        binding = self._reply_sources.get(event)
+        if binding is None or binding[2] is not owner or self._owner is not owner:
+            return
+        source, is_current, _ = binding
         try:
-            return (
-                "LivingMemory 已绑定实际回复来源。"
-                if bind(event, source, is_current)
-                else "回复来源缺失、过期或无权限，本轮跳过 LivingMemory 召回与反思。"
+            if not is_current():
+                return
+            if not await SessionPluginManager.is_plugin_enabled_for_session(
+                event.unified_msg_origin, "astrbot_plugin_livingmemory"
+            ):
+                return
+            metadata = self.context.get_registered_star("astrbot_plugin_livingmemory")
+            plugin_set = self.context.get_config(event.unified_msg_origin).get(
+                "plugin_set", ["*"]
             )
-        except Exception:
-            event.set_extra("livingmemory_reply_source_requested", True)
-            return "回复来源绑定失败，本轮跳过适配版 LivingMemory 召回与反思。"
+            if (
+                not metadata
+                or not metadata.activated
+                or metadata.star_cls is not owner
+                or (
+                    plugin_set != ["*"]
+                    and "astrbot_plugin_livingmemory" not in plugin_set
+                )
+                or self._owner is not owner
+                or not is_current()
+            ):
+                return
+            package = type(owner).__module__.rsplit(".", 1)[0]
+            policy = importlib.import_module(f"{package}.core.memory_scope")
+            if not policy.is_event_memory_allowed(
+                owner.config_manager, event
+            ) or not policy.is_event_memory_allowed(owner.config_manager, source):
+                return
+        except Exception as exc:
+            logger.warning(
+                "OvenHeart memory source validation failed (%s)", type(exc).__name__
+            )
+            return
+        # The current turn owns timestamps/checkpoints; factual source fields
+        # belong to the captured target. Each hook receives its own isolated extras.
+        view = copy.copy(source)
+        view.message_obj = copy.copy(source.message_obj)
+        view.message_obj.timestamp = event.message_obj.timestamp
+        view.created_at = event.created_at
+        view._extras = {}
+        checkpoint = event.get_extra("llm_checkpoint_id")
+        if isinstance(checkpoint, str) and checkpoint:
+            view.set_extra("llm_checkpoint_id", checkpoint)
+        await original(view, *args, **kwargs)
 
     def status(self) -> dict:
-        """Inspect integration readiness without initializing another plugin.
+        """Report native memory readiness and the plugin-owned runtime adapter.
 
         Returns:
-            Availability and an operator-facing explanation.
+            Credential-free engine and request-source routing capabilities.
         """
         metadata = self.context.get_registered_star("astrbot_plugin_livingmemory")
         if not metadata or not metadata.activated or metadata.star_cls is None:
@@ -64,22 +228,16 @@ class MemoryBridge:
             return {
                 "available": False,
                 "reply_source_binding": False,
-                "message": "LivingMemory 接口与当前适配版本不兼容。",
+                "message": "LivingMemory 引擎接口不兼容。",
             }
-        binding = callable(
-            getattr(
-                getattr(metadata.star_cls, "event_handler", None),
-                "bind_reply_source",
-                None,
-            )
-        )
+        binding = self.install()
         return {
             "available": bool(ready),
             "reply_source_binding": bool(ready and binding),
             "message": (
-                "已连接 LivingMemory，支持实际回复来源绑定。"
+                "已连接 LivingMemory；回复来源适配由烤箱之心维护，无需修改版。"
                 if binding
-                else "已连接 LivingMemory；未安装回复来源适配，自主回复仍按触发消息处理记忆。"
+                else "LivingMemory 钩子接口不兼容，跨消息主动回复将停止，避免记忆来源错位。"
             )
             if ready
             else "LivingMemory 尚未初始化完成。",

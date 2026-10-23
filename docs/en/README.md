@@ -8,7 +8,7 @@ Personality, expression and conversational behavior learning for AstrBot. OvenHe
 
 Market category: **AI tools**. Display name: **OvenHeart**. The declared platform is **QQ / OneBot v11 (`aiocqhttp`)**; other platforms are not currently listed as supported.
 
-Use AstrBot `>=4.29.1,<5` with a working chat provider. Install through the WebUI plugin manager using:
+The declared range allows all AstrBot 4.x releases (`>=4.0.0,<5`). Version 4.29.1 is currently verified; restrictions will be refined only for confirmed incompatibilities. Use a working chat provider. Install through the WebUI plugin manager using:
 
 ```text
 https://github.com/huntersxy/astrbot_plugin_ovenheart
@@ -114,7 +114,9 @@ This allows append-only growth until capacity-based compression is required, not
 
 LivingMemory is optional. Learning and planning can retrieve background within their budgets; final replies retain the memory plugin's native recall path. Missing or unavailable memory does not prevent independent habit learning. Retrieval may update access metadata or trigger the memory plugin's existing migrations.
 
-Binding an autonomous reply to its actual source user requires a compatible LivingMemory interface. The workshop reports engine connectivity and source-binding availability separately. This repository does not distribute a modified LivingMemory build, so do not assume an unpublished paired version is publicly available.
+Use an official, unmodified LivingMemory installation. OvenHeart owns an in-memory adapter around its two native recall/reflection dispatch entries. Verified cross-message autonomous targets receive isolated source snapshots; ordinary requests, host event identity, tools and passive group capture retain their native path. No LivingMemory files, versions, class methods or database schemas are patched. Plugin reload reattaches the adapter; disabling OvenHeart restores the original entries. The workshop reports engine and source-routing availability separately.
+
+This adapter has a compatibility boundary: invalid or no-longer-permitted sources skip this turn's memory hooks. If both native hooks cannot be identified, the cross-message autonomous reply is cancelled with a diagnostic rather than assigning memory to the wrong member. A `+ovenheart.1` custom build is not required, and no upstream submission is made.
 
 The prompts tab edits learning, review, selection, planning and reply templates with reset-to-default support. Templates change wording; evidence, access and tool restrictions remain enforced in code. Upgrades preserve custom templates.
 

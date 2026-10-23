@@ -2,7 +2,6 @@
 
 import asyncio
 import time
-from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
@@ -74,6 +73,7 @@ async def test_capture_planning_and_send_context_share_one_idless_identity(parti
 
 async def test_idless_earlier_target_keeps_a_real_memory_anchor_with_learning_off(
     participant,
+    monkeypatch,
 ):
     participant.settings.update(
         learning_enabled=False, participation_mode="observe", participation_cooldown=0
@@ -86,11 +86,7 @@ async def test_idless_earlier_target_keeps_a_real_memory_anchor_with_learning_of
     participant.settings["participation_mode"] = "auto"
     participant.context.llm_generate.return_value = decision(target_sequence=1)
     bind = Mock(return_value=True)
-    metadata = SimpleNamespace(
-        activated=True,
-        star_cls=SimpleNamespace(event_handler=SimpleNamespace(bind_reply_source=bind)),
-    )
-    participant.context.get_registered_star = lambda name: metadata
+    monkeypatch.setattr(participant.memory, "bind_reply_source", bind)
     request = (await requests(participant, newest))[0]
     assert request.prompt == older.get_message_str()
     bind.assert_called_once()

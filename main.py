@@ -549,12 +549,36 @@ class PersonaPlugin(Star):
         await self.store.call("prune", self.settings["retention_days"])
         self.page_api = PageAPI(self)
         self.page_api.register()
+        self.memory.install()
         self.ready = True
         _active = weakref.ref(self)
         self.worker = self.track(self.poll())
         if not self.settings["session_isolation"]:
             self.track(self.prewarm_embeddings(SHARED_SCOPE))
         logger.info("Persona learning plugin initialized")
+
+    @filter.on_plugin_loaded()
+    async def refresh_memory_adapter(self, metadata):
+        """Reattach native memory hooks after either plugin finishes loading.
+
+        Args:
+            metadata: Host metadata for the newly loaded plugin.
+        """
+        if not self.closing and metadata.name in (
+            PLUGIN_NAME,
+            "astrbot_plugin_livingmemory",
+        ):
+            self.memory.install()
+
+    @filter.on_plugin_unloaded()
+    async def release_memory_adapter(self, metadata):
+        """Release obsolete memory instances before an upstream reload.
+
+        Args:
+            metadata: Host metadata for the unloaded plugin.
+        """
+        if metadata.name == "astrbot_plugin_livingmemory":
+            self.memory.disconnect()
 
     async def update_settings(self, payload, expected_revision=None):
         """Save Panel settings to the host and publish one consistent runtime state.
@@ -1058,6 +1082,18 @@ class PersonaPlugin(Star):
                         ),
                     ),
                 )
+            if event.get_extra("ovenheart_memory_source_blocked", False):
+                # Keep call_llm set to prevent a native default-reply fallback.
+                await self.store.call(
+                    "cancel_decision",
+                    plan["scope"],
+                    plan["id"],
+                    "LivingMemory 钩子接口不兼容，取消跨消息主动回复以避免记忆来源错位。",
+                )
+                logger.warning(
+                    "OvenHeart cancelled a reply because memory source routing is unavailable"
+                )
+                return
             # Keep the full original input when answering the triggering message;
             # older targets are available only as the planner's bounded text.
             prompt = (
@@ -3547,6 +3583,7 @@ class PersonaPlugin(Star):
         """Cancel plugin work and remove handlers that reference this instance."""
         global _active
         self.closing = True
+        self.memory.disconnect()
         self.participation.close()
         self.ready = False
         async with self.settings_lock:
