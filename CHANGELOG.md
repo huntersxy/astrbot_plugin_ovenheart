@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.54.0
+
+- Add speaker-local nearby-message groups to existing language features, distinguishing short individual messages from an idea distributed across multiple messages. Group only eligible batch observations within 30 seconds of each group's first persisted capture time; never join text, authors or evidence identities.
+- Show at most three recent complete groups of two to eight observations per eligible speaker, with original evidence IDs, capture-time span and captured character total. Count omitted groups explicitly, including oversized groups; retain the original batch and existing four-sample feature threshold.
+- Explain to learning and review that proximity does not prove uninterrupted turns, a shared topic or typing duration, and cannot prescribe fixed segmentation or tool use. Supply the same policy in structured input for retained custom templates. Vocabulary extraction keeps its feature input empty.
+- Keep model-stage count, evidence validation, activation/manual decisions, database schema and final-reply prompts/cache prefixes unchanged. Learning inputs grow by bounded summaries and instructions. Pass four focused native-SDK cases for speaker/permission/quote boundaries, custom-template review, independent evidence counts, whole-group limits, non-chaining timing and unchanged vocabulary input. Real learned rhythm and QQ naturalness remain under production observation.
+
 ## 0.53.1
 
 - Show actual reply-source binding capability in LivingMemory status. A loaded memory engine alone no longer hides a missing autonomous-target adapter; ordinary native replies retain their existing memory path.

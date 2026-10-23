@@ -32,6 +32,7 @@ from astrbot.core.star.session_plugin_manager import SessionPluginManager
 from . import prompts
 from .learning import (
     LEARNING_DELIVERY_RULE,
+    LEARNING_RHYTHM_RULE,
     LearningFormatError,
     build_guidance_parts,
     habit_text,
@@ -2498,6 +2499,7 @@ class PersonaPlugin(Star):
             "observations": [m for m in base["observations"] if m["id"] in cited],
             "conversation_context": context,
             "delivery_policy": LEARNING_DELIVERY_RULE,
+            "language_feature_policy": LEARNING_RHYTHM_RULE,
             "memory_context": memories,
             "candidates": candidates,
         }
@@ -2788,6 +2790,15 @@ class PersonaPlugin(Star):
                 if len(samples) < 4:
                     continue
                 lengths = [len(m["text"]) for m in samples]
+                # These are selected-source proximity groups, not claims of
+                # uninterrupted group turns or a shared topic. Keep whole groups.
+                nearby = []
+                for sample in sorted(samples, key=lambda m: (m["created"], m["id"])):
+                    if not nearby or sample["created"] - nearby[-1][0]["created"] > 30:
+                        nearby.append([])
+                    nearby[-1].append(sample)
+                nearby = [group for group in nearby if len(group) > 1]
+                shown_groups = [group for group in nearby if len(group) <= 8][-3:]
                 endings, unmarked, omitted = {}, [], []
                 for sample in samples:
                     marks = re.search(
@@ -2818,6 +2829,18 @@ class PersonaPlugin(Star):
                         "question_messages": sum(
                             "?" in m["text"] or "？" in m["text"] for m in samples
                         ),
+                        "nearby_window_seconds": 30,
+                        "nearby_groups": [
+                            {
+                                "evidence_ids": [m["id"] for m in group],
+                                "span_seconds": round(
+                                    group[-1]["created"] - group[0]["created"], 3
+                                ),
+                                "captured_chars": sum(len(m["text"]) for m in group),
+                            }
+                            for group in shown_groups
+                        ],
+                        "nearby_groups_omitted": len(nearby) - len(shown_groups),
                         "terminal_punctuation": [
                             {"marks": marks, "messages": len(ids), "evidence_ids": ids}
                             for marks, ids in sorted_endings[:6]
@@ -2934,6 +2957,7 @@ class PersonaPlugin(Star):
                     "observations": observations,
                     "memory_context": memories,
                     "language_features": language_features,
+                    "language_feature_policy": LEARNING_RHYTHM_RULE,
                     "conversation_context": conversation_context,
                 },
                 ensure_ascii=False,
@@ -2994,6 +3018,7 @@ class PersonaPlugin(Star):
                 }
                 if word_pass:
                     payload["language_features"] = []
+                    payload["language_feature_policy"] = ""
                     payload["task"] += (
                         "\n本阶段只提取群内词汇 jargon，不提取完整句式或普通比喻。优先分析原文中明确解释含义并重复使用的会话约定词；即使不是通用词，也应按真实证据记录本群释义。不能因为词不常见就猜成错别字，也不能用熟悉的普通词替代它。已知普通词没有本地特殊含义时不必收录。"
                     )

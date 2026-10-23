@@ -87,7 +87,7 @@ SPECS = {
             "context": "邻近发言、引用原文与 self=true 的机器人发言，仅辅助理解",
             "known_traits": "已存习惯及表达片段，仅作合并对照，不是本批证据",
             "known_trait_stats": "已有习惯的动态批次计数与细化阶段，按 ID 关联",
-            "language_features": "按对象统计的句长、分段、提问及带原消息 ID 的句尾标点特征",
+            "language_features": "按对象统计的句长、分段、提问、句尾标点及30秒内近时发言组；原消息 ID 可核对，分组不证明同一话题",
             "enabled_kinds": "本次启用的学习类别",
             "min_evidence": "每条习惯所需的最少证据消息数",
         },

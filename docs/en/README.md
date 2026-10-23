@@ -713,6 +713,31 @@ Chat selection and final generation still run normally. This local result cache
 does not establish chat-provider prefix/KV hits or production billing/latency
 improvements; focused checks used simulated providers only.
 
+## Nearby-message rhythm references (0.54)
+
+Existing per-speaker language features now include `nearby_groups`. Sort eligible
+batch observations by persisted capture time, keeping each group within 30
+seconds of its first observation. The existing four-sample threshold still
+applies. Show at most three recent complete groups of two to eight messages,
+with original evidence IDs, capture-time span and captured character total.
+`nearby_groups_omitted` counts both oversized and undisplayed groups. Original
+observations remain independent; no text or evidence identity is merged.
+
+These references help distinguish short individual messages from an explanation
+distributed across messages. Proximity alone proves neither a shared topic,
+uninterrupted group turns nor typing duration, and captured text may be truncated.
+Check actual text and context before learning a rhythm. Never impose a fixed
+reply length, segmentation or sending tool from statistics. Other speakers,
+excluded/blocked users, quotes and the bot's own turns do not become evidence.
+Vocabulary extraction retains empty language features.
+
+Default learning/review prompts explain these boundaries; structured
+`language_feature_policy` also reaches retained custom templates. There are no
+new model stages, settings, schema fields or final-reply cache-prefix changes.
+Learning inputs do grow by bounded summaries/instructions. Existing habits and
+manual decisions are preserved; actual rhythm quality and QQ naturalness still
+need observation, rather than establishing whole-system superiority over MaiBot.
+
 ## Target-aware LivingMemory replies (0.34)
 
 Install OvenHeart 0.34 or later together with the local LivingMemory build
