@@ -713,6 +713,37 @@ Chat selection and final generation still run normally. This local result cache
 does not establish chat-provider prefix/KV hits or production billing/latency
 improvements; focused checks used simulated providers only.
 
+## Learning recovery and extraction drafts (0.55)
+
+Persist native-scope attempt times and consecutive failure streaks so reloads
+preserve automatic cadence/backoff. First upgrade recovers historical attempts
+and streaks, excluding known unload/restart interruptions. Later updates share
+run transactions. Success resets the streak; interruption preserves it. The
+existing exponential delay caps at an hour without shortening a configured
+interval already longer than that. Manual learning still bypasses automatic timing.
+
+Keep at most one validated, unreviewed extraction draft per native source scope,
+for one hour and at most 250,000 serialized characters. Exact-input retries can
+skip extraction and use the existing fresh 180-second attempt budget for review.
+Saving/reading a draft neither consumes sources nor activates habits. Review,
+permissions, source checks and atomic commit remain mandatory. Success, expiry
+pruning and material clearing remove drafts; optional-cache faults fall back to
+normal extraction.
+
+Fingerprint running source bytes, provider class/model/configuration, plugin
+settings, templates, identity, known habits, source records/provenance, context
+and memory. Provider configuration is hashed rather than retained. Changed
+inputs, unavailable provider configuration or expired drafts do not reuse old
+extraction. This reduces repeated calls without establishing provider KV hits,
+latency/price guarantees or a repair for an unhealthy model service.
+
+Safe failure logs identify phase, elapsed time and extraction reuse. Review
+timeouts disclose extraction duration and the budget left when review began;
+existing history messages disclose successful draft reuse. Run audit metadata
+uses `extraction_cache`, `timing` and `failure`; it stores no model credentials or
+configuration text. Full request content remains controlled by Debug. Slow
+generation can still time out without committing or consuming sources.
+
 ## Nearby-message rhythm references (0.54)
 
 Existing per-speaker language features now include `nearby_groups`. Sort eligible

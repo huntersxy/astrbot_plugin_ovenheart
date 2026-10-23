@@ -66,6 +66,9 @@ class Store:
         Args:
             db: Open database connection.
             legacy_path: Old plugin database, copied only into an empty database.
+
+        Returns:
+            Persisted attempt times and failure streaks keyed by native scope.
         """
         if (
             legacy_path is not None
@@ -148,6 +151,11 @@ class Store:
             );
             CREATE INDEX IF NOT EXISTS learning_sender_updated ON learning_sender_state(updated);
             CREATE INDEX IF NOT EXISTS learning_sender_order ON learning_sender_state(scope,last_order);
+            CREATE TABLE IF NOT EXISTS learning_runtime (
+                scope TEXT PRIMARY KEY, attempted REAL NOT NULL DEFAULT 0,
+                failures INTEGER NOT NULL DEFAULT 0, draft_key TEXT NOT NULL DEFAULT '',
+                draft TEXT NOT NULL DEFAULT '[]', draft_created REAL NOT NULL DEFAULT 0
+            );
             CREATE TABLE IF NOT EXISTS prompts (
                 key TEXT PRIMARY KEY, body TEXT NOT NULL, updated REAL NOT NULL
             );
@@ -256,10 +264,47 @@ class Store:
                 "UPDATE trait_aliases SET scope=? WHERE trait_id=?",
                 (origin, row["id"]),
             )
+        existing = {row[0] for row in db.execute("SELECT scope FROM learning_runtime")}
+        recovered, succeeded = {}, set()
+        for row in db.execute(
+            "SELECT scope,status,started,message FROM runs ORDER BY id DESC"
+        ):
+            scope = row["scope"]
+            if scope in existing:
+                continue
+            entry = recovered.setdefault(scope, {"attempted": 0, "failures": 0})
+            entry["attempted"] = max(entry["attempted"], row["started"])
+            if row["status"] == "success":
+                succeeded.add(scope)
+            elif (
+                scope not in succeeded
+                and row["status"] == "error"
+                and row["message"]
+                not in (
+                    # These exact historical cancellation markers never incremented
+                    # the scheduler streak. Do not infer failure from an interruption.
+                    "插件卸载中断了学习，素材已保留。",
+                    "插件重启中断了学习，素材已保留，可重新学习。",
+                )
+            ):
+                entry["failures"] += 1
+        db.executemany(
+            "INSERT OR IGNORE INTO learning_runtime(scope,attempted,failures) VALUES (?,?,?)",
+            [
+                (scope, row["attempted"], row["failures"])
+                for scope, row in recovered.items()
+            ],
+        )
         db.execute(
             "UPDATE runs SET status='error', finished=?, message=? WHERE status='running'",
             (time.time(), "插件重启中断了学习，素材已保留，可重新学习。"),
         )
+        return {
+            row["scope"]: {"attempted": row["attempted"], "failures": row["failures"]}
+            for row in db.execute(
+                "SELECT scope,attempted,failures FROM learning_runtime"
+            )
+        }
 
     def settings(self, db, patch=None):
         """Read or patch runtime settings.
@@ -354,6 +399,10 @@ class Store:
         db.execute(
             "DELETE FROM turn_traces WHERE created < ?",
             (time.time() - retention_days * 86400,),
+        )
+        db.execute(
+            "UPDATE learning_runtime SET draft_key='',draft='[]',draft_created=0 WHERE draft_created>0 AND draft_created<?",
+            (time.time() - 3600,),
         )
 
     def capture(
@@ -925,10 +974,48 @@ class Store:
         Returns:
             New run identifier.
         """
+        now = time.time()
+        db.execute(
+            "INSERT INTO learning_runtime(scope,attempted) VALUES (?,?) ON CONFLICT(scope) DO UPDATE SET attempted=excluded.attempted",
+            (scope, now),
+        )
         return db.execute(
             "INSERT INTO runs(scope, status, started) VALUES (?, 'running', ?)",
-            (scope, time.time()),
+            (scope, now),
         ).lastrowid
+
+    def learning_draft(self, db, scope, fingerprint, traits=None):
+        """Read or replace a short-lived validated, unreviewed extraction draft.
+
+        Args:
+            db: Open database connection.
+            scope: Native source scope, never the shared habit pool.
+            fingerprint: Opaque digest of exact inputs, code and provider settings.
+            traits: Validated extraction candidates to save, or None to read.
+
+        Returns:
+            Cached traits on a matching read, None on a miss, or whether a write
+            fit the bounded cache. A draft never consumes sources or activates habits.
+        """
+        now = time.time()
+        if traits is not None:
+            value = json.dumps(traits, ensure_ascii=False)
+            if len(value) > 250000:
+                return False
+            cursor = db.execute(
+                "UPDATE learning_runtime SET draft_key=?,draft=?,draft_created=? WHERE scope=?",
+                (fingerprint, value, now, scope),
+            )
+            return cursor.rowcount == 1
+        row = db.execute(
+            "SELECT draft,draft_created FROM learning_runtime WHERE scope=? AND draft_key=?",
+            (scope, fingerprint),
+        ).fetchone()
+        return (
+            json.loads(row["draft"])
+            if row and 0 <= now - row["draft_created"] <= 3600
+            else None
+        )
 
     def finish_run(
         self,
@@ -963,7 +1050,8 @@ class Store:
             error: Actionable failure description, if any.
             expected_profile: Identity anchor at the start of generation.
             expected_targets: Learning targets at the start of generation.
-            review: Server-assembled semantic review audit, without provider secrets.
+            review: Server-assembled semantic review audit and safe failure timing.
+                A retry_backoff failure marker persists the scheduler streak.
             expected_review_enabled: Review switch captured before generation.
             expected_blocked: Blacklist captured before generation.
             shared: Share non-jargon learning while keeping jargon and sources local.
@@ -1329,6 +1417,16 @@ class Store:
                         )
                     ],
                 )
+        if not error:
+            db.execute(
+                "UPDATE learning_runtime SET failures=0,draft_key='',draft='[]',draft_created=0 WHERE scope=?",
+                (scope,),
+            )
+        elif (review or {}).get("failure", {}).get("retry_backoff") is True:
+            db.execute(
+                "UPDATE learning_runtime SET failures=failures+1 WHERE scope=?",
+                (scope,),
+            )
         db.execute(
             "UPDATE runs SET status=?, finished=?, count=?, message=?, memory=?, review=? WHERE id=?",
             (
@@ -1336,7 +1434,14 @@ class Store:
                 now,
                 added,
                 error
-                or f"分析 {len(messages)} 条素材，新增 {added} 条，补充证据 {len(reinforced)} 条。",
+                or (
+                    f"分析 {len(messages)} 条素材，新增 {added} 条，补充证据 {len(reinforced)} 条。"
+                    + (
+                        "已复用提取草稿。"
+                        if (review or {}).get("extraction_cache", {}).get("hit")
+                        else ""
+                    )
+                ),
                 memory,
                 json.dumps(review or {}, ensure_ascii=False),
                 run_id,
@@ -1597,6 +1702,10 @@ class Store:
         elif action == "clear_messages":
             db.execute("DELETE FROM messages WHERE scope=?", (scope,))
             db.execute("DELETE FROM learning_sender_state WHERE scope=?", (scope,))
+            db.execute(
+                "UPDATE learning_runtime SET draft_key='',draft='[]',draft_created=0 WHERE scope=?",
+                (scope,),
+            )
         else:
             raise ValueError("不支持的操作。")
         db.execute(

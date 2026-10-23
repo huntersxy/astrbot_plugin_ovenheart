@@ -11,6 +11,7 @@ import time
 import weakref
 from collections import deque
 from collections.abc import Callable
+from pathlib import Path
 from uuid import uuid4
 
 from astrbot.api import logger
@@ -351,6 +352,12 @@ class PersonaPlugin(Star):
         self.last_attempt: dict[str, float] = {}
         # Consecutive failed attempts per scope, used to back off the scheduler.
         self.failures: dict[str, int] = {}
+        self.learning_code_digest = hashlib.sha256(
+            b"".join(
+                path.name.encode() + b"\0" + path.read_bytes()
+                for path in sorted(Path(__file__).parent.glob("*.py"))
+            )
+        ).hexdigest()
         self.ready = False
         self.closing = False
         self.worker = None
@@ -362,14 +369,56 @@ class PersonaPlugin(Star):
             scope: Session/persona key that failed before.
 
         Returns:
-            The normal interval, or an exponential backoff capped at one hour
-            so a deterministic failure cannot repeat every few minutes forever.
+            The normal interval, or exponential backoff up to one hour. A
+            longer configured interval is never shortened by a failure.
         """
         failures = self.failures.get(scope, 0)
         interval = self.settings["interval_seconds"]
         if not failures:
             return interval
-        return min(interval * 2 ** min(failures - 1, 4), 3600)
+        return max(interval, min(interval * 2 ** min(failures - 1, 4), 3600))
+
+    def learning_cache_key(self, scope, provider_id, settings, base, batch):
+        """Fingerprint exact extraction inputs without retaining provider secrets.
+
+        Args:
+            scope: Native source scope.
+            provider_id: Current learning provider identifier.
+            settings: Settings snapshot used for this attempt.
+            base: Complete original learning input including context and memory.
+            batch: Exact selected source records and provenance.
+
+        Returns:
+            An opaque digest, or None when optional caching is unavailable.
+        """
+        if not settings["learning_review_enabled"] or self.settings != settings:
+            return None
+        try:
+            provider = self.context.get_provider_by_id(provider_id)
+            if provider is None:
+                return None
+            return hashlib.sha256(
+                json.dumps(
+                    [
+                        self.learning_code_digest,
+                        scope,
+                        settings,
+                        self.prompts,
+                        provider_id,
+                        type(provider).__module__ + "." + type(provider).__qualname__,
+                        provider.get_model(),
+                        provider.provider_config,
+                        base,
+                        batch,
+                    ],
+                    sort_keys=True,
+                    ensure_ascii=False,
+                    allow_nan=False,
+                ).encode()
+            ).hexdigest()
+        except Exception:
+            # Optional caching cannot make an otherwise usable provider fail.
+            return None
 
     def template(self, key: str, **variables) -> str:
         """Render one effective prompt template for this call.
@@ -473,12 +522,16 @@ class PersonaPlugin(Star):
             raise ValueError(
                 "请先停用旧版 astrbot_plugin_persona，再启用烤箱之心，避免重复学习与回复。"
             )
-        await self.store.call(
+        schedule = await self.store.call(
             "initialize",
             self.store.path.parent.parent
             / "astrbot_plugin_persona"
             / "persona.sqlite3",
         )
+        self.last_attempt = {scope: row["attempted"] for scope, row in schedule.items()}
+        self.failures = {
+            scope: row["failures"] for scope, row in schedule.items() if row["failures"]
+        }
         self.settings = await self.store.call(
             "sync_config", self.config, DEFAULTS | self.host_settings, True
         )
@@ -2599,6 +2652,10 @@ class PersonaPlugin(Star):
         memory_status = ""
         review = {}
         batch = []
+        phase = "preparation"
+        started = phase_started = time.monotonic()
+        extraction_seconds = review_budget = 0.0
+        draft_hit = draft_saved = False
         try:
             settings = self.settings.copy()
             prompts_revision = self.prompts_revision
@@ -3027,24 +3084,71 @@ class PersonaPlugin(Star):
                         "\n本阶段只学习人格、表达与对话行为，不提取词汇；群内词汇将由另一个阶段独立分析。"
                     )
                 pass_inputs.append((payload, pass_settings, pass_known))
-            pass_tasks = [
-                asyncio.create_task(
-                    self._learn_pass(
-                        payload, batch, pass_settings, pass_known, provider_id, deadline
+            phase, phase_started = "extraction", time.monotonic()
+            cache_key = self.learning_cache_key(
+                scope, provider_id, settings, base, batch
+            )
+            traits = None
+            if cache_key:
+                try:
+                    traits = await self.store.call("learning_draft", scope, cache_key)
+                except Exception as exc:
+                    self.debug("learning_draft_unavailable", error=type(exc).__name__)
+                if cache_key != self.learning_cache_key(
+                    scope, provider_id, settings, base, batch
+                ):
+                    traits = None
+            draft_hit = traits is not None
+            if not draft_hit:
+                pass_tasks = [
+                    asyncio.create_task(
+                        self._learn_pass(
+                            payload,
+                            batch,
+                            pass_settings,
+                            pass_known,
+                            provider_id,
+                            deadline,
+                        )
                     )
-                )
-                for payload, pass_settings, pass_known in pass_inputs
-            ]
-            try:
-                results = await asyncio.gather(*pass_tasks)
-            finally:
-                # A failed phase must not leave its peer using the provider in the background.
-                for task in pass_tasks:
-                    if not task.done():
-                        task.cancel()
-                await asyncio.gather(*pass_tasks, return_exceptions=True)
-            # Preserve pass order even when vocabulary finishes before style learning.
-            traits = [trait for result in results for trait in result]
+                    for payload, pass_settings, pass_known in pass_inputs
+                ]
+                try:
+                    results = await asyncio.gather(*pass_tasks)
+                finally:
+                    # A failed phase must not leave its peer using the provider.
+                    for task in pass_tasks:
+                        if not task.done():
+                            task.cancel()
+                    await asyncio.gather(*pass_tasks, return_exceptions=True)
+                # Keep pass order when vocabulary finishes before style learning.
+                traits = [trait for result in results for trait in result]
+                if (
+                    traits
+                    and cache_key
+                    and cache_key
+                    == self.learning_cache_key(
+                        scope, provider_id, settings, base, batch
+                    )
+                ):
+                    try:
+                        draft_saved = await self.store.call(
+                            "learning_draft", scope, cache_key, traits
+                        )
+                    except Exception as exc:
+                        self.debug(
+                            "learning_draft_unavailable", error=type(exc).__name__
+                        )
+            else:
+                draft_saved = True
+            extraction_seconds = time.monotonic() - phase_started
+            self.debug(
+                "learning_extraction",
+                scope=scope,
+                cache_hit=draft_hit,
+                draft_saved=draft_saved,
+                elapsed_seconds=round(extraction_seconds, 3),
+            )
             if self.prompts_revision != prompts_revision:
                 raise ValueError("提示词在学习期间已修改，旧结果未保存，素材保留。")
             if (
@@ -3057,6 +3161,8 @@ class PersonaPlugin(Star):
             if not self.settings["enabled"] or not self.settings["learning_enabled"]:
                 raise ValueError("学习过程中已暂停，结果未保存、素材已保留。")
             if settings["learning_review_enabled"] and traits:
+                phase, phase_started = "review", time.monotonic()
+                review_budget = max(0, deadline - phase_started)
                 traits, review = await self._review_learning(
                     traits, base, provider_id, deadline
                 )
@@ -3067,6 +3173,15 @@ class PersonaPlugin(Star):
                     "flagged": 0,
                     "candidates": [],
                 }
+            review["extraction_cache"] = {"hit": draft_hit}
+            review["timing"] = {
+                "extraction_seconds": round(extraction_seconds, 3),
+                "review_budget_seconds": round(review_budget, 3),
+                "review_seconds": round(time.monotonic() - phase_started, 3)
+                if phase == "review"
+                else 0,
+            }
+            phase, phase_started = "commit", time.monotonic()
             if (
                 self.settings["learning_review_enabled"]
                 != settings["learning_review_enabled"]
@@ -3149,7 +3264,8 @@ class PersonaPlugin(Star):
             return {
                 "status": "success",
                 "count": count,
-                "message": f"学习完成，新增 {count} 条结果。",
+                "message": f"学习完成，新增 {count} 条结果。"
+                + ("已复用提取草稿。" if draft_hit else ""),
             }
         except asyncio.CancelledError:
             self.debug("learning_cancelled", scope=scope, run_id=run_id)
@@ -3172,7 +3288,25 @@ class PersonaPlugin(Star):
                 message = f"学习模型请求超时（{LEARNING_TIMEOUT_SECONDS} 秒），素材已保留；请检查模型连接后重试。"
             else:
                 message = "学习模型调用失败，素材已保留；请检查 AstrBot 模型配置、余额与网络连接。"
-            logger.warning("Persona learning failed (%s)", type(exc).__name__)
+            if phase == "review" and (
+                isinstance(exc, asyncio.TimeoutError)
+                or isinstance(exc.__context__, asyncio.TimeoutError)
+            ):
+                message += (
+                    f" 提取用时 {extraction_seconds:.1f} 秒，进入自检时剩余预算 {review_budget:.1f} 秒。"
+                    + (
+                        "已保留短时提取草稿，相同输入重试可直接自检。"
+                        if draft_saved
+                        else ""
+                    )
+                )
+            logger.warning(
+                "Persona learning failed (%s, phase=%s, elapsed=%.1fs, extraction_cached=%s)",
+                type(exc).__name__,
+                phase,
+                time.monotonic() - started,
+                draft_hit,
+            )
             self.debug(
                 "learning_failed",
                 scope=scope,
@@ -3194,6 +3328,20 @@ class PersonaPlugin(Star):
                     self.settings,
                     memory_status,
                     message,
+                    None,
+                    None,
+                    review
+                    | {
+                        "extraction_cache": {"hit": draft_hit, "saved": draft_saved},
+                        "failure": {
+                            "phase": phase,
+                            "elapsed_seconds": round(time.monotonic() - started, 3),
+                            "phase_seconds": round(time.monotonic() - phase_started, 3),
+                            "extraction_seconds": round(extraction_seconds, 3),
+                            "review_budget_seconds": round(review_budget, 3),
+                            "retry_backoff": True,
+                        },
+                    },
                 )
             return {"status": "error", "message": message}
         finally:

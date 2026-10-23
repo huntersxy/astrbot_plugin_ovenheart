@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.55.0
+
+- Persist per-native-scope learning attempt times and consecutive failure streaks in `learning_runtime`. Reloads retain automatic cadence and backoff; first upgrade recovers attempts/streaks from existing runs, excluding the two historical interruption markers. Start/finish updates share their run transactions; success resets the streak and interruptions do not add failures. Never shorten a configured interval longer than the one-hour exponential-backoff cap.
+- Retain at most one validated, unreviewed extraction draft per native scope for one hour, capped at 250,000 serialized characters. An exact fingerprint includes running source bytes, provider class/model/configuration, settings, templates, source records, identity, known habits, context and memory. Provider configuration survives only as a digest. Unresolvable providers disable this optional cache.
+- An identical retry can skip extraction and spend its existing fresh attempt budget on self-check. Review, permissions, source validation and atomic commit remain mandatory; no source is consumed and no habit becomes active merely by saving or reading a draft. Successful commit, expiry pruning and material clearing remove drafts. Cache read/write failures fall back to normal learning.
+- Add safe phase/elapsed/cache diagnostics to failure logs and run audit data, with extraction duration and remaining self-check budget on review timeouts. Existing history messages disclose successful draft reuse. Final-reply prompts and cache prefixes are unchanged; reuse reduces repeated extraction calls but does not establish provider KV hits or repair a slow upstream service.
+- Pass focused native-SDK/SQLite recovery and existing concurrency checks for real shared-budget timeouts, reload/resume, independent source consumption, model/configuration/input invalidation, secret exclusion, legacy migration, expiry, clearing, failure streaks, optional-cache faults and atomic parallel extraction. Production generation latency and resumed real-batch quality still require observation.
+
 ## 0.54.1
 
 - Keep native send-stage cooldown timestamps separate from autonomous reservations. Active admitted decision rows now reserve cooldown and rolling quota atomically; a cancelled unsent decision no longer leaves a synthetic full reply cooldown behind. Actual native send observations still postpone participation.
