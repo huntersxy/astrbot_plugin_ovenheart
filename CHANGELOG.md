@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.48.0
+
+- Carry up to four same-member adjacent turns beside the actual autonomous reply target, using only the 20 messages offered to the planner. Stop each direction at another member, a self turn or more than 30 seconds from the target. Prefer nearby turns and retain chronology, original sequence/message IDs and bounded 300-character head/tail excerpts.
+- Pass trusted `reply_context` to the final temporary context and a bounded head/tail summary to habit retrieval/selection. This preserves short additions/corrections around older targets even when they leave the latest-12 reply context. Keep the original target, native prompt, reply decoration, memory-source binding and literal jargon input unchanged; adjacency is context, not a merged message, evidence or guaranteed topic relation.
+- Add an optional `reply_context` template placeholder and default guidance to consider additions/negation without replying to every fragment or changing addressee. Existing custom templates retain their text and receive the structured payload field. No model call, configuration switch, persistent source copy or database migration is added; cached delivery keeps this context temporary.
+- Pass two focused native-SDK cases and the existing style-intent path using simulated models. Confirm nearest-four selection, head/tail bounds, selector/final propagation, unchanged target/literal input, time/member boundaries, temporary delivery and call count. Actual group-chat quality remains unverified.
+
 ## 0.47.1
 
 - Validate autonomous reply targets against the same latest 20 messages actually sent to the planner, rather than the full retained 30-message window. A guessed sequence from an unseen older turn can no longer admit a reply, quote, mention or memory-source binding to that turn.

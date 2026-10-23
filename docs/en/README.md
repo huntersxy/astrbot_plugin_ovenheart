@@ -1,5 +1,34 @@
 # OvenHeart workshop guide
 
+## Same-member additions around the actual target (0.48)
+
+After autonomous admission, inspect the target's adjacent turns within the same
+20 messages actually offered to the planner. Stop each direction at another
+member, a self turn or more than 30 seconds from the target. Keep the nearest four
+in chronological order with original sequence/message IDs, member and capture
+time. Text is bounded to 300 characters, retaining head/tail when necessary.
+`reply_context` preserves these additions even outside the existing latest-12
+final context. Capture times define this context heuristic, not actual send or
+reply speed.
+
+The final temporary context may use additions, negation and corrections to
+interpret the target. Habit recall/selection receives up to 120 head/tail
+characters per addition within its existing 2,400-character query budget. Keep
+the actual target, native prompt, quote/mention and LivingMemory source binding.
+Adjacency does not prove a shared topic, merge messages or create evidence.
+Literal vocabulary input still uses only the target and explicit quote; words
+from additions are not forcibly pinned. Direct-wake replies do not infer history
+authors through this feature.
+
+No model call, switch, persistent source copy or schema is added. Cached delivery
+keeps additions in the temporary tail, excluded from native history. Custom
+participation-context templates may use `{{reply_context}}`; existing template
+text remains and the structured payload still includes the field. Debug
+`participation_reply_context` lists target/addition sequences; retrieval and full
+injection diagnostics contain the bounded text. Two native-SDK checks and the
+existing style-intent path pass with simulated models. Production understanding,
+naturalness and delivery remain unverified.
+
 ## Visible autonomous reply targets (0.47.1)
 
 The participation window retains at most 30 messages, while a planner request

@@ -555,10 +555,55 @@ class ParticipationController:
                 )
                 window["consumed"] = sequence
                 if decision["outcome"] == "admitted":
+                    offered = messages[-20:]
+                    position = offered.index(target)
+                    neighbors = []
+                    for direction in (-1, 1):
+                        for distance in range(1, 5):
+                            index = position + distance * direction
+                            if not 0 <= index < len(offered):
+                                break
+                            item = offered[index]
+                            if (
+                                item.get("self")
+                                or item["sender_id"] != target["sender_id"]
+                                or abs(item["time"] - target["time"]) > 30
+                            ):
+                                break
+                            neighbors.append((distance, index, item))
+                    # This is adjacent context, not a merged message or another
+                    # reply target. Favor nearby turns, then preserve chronology.
+                    reply_context = [
+                        {
+                            **{
+                                key: item[key]
+                                for key in (
+                                    "sequence",
+                                    "sender",
+                                    "sender_id",
+                                    "message_id",
+                                    "time",
+                                )
+                            },
+                            "text": item["text"]
+                            if len(item["text"]) <= 300
+                            else item["text"][:149] + "…" + item["text"][-150:],
+                        }
+                        for _, _, item in sorted(
+                            sorted(neighbors)[:4], key=lambda entry: entry[1]
+                        )
+                    ]
+                    plugin.debug(
+                        "participation_reply_context",
+                        scope=scope,
+                        target_sequence=target["sequence"],
+                        context_sequences=[m["sequence"] for m in reply_context],
+                    )
                     return plan | {
                         "scope": scope,
                         "id": decision["id"],
                         "messages": messages[-12:],
+                        "reply_context": reply_context,
                         "sequence": sequence,
                         "profile": state["scope"]["profile"],
                         "room_source": room["source"],
