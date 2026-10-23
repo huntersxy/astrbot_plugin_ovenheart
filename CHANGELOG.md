@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.52.1
+
+- Encourage more active default participation in AI, bot, robot and language-model discussions, including experiences, interactions, personalities, fun and technical topics, without requiring a direct mention or question. Keep existing confidence and admission settings, with no keyword router or extra model stage.
+- Preserve custom planner text; restore its default in the workshop or merge this preference to adopt the new wording.
+
 ## 0.52.0
 
 - Share frozen native direct-turn sender/message/quote context between habit selection and final generation, with bounded existing same-scope recent turns. Reuse editable participation system/user templates in temporary tail content for native @, bot quotes and name wakes; retain host prompts, history, multimodal inputs, tools, conversation and runner.

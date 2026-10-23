@@ -1,5 +1,14 @@
 # OvenHeart workshop guide
 
+## AI / bot discussion preference (0.52.1)
+
+The default planner treats AI, bot, robot and language-model discussions as
+relevant opportunities for more active participation, including experiences,
+interactions, personalities, fun and technical topics. A direct mention or
+question is not required. Existing confidence, mode and cooldown controls remain;
+no keyword wake router or model stage is added. Custom planner text is retained:
+restore its default in the workshop or merge this preference manually.
+
 ## Native mention and bot-quote integration (0.52)
 
 The plugin enhances native requests without patching AstrBot. Native @, bot
