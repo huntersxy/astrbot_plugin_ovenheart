@@ -262,6 +262,9 @@ class ObservationFilter(filter.CustomFilter):
         """
         plugin = _active() if _active else None
         if plugin and not plugin.closing and plugin.ready and len(plugin.tasks) < 64:
+            task = asyncio.current_task()
+            if task is not None:
+                event.set_extra("ovenheart_native_task", weakref.ref(task))
             plugin.track(plugin.capture(event, cfg))
         return False
 
@@ -351,6 +354,7 @@ class PersonaPlugin(Star):
         self.events: dict[str, AstrMessageEvent] = {}
         self.speaker_events: dict[tuple[str, str], AstrMessageEvent] = {}
         self.learning_context: dict[str, deque] = {}
+        self.direct_pending: dict[tuple[str, str], dict] = {}
         self.last_attempt: dict[str, float] = {}
         # Consecutive failed attempts per scope, used to back off the scheduler.
         self.failures: dict[str, int] = {}
@@ -495,6 +499,7 @@ class PersonaPlugin(Star):
             self.prompts_revision = uuid4().hex
             # Prompt edits must not leave in-flight requests on the old wording.
             self.learning_context.clear()
+            self.direct_pending.clear()
             self.participation.close()
             if cancelled:
                 raise asyncio.CancelledError
@@ -593,6 +598,7 @@ class PersonaPlugin(Star):
             self.settings_revision = uuid4().hex
             self.debug("settings_updated", fields=sorted(patch))
             self.learning_context.clear()
+            self.direct_pending.clear()
             self.participation.close()
             if cancelled:
                 raise asyncio.CancelledError
@@ -802,6 +808,22 @@ class PersonaPlugin(Star):
             return
         if self.settings["participation_mode"] != "off":
             self.participation.notice(event)
+        if (
+            event.get_message_type() == MessageType.GROUP_MESSAGE
+            and self.settings["apply_enabled"]
+            and (event.is_at_or_wake_command or event.get_extra("ovenheart_mention"))
+        ):
+            # Register before native group image captioning or other slow handlers.
+            # The observation task must retain the pipeline task's weak reference.
+            direct_scope, _, _ = await self.resolve_scope(event)
+            try:
+                cid = await self.context.conversation_manager.get_curr_conversation_id(
+                    event.unified_msg_origin
+                )
+            except Exception:
+                cid = None
+            event.set_extra("ovenheart_direct_conversation_id", cid)
+            self.register_direct_request(event, direct_scope)
         if not self.settings["learning_enabled"]:
             self.debug("capture_skipped", reason="learning_disabled")
             return
@@ -952,6 +974,8 @@ class PersonaPlugin(Star):
             if not await self.check_mention(event):
                 return
             self.participation.notice(event)
+            scope, _, _ = await self.resolve_scope(event)
+            self.register_direct_request(event, scope)
             self.debug(
                 "mention_reply",
                 name=event.get_extra("ovenheart_mention"),
@@ -1058,6 +1082,121 @@ class PersonaPlugin(Star):
             and await self.permitted(event)
         )
 
+    def register_direct_request(self, event, scope: str, req=None):
+        """Track a live native turn using metadata and weak references only.
+
+        Args:
+            event: Original direct event after permission checks.
+            scope: Effective native session/persona key, never shared learning scope.
+            req: Prepared native request when available, binding its conversation ID.
+        """
+        if event.get_extra("handlers_parsed_params"):
+            return
+        parts = event.get_messages()
+        text = (
+            "\n".join(part.text for part in parts if isinstance(part, Plain))
+            if parts
+            else event.get_message_str()
+        ).strip()
+        if not text and not any(not isinstance(part, (At, Plain)) for part in parts):
+            return
+        key = (scope, str(event.get_sender_id()))
+        previous = self.direct_pending.get(key)
+        if previous is not None and previous["created"] > event.created_at:
+            return
+        task_ref = event.get_extra("ovenheart_native_task")
+        task = (
+            asyncio.current_task()
+            if req is not None or not callable(task_ref)
+            else task_ref()
+        )
+        self.direct_pending.pop(key, None)
+        self.direct_pending[key] = {
+            "source": event_source(event),
+            "created": event.created_at,
+            "conversation_id": getattr(getattr(req, "conversation", None), "cid", None)
+            if req is not None
+            else event.get_extra("ovenheart_direct_conversation_id"),
+            "event": weakref.ref(event),
+            "task": weakref.ref(task) if task else lambda: None,
+            "revision": self.settings_revision,
+            "prompts_revision": self.prompts_revision,
+        }
+        if len(self.direct_pending) > 128:
+            self.direct_pending.pop(next(iter(self.direct_pending)))
+
+    @filter.on_llm_request(priority=100000)
+    async def coordinate_direct_request(
+        self, event: AstrMessageEvent, req: ProviderRequest
+    ):
+        """Fold an empty same-member At into its still-running native request.
+
+        Args:
+            event: Original group event; explicit quotes, media and text are new input.
+            req: Prepared native request, whose prompt, tools and media stay intact.
+        """
+        if (
+            event.get_message_type() != MessageType.GROUP_MESSAGE
+            or event.get_extra("ovenheart_decision")
+            or not event.is_at_or_wake_command
+            or not self.settings["apply_enabled"]
+            or not await self.permitted(event)
+        ):
+            return
+        scope, _, _ = await self.resolve_scope(event, req)
+        state = await self.store.call(
+            "guidance", scope, not self.settings["session_isolation"]
+        )
+        if state["scope"] and not state["scope"]["profile"]["apply_enabled"]:
+            return
+        parts = event.get_messages()
+        bare_at = bool(
+            parts
+            and any(
+                isinstance(part, At) and str(part.qq) == str(event.get_self_id())
+                for part in parts
+            )
+            and all(
+                (isinstance(part, At) and str(part.qq) == str(event.get_self_id()))
+                or (isinstance(part, Plain) and not part.text.strip())
+                for part in parts
+            )
+        )
+        key = (scope, str(event.get_sender_id()))
+        previous = self.direct_pending.get(key)
+        if bare_at and previous and previous["source"] != event_source(event):
+            original, work = previous["event"](), previous["task"]()
+            if (
+                0 <= event.created_at - previous["created"] <= 120
+                and 0 <= time.time() - previous["created"] <= 120
+                and previous["revision"] == self.settings_revision
+                and previous["prompts_revision"] == self.prompts_revision
+                and previous.get("conversation_id")
+                == getattr(getattr(req, "conversation", None), "cid", None)
+                and original is not None
+                and work is not None
+                and not work.done()
+                and not original.is_stopped()
+                and not original._has_send_oper
+                and not original.get_extra("ovenheart_direct_sent")
+                and await self.permitted(original)
+                and (await self.resolve_scope(original))[0] == scope
+                and self.direct_pending.get(key) is previous
+            ):
+                event.set_extra(
+                    "ovenheart_merged_direct",
+                    {"scope": scope, "source": previous["source"]},
+                )
+                event.stop_event()
+                logger.info(
+                    "OvenHeart merged empty At into pending direct turn (scope=%s, source=%s, pending=%s)",
+                    scope,
+                    event_source(event),
+                    previous["source"],
+                )
+                return
+        self.register_direct_request(event, scope, req)
+
     def direct_reply_context(self, event: AstrMessageEvent, scope: str) -> dict:
         """Freeze native direct-turn context shared by selection and generation.
 
@@ -1118,6 +1257,15 @@ class PersonaPlugin(Star):
             ],
             self.settings,
         )
+        host_context = self.context.get_config(event.unified_msg_origin).get(
+            "provider_ltm_settings", {}
+        )
+        host_context = bool(
+            host_context.get("group_icl_enable")
+            or host_context.get("active_reply", {}).get("enable")
+        )
+        if host_context:
+            messages = []
         context = {
             "scope": scope,
             "route": route,
@@ -1126,7 +1274,12 @@ class PersonaPlugin(Star):
             "expression_intent": {},
             "reply_context": [],
             "messages": messages,
+            "host_group_context": host_context,
         }
+        if route == "at" and not target["text"].strip() and not reply_to:
+            context["reply_goal"] += (
+                "本条只有@，结合宿主已有上下文和当前处理进度理解，不默认当作新问候；已完成的任务不要重复执行。"
+            )
         event.set_extra("ovenheart_reply_target", target)
         event.set_extra("ovenheart_direct_context", context)
         return context
@@ -1549,6 +1702,7 @@ class PersonaPlugin(Star):
                 or (state["scope"] and not state["scope"]["profile"]["apply_enabled"])
             ):
                 return
+            self.register_direct_request(event, scope, req)
             direct = self.direct_reply_context(event, scope)
             direct = direct | {
                 "messages": bound_reply_messages(direct["messages"], self.settings)
@@ -1713,7 +1867,18 @@ class PersonaPlugin(Star):
         profile = plan.get("profile", {})
         target = plan.get("target") or {}
         target_label = target.get("sender") or "群聊"
-        context_messages = bound_reply_messages(plan["messages"], self.settings)
+        host_context = host_config.get("provider_ltm_settings", {})
+        host_context = bool(
+            host_context.get("group_icl_enable")
+            or host_context.get("active_reply", {}).get("enable")
+        )
+        context_messages = (
+            []
+            if host_context
+            else bound_reply_messages(plan["messages"], self.settings)
+        )
+        reply_context = [] if host_context else plan.get("reply_context", [])
+        event.set_extra("ovenheart_host_group_context", host_context)
         event.set_extra("ovenheart_context_messages", context_messages)
         system_injection = self.template(
             "participation_system",
@@ -1739,7 +1904,7 @@ class PersonaPlugin(Star):
             target=target_label,
             messages=context_messages,
             reply_message=target,
-            reply_context=plan.get("reply_context", []),
+            reply_context=reply_context,
             expression_intent=plan.get("expression_intent", {}),
             profile=profile,
             scope=plan["scope"],
@@ -1749,7 +1914,7 @@ class PersonaPlugin(Star):
                 "reply_target": target_label,
                 "reply_message": target,
                 "delivery_policy": prompts.REPLY_ADDRESS_RULE,
-                "reply_context": plan.get("reply_context", []),
+                "reply_context": reply_context,
                 "expression_intent": plan.get("expression_intent", {}),
                 "decoration": plan.get("decoration"),
                 "messages": context_messages,
@@ -1796,7 +1961,9 @@ class PersonaPlugin(Star):
             event: Triggering real event.
             req: Mutable native provider request.
         """
-        if not await self.permitted(event):
+        if event.get_extra("ovenheart_merged_direct") or not await self.permitted(
+            event
+        ):
             return
         if not event.get_extra("ovenheart_observed", False):
             await self.capture(event)
@@ -2145,6 +2312,11 @@ class PersonaPlugin(Star):
         Args:
             event: Native message event after the send pipeline.
         """
+        event.set_extra("ovenheart_direct_sent", True)
+        key = (event.get_extra("ovenheart_reply_scope"), str(event.get_sender_id()))
+        pending = self.direct_pending.get(key)
+        if pending and pending["source"] == event_source(event):
+            self.direct_pending.pop(key, None)
         await self.record_turn_trace(event, status="send_hook")
         application = event.get_extra("ovenheart_application")
         learning_source = event.get_extra("ovenheart_learning_source")
@@ -3388,6 +3560,7 @@ class PersonaPlugin(Star):
         self.events.clear()
         self.speaker_events.clear()
         self.learning_context.clear()
+        self.direct_pending.clear()
         prefix = f"/{PLUGIN_NAME}/"
         self.context.registered_web_apis[:] = [
             api

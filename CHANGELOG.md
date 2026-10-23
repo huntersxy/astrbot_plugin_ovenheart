@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.56.2
+
+- Merge a same-member empty native At into a still-running direct request within
+  two minutes, before starting another agent turn. Keep explicit quotes, text,
+  media, other members, personas and conversation IDs independent.
+- Track only bounded live-request metadata and weak references; do not build a
+  second group transcript. Finished, stopped, expired or already-sent requests
+  cannot absorb a new wake. Settings/prompt changes clear pending markers.
+- When native group context is enabled, reuse it for direct and autonomous
+  replies rather than injecting another group transcript or neighbor excerpts.
+  Preserve native prompts, histories, media, tools, streaming and target identity.
+- Keep learned-habit guidance temporary under the existing cached delivery mode;
+  this update does not rewrite history or change cache-monitor configuration.
+
+
 ## 0.56.1
 
 - Resume interrupted autonomous work after the latest eligible input's debounce,

@@ -1263,3 +1263,18 @@ reply; stale generated answers are never sent.
 Actual replies clear continuation eligibility. Real-send cooldowns, hourly quotas,
 permissions, tool policy, persona/session isolation and native direct-wake priority
 remain enforced. A completed observation is not treated as interrupted work.
+
+### Name wakes and empty At continuation (0.56.2)
+
+An empty same-member At within two minutes is folded into a still-running,
+unsent native direct request in the same session, persona and conversation ID.
+Explicit quotes, new text or media remain independent requests. Other members,
+finished/stopped/expired turns and changed settings/templates are not merged.
+
+Only bounded request metadata and weak references are retained. No additional
+group transcript is collected. When native group context is enabled, direct and
+autonomous generation reuse it instead of injecting a second transcript or
+neighbor excerpts. Target identity, participation intent and learned guidance
+remain available. Without native group context, existing bounded injection
+settings remain applicable. Native history, system prefix, tools, media and
+streaming remain intact; cache-monitor settings are not changed.
