@@ -1,5 +1,22 @@
 # OvenHeart workshop guide
 
+## Default participation preferences (0.51.2)
+
+The default planner now considers playful jealousy when an established close
+member interacts affectionately with another AI, more active responses to genuine
+self-mentions, and suitable meme/banter participation. Relationships come from
+existing identity/context, and names from the host persona and configured bot
+aliases. No specific names or automatic name fragments are shipped. Configured
+aliases are visible to the planner even when immediate name-triggered replies are
+disabled; these preferences do not bypass mode, cooldown or admission gates.
+
+The actual confidence threshold is provided: choose reply when there is a concrete
+response direction and sufficient genuine confidence, otherwise wait for expected
+information or observe. Custom planner text remains unchanged on upgrade; restore
+its default in the workshop or merge the preferences manually. Optional template
+placeholders `{{bot_names}}` and `{{reply_threshold}}` and their structured context
+fields expose existing settings without a new model stage or configuration field.
+
 ## Current addressee and learned mention actions (0.51.1)
 
 A model may copy an old plain-text `@name` prefix into an answer to another

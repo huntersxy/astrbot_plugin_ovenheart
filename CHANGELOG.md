@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.51.2
+
+- Extend the default planner prompt with context-dependent playful jealousy toward an established close member interacting with another AI, more active participation when the bot is genuinely mentioned, and suitable meme/banter participation. Resolve relationships from existing identity/context and names from identity/configuration; hardcode no member or bot names.
+- Pass existing bot aliases and the actual reply-confidence threshold to planner templates and structured context. Explain that an executable reply requires sufficient genuine confidence; otherwise wait for expected information or observe. Preserve the existing admission threshold, native wake switches and model-call budgets.
+- Remove the speaker-type-specific rule that discourages responding to another AI's reply. Keep general actual-target selection without that blanket scenario restriction.
+- Retain custom planner text on upgrade. Restore the planner default in the workshop to adopt the new wording; add optional `bot_names` and `reply_threshold` placeholders. No new configuration or database fields.
+
 ## 0.51.1
 
 - Bind ordinary group replies to a temporary snapshot of the actual incoming sender/message, and autonomous replies to their validated target. Convert separated model-written leading address prefixes to a real mention of that target, deduplicate existing correct mentions and preserve enabled native quote decoration. Keep inline mentions, literal code/email examples and existing structured At components unchanged.
