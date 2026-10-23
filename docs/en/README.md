@@ -1,5 +1,38 @@
 # OvenHeart workshop guide
 
+## Bounded periodic document-index maintenance (0.51)
+
+Keep existing startup/write/review-triggered warm passes. The existing 15-second
+scheduler additionally visits one native scope at most once per minute, with at
+most 64 documents and the existing `min(2, retrieval_timeout)` vector-stage budget.
+Cycle through stable scope IDs using one cursor, without an unbounded scope map.
+Advance cursor/deadline before attempting, including failure/denial. Startup and
+write-triggered passes are separate; this is not a global one-pass-per-minute cap.
+
+Require enabled application, a configured embedding provider and non-lexical
+retrieval. Skip known learning/warming/vector-lock/selector/rerank/participation
+activity. Filter disabled application profiles and the session allowlist, then
+reuse current-setting and native host/session/plugin permission checks. Existing
+active habits may warm while extraction is paused. Disable application, use
+lexical mode or clear the embedding provider to stop this maintenance. The plugin
+does not track every final-generation activity in the host; this is not proof of
+global idleness.
+
+Reuse persisted content-addressed vectors; later passes advance beyond the first
+batch and fully cached passes make no document requests. Shared non-jargon and
+source-local vocabulary keep existing ownership. Add no query embeddings, chat
+calls, source consumption, exposure, schema or setting. This may move configured
+document-service usage ahead of replies. Budget, permissions, errors and scope
+count can delay coverage; on-demand indexing remains available. Do not assume
+complete coverage time, production latency or cost improvement.
+
+Two scheduler/native-SQLite cases and the existing committed-learning failure
+case pass with simulated time/providers: 130 documents progress through 64/64/2
+without duplicate document calls after completion, query/chat calls or source
+consumption. Confirm rotation, allowlist and busy-selector skips. Existing debug
+`embedding_warmup` records bounded pass results/error types/timing. Real workload
+and service usage remain unverified.
+
 ## Human-body terms before quote-only definitions (0.50.1)
 
 After nesting resolution and ordinary scoring, stably prioritize local terms

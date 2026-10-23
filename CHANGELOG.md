@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.51.0
+
+- Add bounded periodic document-index maintenance to the existing scheduler. When application/non-lexical embeddings are enabled, visit one eligible native scope at most once per minute, rotating by a single stable scope-ID cursor. Reuse existing one-batch/64-document warming and its two-second vector-stage budget, source permissions, current profile and persisted content-addressed vectors.
+- Skip known learning, warming, vector-lock, selector, rerank or participation activity. Filter application-disabled profiles and the session allowlist before rotation; recheck native host/session/plugin access in the warm pass. Advance cursor/deadline before attempting, so failure/denial cannot spin. Existing write/startup warm triggers remain separate and may add passes.
+- Keep maintenance independent of the learning switch: existing active habits can prepare while extraction is paused. Fully cached passes make no document calls; no query embeddings, chat generations, source consumption, exposure or new database/configuration fields are introduced. Warming can advance configured document-service usage before a reply; foreground indexing remains available.
+- Pass two focused scheduler/native-SQLite cases and the existing committed-learning warm-failure case using simulated time/providers. Confirm 130 documents progress through 64/64/2, completed-cache reuse, no queries/chat/source consumption, scope rotation/allowlist and busy-selector skips. Production coverage/latency and actual service cost remain unverified.
+
 ## 0.50.1
 
 - Prioritize literal definitions mentioned in the actual human reply body over terms appearing only in its inbound quote. Apply this stable priority after nesting resolution/scoring and before count truncation, so a strongly rated quote term cannot occupy the only slot ahead of the word actually asked about.

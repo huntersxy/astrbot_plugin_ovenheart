@@ -1,6 +1,9 @@
 """Verify document-only warming stays separate from committed learning state."""
 
 import asyncio
+import importlib
+import sqlite3
+import time
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
@@ -10,7 +13,7 @@ pytest.importorskip("astrbot.api")
 
 from astrbot_plugin_ovenheart.settings import DEFAULTS  # noqa: E402
 from tests.test_retrieval import TRAITS  # noqa: E402
-from tests.test_runtime import api_call, sources  # noqa: E402
+from tests.test_runtime import api_call, event, sources  # noqa: E402
 
 pytest_plugins = ["tests.test_runtime", "tests.test_retrieval"]
 
@@ -129,3 +132,122 @@ async def test_busy_retrieval_and_overlapping_warm_jobs_are_skipped(
     )
     provider.get_embeddings.assert_awaited_once()
     assert not plugin.prewarming
+
+
+async def test_idle_poll_fills_later_batches_without_queries_or_learning(
+    warming_plugin, monkeypatch
+):
+    plugin, provider = warming_plugin
+    plugin.worker.cancel()
+    await asyncio.gather(plugin.worker, return_exceptions=True)
+    scope = await sources(plugin)
+    with sqlite3.connect(plugin.store.path) as db:
+        db.executemany(
+            "INSERT INTO traits(scope,kind,situation,content,confidence,evidence,status,fingerprint,created,updated) VALUES (?,?,?,?,?,?,?,?,?,?)",
+            [
+                (
+                    scope,
+                    "expression",
+                    "日常交流",
+                    f"已批准表达 {i}",
+                    0.95,
+                    "[]",
+                    "active",
+                    f"idle-{i}",
+                    1,
+                    1,
+                )
+                for i in range(130)
+            ],
+        )
+    plugin.settings["learning_enabled"] = False
+    module = importlib.import_module(type(plugin).__module__)
+    ticks = [0]
+
+    async def tick(seconds):
+        """Advance the scheduler's clock without waiting in the test.
+
+        Args:
+            seconds: Existing scheduler sleep interval.
+
+        Raises:
+            asyncio.CancelledError: After four idle scheduling opportunities.
+        """
+        assert seconds == 15
+        ticks[0] += 1
+        if ticks[0] > 13:
+            raise asyncio.CancelledError
+
+    monkeypatch.setattr(
+        module, "asyncio", SimpleNamespace(**(vars(asyncio) | {"sleep": tick}))
+    )
+    monkeypatch.setattr(
+        module,
+        "time",
+        SimpleNamespace(time=time.time, monotonic=lambda: 1000 + ticks[0] * 15),
+    )
+    with pytest.raises(asyncio.CancelledError):
+        await plugin.poll()
+    assert [len(call.args[0]) for call in provider.get_embeddings.await_args_list] == [
+        64,
+        64,
+        2,
+    ]
+    provider.get_embedding.assert_not_awaited()
+    plugin.context.llm_generate.assert_not_awaited()
+    assert not plugin.retriever.query_cache
+    assert len(await plugin.store.call("batch", scope, 30)) == 2
+    assert (await plugin.store.call("state", scope))["applications"] == []
+    with sqlite3.connect(plugin.store.path) as db:
+        assert db.execute("SELECT COUNT(*) FROM embeddings").fetchone()[0] == 130
+
+
+async def test_idle_cursor_rotates_permitted_scopes_and_skips_busy_selection(
+    warming_plugin, monkeypatch
+):
+    plugin, _ = warming_plugin
+    plugin.worker.cancel()
+    await asyncio.gather(plugin.worker, return_exceptions=True)
+    for session in ("one", "two", "excluded"):
+        await plugin.capture(event(session, session=session))
+    state = await plugin.store.call("state")
+    candidates = sorted(
+        s["id"] for s in state["scopes"] if not s["umo"].endswith("excluded")
+    )
+    plugin.settings.update(
+        learning_enabled=False,
+        allowed_sessions=[s["umo"] for s in state["scopes"] if s["id"] in candidates],
+    )
+    plugin.prewarm_embeddings = AsyncMock()
+    module = importlib.import_module(type(plugin).__module__)
+    ticks = [0]
+
+    async def tick(seconds):
+        """Simulate one busy tick followed by ordinary idle visits.
+
+        Args:
+            seconds: Existing polling interval.
+
+        Raises:
+            asyncio.CancelledError: After three accepted scheduling visits.
+        """
+        ticks[0] += 1
+        plugin.retriever.selecting = 2 if ticks[0] == 1 else 0
+        if ticks[0] > 10:
+            raise asyncio.CancelledError
+
+    monkeypatch.setattr(
+        module, "asyncio", SimpleNamespace(**(vars(asyncio) | {"sleep": tick}))
+    )
+    monkeypatch.setattr(
+        module,
+        "time",
+        SimpleNamespace(time=time.time, monotonic=lambda: 1000 + ticks[0] * 15),
+    )
+    with pytest.raises(asyncio.CancelledError):
+        await plugin.poll()
+    assert [call.args[0] for call in plugin.prewarm_embeddings.await_args_list] == [
+        candidates[0],
+        candidates[1],
+        candidates[0],
+    ]

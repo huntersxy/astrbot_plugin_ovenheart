@@ -334,6 +334,8 @@ class PersonaPlugin(Star):
         self.tasks: set[asyncio.Task] = set()
         self.busy: set[str] = set()
         self.prewarming: set[str] = set()
+        self.next_idle_warmup = 0.0
+        self.warmup_cursor = ""
         self.events: dict[str, AstrMessageEvent] = {}
         self.speaker_events: dict[tuple[str, str], AstrMessageEvent] = {}
         self.learning_context: dict[str, deque] = {}
@@ -1775,6 +1777,38 @@ class PersonaPlugin(Star):
                     self.settings["blocked_senders"],
                     not self.settings["session_isolation"],
                 )
+                if (
+                    self.settings["enabled"]
+                    and self.settings["apply_enabled"]
+                    and self.settings["embedding_provider_id"]
+                    and self.settings["selection_mode"] != "lexical"
+                    and not self.busy
+                    and not self.prewarming
+                    and not self.retriever.lock.locked()
+                    and not self.retriever.selecting
+                    and not self.retriever.reranking
+                    and not self.participation.inflight
+                    and time.monotonic() >= self.next_idle_warmup
+                ):
+                    candidates = sorted(
+                        s["id"]
+                        for s in state["scopes"]
+                        if s["profile"]["apply_enabled"]
+                        and (
+                            not self.settings["allowed_sessions"]
+                            or s["umo"] in self.settings["allowed_sessions"]
+                        )
+                    )
+                    if candidates:
+                        selected = next(
+                            (key for key in candidates if key > self.warmup_cursor),
+                            candidates[0],
+                        )
+                        # A single cursor gives fair cyclic visits without an
+                        # unbounded per-scope map. Failed attempts also wait.
+                        self.warmup_cursor = selected
+                        self.next_idle_warmup = time.monotonic() + 60
+                        await self.prewarm_embeddings(selected)
                 if (
                     not self.settings["enabled"]
                     or not self.settings["learning_enabled"]
