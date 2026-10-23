@@ -26,6 +26,7 @@ files = [
         "settings.py",
         "store.py",
         "metadata.yaml",
+        "logo.png",
         "_conf_schema.json",
         "requirements.txt",
         "README.md",
