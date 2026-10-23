@@ -1,5 +1,26 @@
 # OvenHeart workshop guide
 
+## Human-body terms before quote-only definitions (0.50.1)
+
+After nesting resolution and ordinary scoring, stably prioritize local terms
+mentioned in the actual human target body over quote-only matches, then apply
+count limits. Keep scoring order within each source class. With one slot, a
+strongly rated quote definition cannot displace the word actually asked about;
+prioritization happens before truncation.
+
+The optional internal focus comes from the actual autonomous target or direct
+incoming event, never a rewritten provider prompt, history, adjacent additions or
+planner intent. If the body only asks "what does this mean?", quote-only recall
+still works. Callers without explicit focus retain existing behavior. Keep
+semantic selection, cache prefixes, scopes/status checks, count/character budgets,
+native prompt, target/message IDs and temporary delivery. Add no model stage or
+configuration switch.
+
+Debug `literal_focus_ids` lists retained body matches; mixed-source retrieval
+messages explain priority. Two focused simulated-provider checks cover native
+SDK injection, a stronger quote match, selector bias, quote-only anaphora and call
+counts. Production response quality remains unverified.
+
 ## Full local terms before nested fragments (0.50)
 
 Resolve nesting by actual normalized-text match spans before the existing literal

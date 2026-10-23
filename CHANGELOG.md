@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.50.1
+
+- Prioritize literal definitions mentioned in the actual human reply body over terms appearing only in its inbound quote. Apply this stable priority after nesting resolution/scoring and before count truncation, so a strongly rated quote term cannot occupy the only slot ahead of the word actually asked about.
+- Bind the optional internal `literal_focus` to the actual autonomous target or direct event body, never rewritten provider prompts, history or planner intent. Without a body match, preserve quote recall; without explicit focus, preserve existing caller behavior. Keep relative scoring within each source class and all scope/status/character budgets.
+- Report actually included body-match IDs as `literal_focus_ids` and explain mixed-source ordering in retrieval diagnostics. Keep native prompt, target, message IDs, quote handling, temporary delivery, model stages and cache prefixes unchanged.
+- Pass one native-SDK injection case and one selector/quote-only retrieval case with simulated providers. Confirm low-rated body terms precede stronger quote terms, a selector cannot displace the literal body match, quote-only anaphora still works and no extra calls occur. Production response quality remains unverified.
+
 ## 0.50.0
 
 - Resolve nested literal vocabulary matches by actual normalized-text occurrence before applying count limits. Process active terms longest first; suppress a short definition only when every valid occurrence is fully contained in a strictly longer matched term. A separate occurrence keeps the short term eligible, while equal terms and partial overlap remain.

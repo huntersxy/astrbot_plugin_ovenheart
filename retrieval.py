@@ -258,6 +258,7 @@ class HabitRetriever:
         provider_id=None,
         identity="",
         literal_query="",
+        literal_focus="",
         recent_expression_ids=(),
         expression_intent=None,
         record_status=True,
@@ -274,6 +275,8 @@ class HabitRetriever:
             identity: Host persona and manual profile; never learned autobiographies.
             literal_query: Actual reply-target text and its inbound quote, up to
                 2,400 characters, excluding unrelated history and planner goals.
+            literal_focus: Actual human target body only, when known. Its literal
+                definitions precede matches appearing only in the inbound quote.
             recent_expression_ids: Recently exposed expressions from this native
                 scope only; a soft preference for contextual selection.
             expression_intent: Optional validated per-turn style intent from the
@@ -455,7 +458,8 @@ class HabitRetriever:
         # Local definitions are factual context, not optional expression preferences.
         # Match only the human reply target and its quote. Unrelated history and
         # planner goals cannot pin a word into the final reply.
-        literal, shadowed = [], set()
+        literal, shadowed, focused = [], set(), set()
+        prioritized = False
         if literal_query:
             text = literal_query[:2400]
             coverage = [(0, 0)] * (
@@ -482,7 +486,21 @@ class HabitRetriever:
                 for start, end in spans:
                     for index in range(start, end):
                         coverage[index] = max(coverage[index], (end, length))
-            literal = rank_traits(literal, text, settings)
+            literal = rank_traits(
+                literal, text, settings | {"max_traits": len(literal)}
+            )
+            if literal_focus:
+                focused = {
+                    t["id"]
+                    for t in literal
+                    if mentions_jargon(t["content"], literal_focus[:1200])
+                }
+                prioritized = bool(focused) and len(focused) < len(literal)
+                literal.sort(
+                    key=lambda t: t["id"] in focused,
+                    reverse=True,
+                )
+            literal = literal[: settings["max_traits"]]
         if shadowed:
             result["traits"] = [t for t in result["traits"] if t["id"] not in shadowed]
             result["shadowed_jargon_ids"] = sorted(shadowed)
@@ -503,6 +521,12 @@ class HabitRetriever:
             result["message"] += (
                 f" 当前输入直接命中 {min(len(literal), maximum)} 条本群词汇，优先提供本地释义。"
             )
+            if literal_focus:
+                result["literal_focus_ids"] = [
+                    t["id"] for t in result["traits"] if t["id"] in focused
+                ]
+            if prioritized:
+                result["message"] += " 已将正文所提词条排在引用词条之前。"
         if (
             result.get("rerank_cache_hit")
             and "已复用重排序缓存" not in result["message"]

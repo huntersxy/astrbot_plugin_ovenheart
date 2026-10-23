@@ -1384,7 +1384,8 @@ class PersonaPlugin(Star):
         # Ground recall in the actual reply target, not unrelated newer chatter
         # or a word invented by the planner's intent.
         query = target["text"] if target else req.prompt or event.get_message_str()
-        literal_query = (target["text"] if target else event.get_message_str())[:1200]
+        literal_focus = (target["text"] if target else event.get_message_str())[:1200]
+        literal_query = literal_focus
         quoted = target.get("reply_to") or {} if plan else {}
         if not plan:
             component = next(
@@ -1502,6 +1503,7 @@ class PersonaPlugin(Star):
                 provider_id=provider_id,
                 identity=identity,
                 literal_query=literal_query[:2400],
+                literal_focus=literal_focus,
                 recent_expression_ids=state.get("recent_expression_ids", []),
                 expression_intent=expression_intent,
             )

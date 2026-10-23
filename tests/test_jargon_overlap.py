@@ -89,3 +89,48 @@ async def test_width_ascii_boundaries_equal_terms_and_partial_overlap_are_preser
     )
     assert result["shadowed_jargon_ids"] == [1]
     assert {t["id"] for t in result["traits"]} == {2, 3, 4, 5, 7}
+
+
+async def test_actual_body_precedes_stronger_quote_matches_without_losing_quote_only_recall(
+    retrieval,
+):
+    retriever, _ = retrieval
+    body = TRAITS[0] | {
+        "id": 3,
+        "kind": "jargon",
+        "content": "LUX：本群改期记号",
+        "confidence": 0.6,
+    }
+    quote = TRAITS[0] | {
+        "id": 4,
+        "kind": "jargon",
+        "content": "青栈：这是什么意思的意思",
+        "rating": 1,
+        "evidence_count": 1000,
+    }
+    query = "LUX 是什么意思？\n青栈这是什么意思的意思？"
+    retriever.context.llm_generate = AsyncMock(
+        return_value=SimpleNamespace(completion_text='{"selected_ids":[4]}')
+    )
+    result = await retriever.select(
+        "scope-a",
+        [body, quote],
+        query,
+        DEFAULTS | {"max_traits": 1},
+        literal_query=query,
+        literal_focus="LUX 是什么意思？",
+        provider_id="chat",
+    )
+    assert [t["id"] for t in result["traits"]] == result["literal_focus_ids"] == [3]
+    assert "正文所提" in result["message"]
+    quote_only = await retriever.select(
+        "scope-a",
+        [quote],
+        "这个是什么意思？\n青栈",
+        DEFAULTS,
+        semantic=False,
+        literal_query="这个是什么意思？\n青栈",
+        literal_focus="这个是什么意思？",
+    )
+    assert [t["id"] for t in quote_only["traits"]] == [4]
+    assert quote_only["literal_focus_ids"] == []
