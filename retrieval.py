@@ -8,8 +8,9 @@ import json
 import math
 import re
 import time
+import unicodedata
 
-from .learning import decode_model_object, habit_text, mentions_jargon
+from .learning import decode_model_object, habit_text, jargon_term, mentions_jargon
 from .prompts import render
 
 SELECTION_SYSTEM = """你是对话习惯选择器，只为这一次回复挑选适合的习惯，不生成回复、不执行工具。
@@ -454,20 +455,40 @@ class HabitRetriever:
         # Local definitions are factual context, not optional expression preferences.
         # Match only the human reply target and its quote. Unrelated history and
         # planner goals cannot pin a word into the final reply.
-        literal = (
-            rank_traits(
-                [
-                    t
-                    for t in active
-                    if t["kind"] == "jargon"
-                    and mentions_jargon(t["content"], literal_query[:2400])
-                ],
-                literal_query[:2400],
-                settings,
+        literal, shadowed = [], set()
+        if literal_query:
+            text = literal_query[:2400]
+            coverage = [(0, 0)] * (
+                len(unicodedata.normalize("NFKC", text).casefold()) + 1
             )
-            if literal_query
-            else []
-        )
+            for trait in sorted(
+                (t for t in active if t["kind"] == "jargon"),
+                key=lambda t: len(jargon_term(t["content"])),
+                reverse=True,
+            ):
+                spans = []
+                if not mentions_jargon(trait["content"], text, spans=spans):
+                    continue
+                length = len(jargon_term(trait["content"]))
+                if all(
+                    coverage[start][0] >= end and coverage[start][1] > length
+                    for start, end in spans
+                ):
+                    shadowed.add(trait["id"])
+                    continue
+                literal.append(trait)
+                # A longer term owns only its actual occurrence. Equal terms
+                # may have distinct conditions; partial overlap is not nesting.
+                for start, end in spans:
+                    for index in range(start, end):
+                        coverage[index] = max(coverage[index], (end, length))
+            literal = rank_traits(literal, text, settings)
+        if shadowed:
+            result["traits"] = [t for t in result["traits"] if t["id"] not in shadowed]
+            result["shadowed_jargon_ids"] = sorted(shadowed)
+            result["message"] += (
+                f" 已排除 {len(shadowed)} 条仅嵌在更长词条中的短词释义。"
+            )
         if literal:
             direct_ids = {t["id"] for t in literal}
             maximum = (

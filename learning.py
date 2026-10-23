@@ -173,12 +173,15 @@ def jargon_term(content: str) -> str:
     return word.casefold()
 
 
-def mentions_jargon(content: str, text: str) -> bool:
+def mentions_jargon(
+    content: str, text: str, *, spans: list[tuple[int, int]] | None = None
+) -> bool:
     """Match a literal local term while avoiding ASCII word fragments.
 
     Args:
         content: Original term-definition entry.
         text: Source or query text to inspect.
+        spans: Optional output list receiving valid normalized-text match spans.
 
     Returns:
         Whether the normalized term appears, allowing adjacent Chinese text.
@@ -191,9 +194,12 @@ def mentions_jargon(content: str, text: str) -> bool:
         pattern = r"(?<![a-z0-9_])" + pattern
     if word[-1].isascii() and (word[-1].isalnum() or word[-1] == "_"):
         pattern += r"(?![a-z0-9_])"
-    return (
-        re.search(pattern, unicodedata.normalize("NFKC", text).casefold()) is not None
-    )
+    normalized = unicodedata.normalize("NFKC", text).casefold()
+    if spans is not None:
+        found = [match.span() for match in re.finditer(pattern, normalized)]
+        spans.extend(found)
+        return bool(found)
+    return re.search(pattern, normalized) is not None
 
 
 def decode_model_object(text: str) -> dict:

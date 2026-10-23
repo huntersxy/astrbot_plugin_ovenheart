@@ -1,5 +1,28 @@
 # OvenHeart workshop guide
 
+## Full local terms before nested fragments (0.50)
+
+Resolve nesting by actual normalized-text match spans before the existing literal
+definition count limit. Process active matching terms longest first. Suppress a
+short term only when every valid occurrence is fully contained in a strictly
+longer matching term; another independent occurrence preserves it. Equal terms
+and partial overlap do not shadow one another. Disabled or absent longer entries
+do not remove active short terms. This prevents frequent short fragments from
+outscoring the actual full term under a small output limit.
+
+Reuse width/case compatibility and ASCII word boundaries: `LUX` still does not
+match `deluxe`. Remove fully shadowed IDs even from ordinary contextual selection,
+then prioritize surviving literal definitions with existing scores/budgets. Keep
+stored definitions/decisions, native scope eligibility, status rechecks, actual
+target/quote input, selector cache/prefixes and all call budgets. History,
+same-member additions and planner intent do not force literal definitions.
+
+Debug `shadowed_jargon_ids` and retrieval messages explain exclusions. Mechanical
+nesting is not general segmentation, character analysis or semantic
+disambiguation; the final model must still interpret the task. Two focused checks
+and both existing empty/invalid-selector definition paths pass with simulated
+models. Production response quality remains unverified.
+
 ## Evidence-linked terminal punctuation (0.49)
 
 Existing `language_features` still summarizes each eligible speaker separately,

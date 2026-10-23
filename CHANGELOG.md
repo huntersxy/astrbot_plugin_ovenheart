@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.50.0
+
+- Resolve nested literal vocabulary matches by actual normalized-text occurrence before applying count limits. Process active terms longest first; suppress a short definition only when every valid occurrence is fully contained in a strictly longer matched term. A separate occurrence keeps the short term eligible, while equal terms and partial overlap remain.
+- Reuse the existing width/case normalization and ASCII boundaries through optional match-span output from the literal matcher. Inactive or absent longer entries do not shadow active terms. Remove fully shadowed IDs from ordinary selector output too, then prioritize surviving literal definitions through existing scoring, status and budget checks.
+- Add debug `shadowed_jargon_ids` and a readable retrieval explanation. Keep native scope eligibility, actual target/quote input, existing cache prefixes and all model-call budgets; history, adjacent additions and planner intent do not force literal definitions. This is mechanical nesting resolution, not general word segmentation or semantic disambiguation.
+- Pass two focused cases plus both existing empty/invalid-selector definition paths with simulated models. Cover a strong short fragment, an explicit selector choosing it, independent occurrences, disabled longer terms, equal entries, partial overlap and normalized ASCII boundaries. Production response quality remains unverified.
+
 ## 0.49.0
 
 - Add per-speaker literal terminal-punctuation summaries to existing language features, still requiring at least four eligible samples for that speaker. Include up to six patterns, deterministic frequency/text ordering, source message IDs and counts, plus the count of other patterns. Keep exact punctuation without case/width normalization or inventing style samples.
