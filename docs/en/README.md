@@ -4,11 +4,26 @@
 
 Personality, expression and conversational behavior learning for AstrBot. OvenHeart supplements the existing persona with evidence-based habits and gives the operator control over their activation. It uses retrieval and prompting, not model weight training.
 
+## Design origin: what comes from MaiBot
+
+OvenHeart's way of being with people comes from [MaiBot](https://github.com/Mai-with-u/MaiBot), a standalone digital-life framework that chats like a real person: it imitates the speaking style of people around it, picks up new slang and in-group language, reads the room to decide when to speak, and builds its understanding of people over time. OvenHeart brings that learn-from-living-together approach into AstrBot:
+
+| Track | MaiBot counterpart | Form here |
+| --- | --- | --- |
+| Expression learning | Expression learner | Distills phrasing, tone and rhythm from members' real messages; habits keep verbatim evidence and are retrieved per context before each reply |
+| Group jargon | Jargon learning | Learns local word meanings, isolated by source session and persona |
+| Participation | Heart flow willingness system | Decides reply / wait / observe before deciding what to say |
+| Personality | "Becoming human" | Accumulates tendencies and situational responses instead of a fixed persona sheet |
+
+Neither project trains model weights: habits are evidence-backed data entries applied through retrieval and prompting.
+
+MaiBot is a self-contained framework with its own message pipeline, persona, memory and emoji systems, and its learning loop runs mostly automatically. OvenHeart is an AstrBot plugin: delivery, wake, permissions, tools and the original persona stay with the host; new habits default to manual review in the library where you approve, edit or disable them, with automatic activation as an opt-in; memory is optional via the unmodified LivingMemory plugin.
+
 ## Requirements and installation
 
-Market category: **AI tools**. Display name: **OvenHeart**. The declared platform is **QQ / OneBot v11 (`aiocqhttp`)**; other platforms are not currently listed as supported.
+Market category: **AI tools**. Display name: **OvenHeart**. The supported platform is **QQ / OneBot v11 (`aiocqhttp`)**; other platforms are not supported yet.
 
-The declared range allows all AstrBot 4.x releases (`>=4.0.0,<5`). Version 4.29.1 is currently verified; restrictions will be refined only for confirmed incompatibilities. Use a working chat provider. Install through the WebUI plugin manager using:
+AstrBot `>=4.29.1,<5` is required. Use a working chat provider. Install through the WebUI plugin manager using:
 
 ```text
 https://github.com/huntersxy/astrbot_plugin_ovenheart
@@ -20,25 +35,17 @@ Or clone into an AstrBot checkout:
 git clone --branch main https://github.com/huntersxy/astrbot_plugin_ovenheart.git data/plugins/astrbot_plugin_ovenheart
 ```
 
-Reload the plugin and open **人格工坊 (Persona workshop)** from its plugin card. The page uses AstrBot authentication and needs no separate port, frontend build or additional runtime dependency. Autonomous participation requires AstrBot's local Agent runner.
+Reload the plugin and open **人格工坊 (Persona workshop)** from its plugin card; the page uses AstrBot authentication and needs no separate port. Autonomous participation requires AstrBot's local Agent runner.
 
 ### Workshop layout
 
-Desktop navigation sits on the left. On smaller screens it becomes a horizontally scrollable bar above the workspace. The five pages keep their existing names and functions. Session selection, source status and memory status appear at the top of the workspace. Light and dark modes follow AstrBot.
+Desktop navigation sits on the left, switching between the persona brief, learning library, learning and participation, learning settings, and prompts; on smaller screens it becomes a horizontally scrollable bar above the workspace. Session selection, source status and memory status appear at the top of the workspace. Light and dark modes follow AstrBot. The persona brief and preview sit side by side on wide screens; library filters and bulk actions sit above the list and detail view; the settings save button sticks to the viewport bottom while scrolling.
 
-| Previous location | Current location |
-| --- | --- |
-| Five tabs across the page header | Left navigation on desktop; scrollable top navigation on smaller screens |
-| Session and status bar below the header | Top of the main workspace |
-| Persona brief and preview cards | Side by side on wide screens; stacked on smaller screens |
-| Library filters and bulk actions | Below the library introduction and above the list and detail view |
-| Settings save button | Sticks to the viewport bottom while scrolling, returning to its position at the form end |
-
-![Persona brief and preview layout](../assets/profile.jpg)
+![Persona brief and preview](../assets/profile.jpg)
 
 ![Library filters, entries and review detail](../assets/library-triage-v0.56-desktop.jpg)
 
-Screenshots use local illustrative data and a simulated model, not real conversations or provider output. This layout update preserves learning, saving, review, preview and version restoration behavior.
+Screenshots use local illustrative data and a simulated model, not real conversations or provider output.
 
 ## First run
 
@@ -114,15 +121,15 @@ This allows append-only growth until capacity-based compression is required, not
 
 LivingMemory is optional. Learning and planning can retrieve background within their budgets; final replies retain the memory plugin's native recall path. Missing or unavailable memory does not prevent independent habit learning. Retrieval may update access metadata or trigger the memory plugin's existing migrations.
 
-Use an official, unmodified LivingMemory installation. OvenHeart owns an in-memory adapter around its two native recall/reflection dispatch entries. Verified cross-message autonomous targets receive isolated source snapshots; ordinary requests, host event identity, tools and passive group capture retain their native path. No LivingMemory files, versions, class methods or database schemas are patched. Plugin reload reattaches the adapter; disabling OvenHeart restores the original entries. The workshop reports engine and source-routing availability separately.
+Use an official, unmodified LivingMemory installation. OvenHeart owns an in-memory adapter around its two native recall/reflection dispatch entries. Verified cross-message autonomous targets receive isolated source snapshots; ordinary requests, host event identity, tools and passive group capture retain their native path. Plugin reload reattaches the adapter; disabling OvenHeart restores the original entries. The workshop reports engine and source-routing availability separately.
 
-This adapter has a compatibility boundary: invalid or no-longer-permitted sources skip this turn's memory hooks. If both native hooks cannot be identified, the cross-message autonomous reply is cancelled with a diagnostic rather than assigning memory to the wrong member. A `+ovenheart.1` custom build is not required, and no upstream submission is made.
+This adapter has a compatibility boundary: invalid or no-longer-permitted sources skip this turn's memory hooks. If the native hooks cannot be identified, the cross-message autonomous reply is cancelled and the reason is logged.
 
 The prompts tab edits learning, review, selection, planning and reply templates with reset-to-default support. Templates change wording; evidence, access and tool restrictions remain enforced in code. Upgrades preserve custom templates.
 
 ## Data and diagnostics
 
-The database is `data/plugin_data/astrbot_plugin_ovenheart/persona.sqlite3`, outside the plugin source directory. Back up that data directory and the host plugin configuration before upgrades or rollback. Migration from the old `astrbot_plugin_persona` ID can copy an existing database into an empty new store while preserving the original.
+The database is `data/plugin_data/astrbot_plugin_ovenheart/persona.sqlite3`, outside the plugin source directory. Back up that data directory and the host plugin configuration before upgrades or rollback.
 
 Raw sources and associated explicit quotations expire under the retention policy. Learned evidence excerpts and revision snapshots have separate lifetimes: clearing raw messages does **not** delete them. Restoring a revision leaves subsequently added entries disabled.
 

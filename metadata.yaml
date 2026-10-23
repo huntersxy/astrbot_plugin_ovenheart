@@ -5,7 +5,7 @@ desc: 借鉴 MaiBot 的表达学习机制，学习人格倾向、语言风格、
 version: 0.56.3
 author: 汐兮雨
 repo: https://github.com/huntersxy/astrbot_plugin_ovenheart
-astrbot_version: ">=4.0.0,<5"
+astrbot_version: ">=4.29.1,<5"
 category: ai_tools
 tags:
   - 人格学习
