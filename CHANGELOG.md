@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.51.1
+
+- Bind ordinary group replies to a temporary snapshot of the actual incoming sender/message, and autonomous replies to their validated target. Convert separated model-written leading address prefixes to a real mention of that target, deduplicate existing correct mentions and preserve enabled native quote decoration. Keep inline mentions, literal code/email examples and existing structured At components unchanged.
+- Buffer OneBot group direct/name-triggered replies before the local agent reads its streaming flag, allowing correction before delivery without another wake or model call. Preserve stable system/history prefixes and use temporary tail context for the current target. Debug `direct_reply_target` and `reply_addressee` expose the actual target and corrected model prefixes.
+- Explain in learning, review, selection and application guidance that delivery mentions/quotes are not transferable language or behavior habits. Supply structured delivery rules to extraction/review and final requests even with retained custom templates. Keep existing learned entries and manual decisions; this does not automatically purge old habits or guarantee model compliance.
+- Pass focused native-SDK cases for stale direct/autonomous addresses, decoration deduplication, native wake/name handling, preserved inline literals/components and learning-review format repair using simulated providers. Production QQ delivery and planner target quality remain unverified.
+
 ## 0.51.0
 
 - Add bounded periodic document-index maintenance to the existing scheduler. When application/non-lexical embeddings are enabled, visit one eligible native scope at most once per minute, rotating by a single stable scope-ID cursor. Reuse existing one-batch/64-document warming and its two-second vector-stage budget, source permissions, current profile and persisted content-addressed vectors.

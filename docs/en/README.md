@@ -1,5 +1,37 @@
 # OvenHeart workshop guide
 
+## Current addressee and learned mention actions (0.51.1)
+
+A model may copy an old plain-text `@name` prefix into an answer to another
+member. Direct group requests now carry a temporary snapshot of the actual
+incoming sender/message; autonomous replies retain their validated planner
+target. Before delivery, separated leading model-written address prefixes bind
+to that target as real At components, without duplicating its existing mention.
+Enabled native quote decoration is preserved. Inline mentions, literal code and
+email examples, and existing structured At components retain their original
+handling. This does not infer a new planner target from answer semantics.
+
+For permitted OneBot QQ group direct/name-triggered replies with application
+enabled, buffering is selected before the local agent reads its streaming flag.
+The answer is generated in full, corrected and delivered, without another wake
+or model request. Incoming identity, history and stable system prefixes remain;
+target context is temporary tail content. Other platforms and send paths without
+normal hooks still require live verification.
+
+Learning, review, contextual selection and application prompts distinguish
+responding when addressed from copying delivery actions into language/behavior
+habits. Extraction/review and final requests carry fixed delivery rules even
+when custom template text is retained. Existing habits and manual decisions are
+not purged. Technical email/decorator/symbol discussion is not automatically a
+mention action. Prompt compliance is not guaranteed; leading-address correction
+is a separate delivery safeguard, not general semantic interpretation.
+
+Debug `direct_reply_target` records temporary direct-target context;
+`reply_addressee` records the path, actual target, copied prefixes and before/after
+mentions. Use these to distinguish a copied prefix from a wrong planner target.
+Focused native-SDK checks use simulated providers; real QQ delivery remains
+unverified.
+
 ## Bounded periodic document-index maintenance (0.51)
 
 Keep existing startup/write/review-triggered warm passes. The existing 15-second

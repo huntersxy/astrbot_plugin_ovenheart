@@ -1210,8 +1210,9 @@ async def test_mentions_respect_disablement_names_and_native_wakes(participant):
     participant.settings["mention_names"] = ["小夏"]
     incoming = event(text="小夏在吗")
     incoming.is_at_or_wake_command = True
-    assert not ParticipationFilter().filter(incoming, {})
+    assert ParticipationFilter().filter(incoming, {})
     assert await requests(participant, incoming) == []
+    assert incoming.get_extra("enable_streaming") is False
     for sender, text in [
         ("bot", "小夏在吗"),
         ("alice", "/小夏"),

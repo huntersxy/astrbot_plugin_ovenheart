@@ -31,6 +31,7 @@ from astrbot.core.star.session_plugin_manager import SessionPluginManager
 
 from . import prompts
 from .learning import (
+    LEARNING_DELIVERY_RULE,
     LearningFormatError,
     build_guidance_parts,
     habit_text,
@@ -169,6 +170,8 @@ def reply_people(event: AstrMessageEvent, plan: dict | None) -> dict[str, str]:
 
     add(event.get_sender_name(), event.get_sender_id())
     if plan:
+        target = plan.get("target") or {}
+        add(target.get("sender"), target.get("sender_id"))
         for message in plan.get("messages") or []:
             if not message.get("self"):
                 add(message.get("sender"), message.get("sender_id"))
@@ -279,10 +282,16 @@ class ParticipationFilter(filter.CustomFilter):
             return False
         if (
             event.get_message_type() != MessageType.GROUP_MESSAGE
-            or event.is_at_or_wake_command
             or event.get_sender_id() == event.get_self_id()
         ):
             return False
+        if event.is_at_or_wake_command:
+            # Already-woken QQ events need an early buffering guard, not another
+            # wake or planner run. The normal handler performs access checks.
+            return (
+                plugin.settings["apply_enabled"]
+                and event.get_platform_name() == "aiocqhttp"
+            )
         text = event.get_message_str().strip()
         admitted = bool(
             text
@@ -870,6 +879,21 @@ class PersonaPlugin(Star):
             A provider request consumed by AstrBot's normal agent substage.
         """
         if (
+            event.get_message_type() == MessageType.GROUP_MESSAGE
+            and event.get_platform_name() == "aiocqhttp"
+            and self.settings["apply_enabled"]
+            and (event.is_at_or_wake_command or event.get_extra("ovenheart_mention"))
+            and await self.permitted(event)
+        ):
+            scope, _, _ = await self.resolve_scope(event)
+            state = await self.store.call(
+                "guidance", scope, not self.settings["session_isolation"]
+            )
+            if not state["scope"] or state["scope"]["profile"]["apply_enabled"]:
+                # The local agent reads this flag before OnLLMRequestEvent.
+                # Setting it only in that later hook cannot stop delivery.
+                event.set_extra("enable_streaming", False)
+        if (
             event.get_message_type() != MessageType.GROUP_MESSAGE
             or event.is_at_or_wake_command
             or event.call_llm
@@ -1104,17 +1128,90 @@ class PersonaPlugin(Star):
             ResultContentType.STREAMING_FINISH,
         ):
             return
+        target = (
+            plan.get("target") or {}
+            if plan
+            else event.get_extra("ovenheart_reply_target", {})
+            or {"sender_id": event.get_sender_id(), "sender": event.get_sender_name()}
+        )
         people = reply_people(event, plan)
-        if not people:
-            return
         before = sum(isinstance(component, At) for component in result.chain)
+        original_mentions = [str(p.qq) for p in result.chain if isinstance(p, At)]
+        corrected = []
+        if (
+            target.get("sender_id")
+            and event.get_message_type() == MessageType.GROUP_MESSAGE
+        ):
+            chain, leading = [], True
+            used = set(original_mentions)
+            for component in result.chain:
+                if leading and isinstance(component, (Reply, At)):
+                    chain.append(component)
+                    continue
+                if leading and isinstance(component, Plain):
+                    if not component.text.strip():
+                        chain.append(component)
+                        continue
+                    # A separated leading @name is an address prefix, not the
+                    # model's authority to choose another recipient. Do not
+                    # reinterpret inline mentions, code, URLs or email tokens.
+                    match = re.match(
+                        r"^\s*[@＠]([^\s@＠，,:：。.!！?？;；`<>\[\]()/\\]{1,64})(?:\s+|[，,:：]\s*)",
+                        component.text,
+                    )
+                    if match:
+                        sender_id = str(target["sender_id"])
+                        if sender_id not in used:
+                            chain.append(
+                                At(qq=sender_id, name=target.get("sender") or "")
+                            )
+                            used.add(sender_id)
+                        corrected.append(match[1])
+                        remainder = component.text[match.end() :]
+                        if remainder:
+                            chain.append(Plain(" " + remainder.lstrip()))
+                        leading = not bool(remainder.strip())
+                        continue
+                leading = False
+                chain.append(component)
+            result.chain = chain
         result.chain = realize_mentions(list(result.chain), people)
+        if (
+            corrected
+            and not plan
+            and not any(isinstance(p, Reply) for p in result.chain)
+            and self.context.get_config(event.unified_msg_origin)
+            .get("platform_settings", {})
+            .get("reply_with_quote", False)
+        ):
+            message_id = str(
+                target.get("message_id")
+                or getattr(event.message_obj, "message_id", "")
+                or ""
+            )
+            if message_id:
+                # A real At makes the host skip its plain-chain decorator.
+                # Preserve its enabled quote policy for this corrected reply.
+                result.chain.insert(0, Reply(id=message_id))
         added = sum(isinstance(component, At) for component in result.chain) - before
         if added:
             self.debug(
                 "reply_mentions",
                 scope=(plan or {}).get("scope"),
                 added=added,
+            )
+        if corrected:
+            self.debug(
+                "reply_addressee",
+                scope=target.get("scope") or (plan or {}).get("scope"),
+                path="autonomous" if plan else "direct",
+                target_sequence=target.get("sequence"),
+                target_sender_id=target.get("sender_id"),
+                target_sender=target.get("sender"),
+                target_message_id=target.get("message_id"),
+                model_prefix_names=corrected,
+                mentions_before=original_mentions,
+                mentions_after=[str(p.qq) for p in result.chain if isinstance(p, At)],
             )
 
     @filter.on_decorating_result(priority=-100000)
@@ -1153,7 +1250,9 @@ class PersonaPlugin(Star):
             return
         plan = event.get_extra("ovenheart_decision")
         if not plan:
-            if event.get_extra("ovenheart_guided"):
+            if event.get_extra("ovenheart_guided") or event.get_extra(
+                "ovenheart_reply_target"
+            ):
                 self.realize_result_mentions(event, None)
             return
         if await self.check_participation(event):
@@ -1207,6 +1306,49 @@ class PersonaPlugin(Star):
             return
         plan = event.get_extra("ovenheart_decision")
         if not plan:
+            if (
+                event.get_message_type() != MessageType.GROUP_MESSAGE
+                or not self.settings["apply_enabled"]
+                or not await self.permitted(event)
+            ):
+                return
+            scope, _, _ = await self.resolve_scope(event, req)
+            state = await self.store.call(
+                "guidance", scope, not self.settings["session_isolation"]
+            )
+            if (
+                not self.settings["apply_enabled"]
+                or not await self.permitted(event)
+                or (state["scope"] and not state["scope"]["profile"]["apply_enabled"])
+            ):
+                return
+            target = {
+                "scope": scope,
+                "sender_id": str(event.get_sender_id() or ""),
+                "sender": event.get_sender_name() or "",
+                "message_id": str(getattr(event.message_obj, "message_id", "") or ""),
+            }
+            event.set_extra("ovenheart_reply_target", target)
+            marker = "[OvenHeart reply target]\n"
+            if not any(
+                isinstance(part, TextPart) and part.text.startswith(marker)
+                for part in req.extra_user_content_parts
+            ):
+                text = (
+                    marker
+                    + "当前回复对象以以下本轮真实消息为准，历史回答的 @ 和称呼不是本轮收件人。"
+                    "只写回复正文，不要沿用历史开头的 @昵称；需要提醒时由宿主绑定真实对象。\n"
+                    + json.dumps(target, ensure_ascii=False)
+                    + "\n"
+                    + prompts.REPLY_ADDRESS_RULE
+                    + self.decorate_request(req)
+                )
+                req.extra_user_content_parts.append(TextPart(text=text).mark_as_temp())
+                self.debug("direct_reply_target", target=target, temporary_user=text)
+            if event.get_platform_name() == "aiocqhttp":
+                # OneBot streaming is delivered before the decoration hook.
+                # Buffer these group replies to correct model-typed addresses.
+                event.set_extra("enable_streaming", False)
             return
         if not await self.check_participation(event, req):
             return
@@ -1303,6 +1445,7 @@ class PersonaPlugin(Star):
                 "reply_goal": plan["intent"],
                 "reply_target": target_label,
                 "reply_message": target,
+                "delivery_policy": prompts.REPLY_ADDRESS_RULE,
                 "reply_context": plan.get("reply_context", []),
                 "expression_intent": plan.get("expression_intent", {}),
                 "decoration": plan.get("decoration"),
@@ -1852,6 +1995,7 @@ class PersonaPlugin(Star):
             TimeoutError: If the shared learning budget expires.
         """
         system = payload.pop("_system", payload["task"])
+        payload["delivery_policy"] = LEARNING_DELIVERY_RULE
         self.debug(
             "learning_request",
             scope=batch[0].get("scope", "") if batch else "",
@@ -2021,6 +2165,7 @@ class PersonaPlugin(Star):
             "profile": base["profile"],
             "observations": [m for m in base["observations"] if m["id"] in cited],
             "conversation_context": context,
+            "delivery_policy": LEARNING_DELIVERY_RULE,
             "memory_context": memories,
             "candidates": candidates,
         }
