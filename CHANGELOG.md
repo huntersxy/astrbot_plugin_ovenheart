@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.47.0
+
+- Diversify contextual reply candidates with existing validated document vectors, following MaiBot's relevance-first MMR approach. Consider at most 64 ranked eligible habits before offering at most 24 to rerank/selection; use 0.85 normalized relevance and 0.15 maximum vector redundancy for indexed expression slots only.
+- Preserve the strongest indexed expression, original non-expression/unindexed slots, relevance ordering within the chosen expression set, eligibility, literal vocabulary priority and final contextual choice. Keep lexical fallback outside diversification; hybrid/lexical retrieval, planner and learning counterpart recall do not change.
+- Reuse vectors from the successful current retrieval, without another embedding/query/chat stage or database schema. Run bounded dot products in a worker thread and retain existing query/rerank/selector caches. Report promoted candidate IDs in debug retrieval and a readable candidate-pool message; promotion is not actual adoption or feedback.
+- Pass two focused cases plus existing invalid-vector fallback and stable selector-prefix checks with simulated providers. Confirm a relevant alternative survives 24 near-identical candidates, weak novelty does not displace strong matches, fixed slots survive, and repeated requests reuse caches. Production quality, latency and billing remain unverified.
+
 ## 0.46.0
 
 - Cache completed, validated contextual selection IDs in memory for 60 seconds, at most 64 entries with access-order eviction. Fingerprint the effective retrieval scope, full actual selector request, provider instance/model/configuration and offered sample text; valid empty selections can be reused.

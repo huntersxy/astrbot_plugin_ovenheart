@@ -1,5 +1,32 @@
 # OvenHeart workshop guide
 
+## Less redundant expression candidates (0.47)
+
+For contextual replies with successful vector retrieval and more than 24 eligible
+candidates, consider at most 64 ranked habits before offering at most 24. Use the
+current validated document vectors for relevance-first MMR, similar to MaiBot:
+0.85 normalized original relevance minus 0.15 maximum similarity to previously
+chosen expressions. Preserve the strongest indexed expression. Only indexed
+expression slots in the original top 24 can change; personality, behavior,
+vocabulary and unindexed entries keep their original slots. Restore original
+relevance order among chosen expressions before existing rerank/selection.
+
+Do not add embedding, query or chat calls, persistent vector copies, settings or
+schema. Bound dot products in a worker thread. Lexical fallback is appended after
+diversification; failed vectors, small pools, hybrid/lexical retrieval, free
+preview, planner and learning-reference recall retain their behavior. Existing
+query/rerank/selector caches remain usable; identical inputs give deterministic
+candidate sets.
+
+Retrieval messages explain promoted candidates; debug
+`expression_candidate_promotions` lists newly offered IDs. These are choices for
+the subsequent model, not adoption, approval or guaranteed wording diversity.
+Existing applicability selection, permissions, active-state checks, literal local
+vocabulary priority and injection budgets still apply. Four focused checks pass
+with simulated vectors/models, covering crowded alternatives, strong relevance,
+fixed slots, cache reuse and existing fallback/prefix behavior. Production
+quality, latency and billing remain unverified.
+
 ## Exact contextual-choice cache (0.46)
 
 Completed validated selector IDs, including an intentional empty choice, can be

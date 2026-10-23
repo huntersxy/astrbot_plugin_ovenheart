@@ -172,6 +172,64 @@ def rank_traits(
     return ranked[: settings["max_traits"]]
 
 
+def diverse_expression_pool(
+    ranked: list[dict], vectors: dict[int, list[float]]
+) -> list[dict]:
+    """Reserve expression slots for relevant, less redundant vector candidates.
+
+    Args:
+        ranked: At most 64 eligible habits in descending original relevance.
+        vectors: Validated unit document vectors from this retrieval only.
+
+    Returns:
+        At most 24 candidates. Non-expression and unindexed slots keep their
+        original entries; chosen expressions retain their relevance order.
+    """
+    base = ranked[:24]
+    slots = [
+        i
+        for i, trait in enumerate(base)
+        if trait["kind"] == "expression" and trait["id"] in vectors
+    ]
+    available = [
+        trait
+        for trait in ranked[:64]
+        if trait["kind"] == "expression" and trait["id"] in vectors
+    ]
+    if len(slots) < 2 or len(available) <= len(slots):
+        return base
+    scale = max(available[0]["_score"], 1e-9)
+    remaining = list(range(len(available)))
+    penalties = [0.0] * len(available)
+    selected = set()
+    # Relevance dominates the bounded redundancy penalty. Use only current,
+    # validated vectors; missing vectors must not become an exploration bonus.
+    for _ in slots:
+        best = max(
+            remaining,
+            key=lambda i: 0.85 * available[i]["_score"] / scale - 0.15 * penalties[i],
+        )
+        remaining.remove(best)
+        selected.add(available[best]["id"])
+        if len(selected) == len(slots):
+            break
+        chosen_vector = vectors[available[best]["id"]]
+        for i in remaining:
+            penalties[i] = max(
+                penalties[i],
+                sum(
+                    a * b
+                    for a, b in zip(
+                        chosen_vector, vectors[available[i]["id"]], strict=True
+                    )
+                ),
+            )
+    chosen = iter(trait for trait in available if trait["id"] in selected)
+    for index in slots:
+        base[index] = next(chosen)
+    return base
+
+
 class HabitRetriever:
     """Keep bounded caches and fall back when semantic services are unavailable."""
 
@@ -227,6 +285,7 @@ class HabitRetriever:
         active = [t for t in traits if t["status"] == "active"]
         deadline = time.monotonic() + settings["retrieval_timeout"]
         similarities = None
+        document_vectors = {} if settings["selection_mode"] == "contextual" else None
         mode, message = "lexical", "使用文字相关性；未配置向量模型。"
         if settings["selection_mode"] == "lexical":
             message = "按设置使用文字相关性。"
@@ -235,7 +294,13 @@ class HabitRetriever:
         elif active and query.strip() and settings["embedding_provider_id"]:
             try:
                 similarities = await asyncio.wait_for(
-                    self.semantic_scores(scope, active, query, settings),
+                    self.semantic_scores(
+                        scope,
+                        active,
+                        query,
+                        settings,
+                        document_vectors=document_vectors,
+                    ),
                     timeout=settings["retrieval_timeout"],
                 )
                 mode, message = (
@@ -251,8 +316,24 @@ class HabitRetriever:
             "mode": mode,
             "message": message,
         }
-        pool = rank_traits(active, query, settings | {"max_traits": 24}, similarities)
+        diversity = bool(document_vectors)
+        pool = rank_traits(
+            active,
+            query,
+            settings | {"max_traits": 64 if diversity else 24},
+            similarities,
+        )
         if settings["selection_mode"] == "contextual":
+            if diversity and len(pool) > 24:
+                original_ids = {t["id"] for t in pool[:24]}
+                # Bound CPU work independently of library size and keep vector
+                # dot products off the host event loop. No service call is added.
+                pool = await asyncio.to_thread(
+                    diverse_expression_pool, pool[:64], document_vectors
+                )
+                result["expression_candidate_promotions"] = [
+                    t["id"] for t in pool if t["id"] not in original_ids
+                ]
             present = {t["id"] for t in pool}
             pool.extend(
                 t
@@ -406,6 +487,10 @@ class HabitRetriever:
             and "已复用重排序缓存" not in result["message"]
         ):
             result["message"] += " 重排序分数来自五分钟内缓存。"
+        if result.get("expression_candidate_promotions"):
+            result["message"] += (
+                f" 候选池减少相似表达扎堆，补入 {len(result['expression_candidate_promotions'])} 条不同表达供情境判断。"
+            )
         if record_status:
             self.status[scope] = {"mode": result["mode"], "message": result["message"]}
             if len(self.status) > 128:
@@ -691,7 +776,7 @@ class HabitRetriever:
         return selected, False
 
     async def semantic_scores(
-        self, scope, traits, query, settings, *, index_only=False
+        self, scope, traits, query, settings, *, index_only=False, document_vectors=None
     ):
         """Embed missing habits in bounded batches and score with cosine similarity.
 
@@ -701,6 +786,8 @@ class HabitRetriever:
             query: Bounded conversational query; never persisted to disk.
             settings: Embedding provider and latency configuration.
             index_only: Prepare one document batch without a query embedding.
+            document_vectors: Optional per-call output for validated document
+                vectors, published only after a successful query retrieval.
 
         Returns:
             Cosine similarities, or an empty mapping for document-only warming.
@@ -785,6 +872,8 @@ class HabitRetriever:
                 raise ValueError("Embedding dimensions changed without a model change")
             if records:
                 await self.store.call("vectors", signature, scope, records)
+            if document_vectors is not None:
+                document_vectors.update(vectors)
             return {
                 identifier: sum(
                     a * b for a, b in zip(vector, query_vector, strict=True)
