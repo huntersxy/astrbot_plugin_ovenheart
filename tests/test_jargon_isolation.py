@@ -171,6 +171,7 @@ async def test_legacy_migration_preserves_records_and_quarantines_ambiguous_orig
     assert local == before[first["id"]] | {
         "scope": scopes[0],
         "evidence": json.loads(first["evidence"]),
+        "examples": json.loads(first["examples"]),
     }
     archived = (await store.call("state", SHARED_SCOPE))["traits"]
     assert len(archived) == 1 and archived[0]["id"] == second["id"]

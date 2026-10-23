@@ -831,7 +831,15 @@ async def test_background_learning_rechecks_current_host_plugin_set(plugin):
 
 
 async def test_native_page_validation_and_teardown(plugin):
-    assert len(plugin.context.registered_web_apis) == 6
+    assert {route[0] for route in plugin.context.registered_web_apis} == {
+        "/astrbot_plugin_ovenheart/state",
+        "/astrbot_plugin_ovenheart/library",
+        "/astrbot_plugin_ovenheart/action",
+        "/astrbot_plugin_ovenheart/preview",
+        "/astrbot_plugin_ovenheart/preview/model",
+        "/astrbot_plugin_ovenheart/prompts",
+        "/astrbot_plugin_ovenheart/prompts/save",
+    }
     scope = await sources(plugin)
     assert (await api_call(plugin.page_api.state, query=f"scope={scope}"))[
         "status"

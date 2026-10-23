@@ -19,7 +19,7 @@ async def test_native_core_never_learns_a_stripped_builtin_command(tmp_path):
         subprocess.run,
         [
             sys.executable,
-            str(ROOT / "scripts/evaluate_native.py"),
+            str(ROOT / "tests/native_harness.py"),
             "--smoke",
             "--output",
             str(output),

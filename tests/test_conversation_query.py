@@ -210,6 +210,7 @@ async def test_native_hook_order_shares_live_context_with_habit_selection(
         ),
     )
     assert [h.handler_name for h in registry] == [
+        "coordinate_direct_request",
         "apply_persona",
         "apply_participation",
     ]
