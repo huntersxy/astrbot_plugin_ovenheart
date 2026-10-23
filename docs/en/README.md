@@ -6,7 +6,7 @@ Personality, expression and conversational behavior learning for AstrBot. OvenHe
 
 ## Requirements and installation
 
-Market category: **AI tools**. Display name: **🔥 OvenHeart**. The declared platform is **QQ / OneBot v11 (`aiocqhttp`)**; other platforms are not currently listed as supported.
+Market category: **AI tools**. Display name: **OvenHeart**. The declared platform is **QQ / OneBot v11 (`aiocqhttp`)**; other platforms are not currently listed as supported.
 
 Use AstrBot `>=4.29.1,<5` with a working chat provider. Install through the WebUI plugin manager using:
 
