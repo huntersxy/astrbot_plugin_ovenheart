@@ -2275,6 +2275,22 @@ class PersonaPlugin(Star):
                 if len(samples) < 4:
                     continue
                 lengths = [len(m["text"]) for m in samples]
+                endings, unmarked, omitted = {}, [], []
+                for sample in samples:
+                    marks = re.search(
+                        r"[,.!?;:，。！？；：…~～—]+$", sample["text"].rstrip()
+                    )
+                    if len(sample["text"]) >= 1200 or (marks and len(marks[0]) > 12):
+                        # The capture boundary may be mid-message. Omission is
+                        # not evidence that the author left off punctuation.
+                        omitted.append(sample["id"])
+                    elif marks:
+                        endings.setdefault(marks[0], []).append(sample["id"])
+                    else:
+                        unmarked.append(sample["id"])
+                sorted_endings = sorted(
+                    endings.items(), key=lambda item: (-len(item[1]), item[0])
+                )
                 language_features.append(
                     {
                         "sender": sender,
@@ -2289,6 +2305,18 @@ class PersonaPlugin(Star):
                         "question_messages": sum(
                             "?" in m["text"] or "？" in m["text"] for m in samples
                         ),
+                        "terminal_punctuation": [
+                            {"marks": marks, "messages": len(ids), "evidence_ids": ids}
+                            for marks, ids in sorted_endings[:6]
+                        ],
+                        "other_terminal_punctuation_messages": sum(
+                            len(ids) for _, ids in sorted_endings[6:]
+                        ),
+                        "no_terminal_punctuation": {
+                            "messages": len(unmarked),
+                            "evidence_ids": unmarked,
+                        },
+                        "terminal_summary_omitted_ids": omitted,
                         "evidence_ids": [m["id"] for m in samples],
                     }
                 )

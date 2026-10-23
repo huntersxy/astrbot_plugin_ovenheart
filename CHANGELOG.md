@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.49.0
+
+- Add per-speaker literal terminal-punctuation summaries to existing language features, still requiring at least four eligible samples for that speaker. Include up to six patterns, deterministic frequency/text ordering, source message IDs and counts, plus the count of other patterns. Keep exact punctuation without case/width normalization or inventing style samples.
+- Distinguish messages without recognized terminal marks from omitted summaries. Omit possible 1,200-character capture-boundary truncation and punctuation runs longer than 12; record their source IDs rather than interpreting missing endings as a style preference. Recognize literal trailing comma/period/question/exclamation/semicolon/colon/ellipsis/tilde/em dash forms only; no closing-quote removal or emoji classification.
+- Explain in the learning prompt that summaries are descriptive aids, not new evidence, personality/emotion inference or mandatory punctuation. Keep raw observations, per-candidate evidence validation, grounded samples, review/activation, speaker boundaries and vocabulary-stage structured feature clearing. No new model stage, switch or schema.
+- Pass two focused native-SDK cases with simulated models covering separate speakers, target/blacklist/quote exclusion, grounded punctuation samples, deterministic bounds and omission handling. Production learning quality remains unverified.
+
 ## 0.48.0
 
 - Carry up to four same-member adjacent turns beside the actual autonomous reply target, using only the 20 messages offered to the planner. Stop each direction at another member, a self turn or more than 30 seconds from the target. Prefer nearby turns and retain chronology, original sequence/message IDs and bounded 300-character head/tail excerpts.

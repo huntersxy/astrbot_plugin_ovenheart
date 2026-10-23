@@ -1,5 +1,33 @@
 # OvenHeart workshop guide
 
+## Evidence-linked terminal punctuation (0.49)
+
+Existing `language_features` still summarizes each eligible speaker separately,
+requiring four batch samples for that speaker. Add `terminal_punctuation`: up to
+six literal suffix patterns, each with `marks`, message count and original
+`evidence_ids`. Order by descending frequency then text, with remaining pattern
+counts in `other_terminal_punctuation_messages`. Do not aggregate speakers or
+derive these statistics from quotes, non-target context, self turns or blocked
+sources. Statistics do not automatically become habits or style samples.
+
+Recognize literal trailing English/Chinese commas, periods, question/exclamation
+marks, semicolons, colons, plus ellipses, tildes and em dashes after trailing
+whitespace. Do not normalize width, remove closing quotes or classify all emoji.
+`no_terminal_punctuation` provides IDs/counts without those recognized suffixes;
+it does not imply an absence of all symbols, tone or emotion. Put IDs at the
+1,200-character capture boundary or with more than 12 terminal marks in
+`terminal_summary_omitted_ids`; do not mistake truncation for omitted punctuation.
+Keep the original observations available.
+
+The default prompt treats summaries as descriptive aids, not independent evidence,
+personality/emotion inference or mandatory punctuation. Original evidence IDs,
+literal sample validation, review, manual locks and activation policy still apply.
+The vocabulary stage's structured feature list remains empty. Existing custom
+learning templates retain their text and may access the fields through
+`{{language_features}}`. Add no model stage, setting or schema. Two focused native
+SDK checks pass with simulated models; production learning quality/naturalness
+remain unverified.
+
 ## Same-member additions around the actual target (0.48)
 
 After autonomous admission, inspect the target's adjacent turns within the same
