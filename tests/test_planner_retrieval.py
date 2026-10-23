@@ -9,10 +9,55 @@ import pytest
 
 pytest.importorskip("astrbot.api")
 
+from astrbot_plugin_ovenheart.participation import ParticipationFormatError  # noqa: E402
 from tests.test_participation import requests  # noqa: E402
 from tests.test_runtime import event, sources  # noqa: E402
 
 pytest_plugins = ["tests.test_participation"]
+
+
+async def test_native_plan_rejects_retained_but_unoffered_targets(participant):
+    scope = await sources(participant)
+    state = await participant.store.call("guidance", scope)
+    messages = [
+        {
+            "sequence": i,
+            "sender_id": f"user-{i}",
+            "sender": f"member-{i}",
+            "text": f"本轮发言 {i}",
+            "self": False,
+        }
+        for i in range(1, 31)
+    ]
+    plan = {
+        "action": "reply",
+        "confidence": 0.9,
+        "reason": "回应提问",
+        "intent": "简短解释",
+        "wait_seconds": 0,
+        "target_sequence": 1,
+        "decoration": "quote_mention",
+    }
+    participant.context.llm_generate.return_value = SimpleNamespace(
+        completion_text=json.dumps(plan)
+    )
+    with pytest.raises(ParticipationFormatError, match="不在最近消息"):
+        await participant.participation.plan(
+            event(), scope, "default", state, messages, participant.settings, False
+        )
+    offered = json.loads(participant.context.llm_generate.await_args.kwargs["prompt"])[
+        "recent_messages"
+    ]
+    assert [m["sequence"] for m in offered] == list(range(11, 31))
+    participant.context.llm_generate.return_value.completion_text = json.dumps(
+        plan | {"target_sequence": 11}
+    )
+    accepted = await participant.participation.plan(
+        event(), scope, "default", state, messages, participant.settings, False
+    )
+    assert accepted["target_sequence"] == 11
+    assert accepted["decoration"] == "quote_mention"
+    assert participant.context.llm_generate.await_count == 2
 
 
 @pytest.fixture

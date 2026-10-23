@@ -1,5 +1,19 @@
 # OvenHeart workshop guide
 
+## Visible autonomous reply targets (0.47.1)
+
+The participation window retains at most 30 messages, while a planner request
+actually offers the latest 20. Validate `target_sequence` against those same 20:
+a guessed sequence from an unseen retained turn cannot become the reply, quote,
+mention or memory-source binding target. Earlier actually offered messages remain
+valid. Older custom prompts omitting a target still default to the latest visible
+non-self message. Invalid targets use the existing error/observation path without
+reply generation or another correction call.
+
+One focused native-SDK case with 30 simulated messages confirms rejection of an
+unoffered target and acceptance/decoration of the oldest offered one. Real QQ
+delivery and conversational quality remain unverified.
+
 ## Less redundant expression candidates (0.47)
 
 For contextual replies with successful vector retrieval and more than 24 eligible

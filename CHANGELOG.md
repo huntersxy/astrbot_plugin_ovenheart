@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.47.1
+
+- Validate autonomous reply targets against the same latest 20 messages actually sent to the planner, rather than the full retained 30-message window. A guessed sequence from an unseen older turn can no longer admit a reply, quote, mention or memory-source binding to that turn.
+- Keep retained context, candidate limits, latest-message fallback for older custom prompts and all call budgets unchanged. Invalid output follows the existing error/observation path; the oldest actually offered target remains valid.
+- Pass one focused native-SDK case with a 30-message window, confirming an unoffered target is rejected and the first offered target retains quote/mention decoration. No external provider or QQ delivery is used.
+
 ## 0.47.0
 
 - Diversify contextual reply candidates with existing validated document vectors, following MaiBot's relevance-first MMR approach. Consider at most 64 ranked eligible habits before offering at most 24 to rerank/selection; use 0.85 normalized relevance and 0.15 maximum vector redundancy for indexed expression slots only.

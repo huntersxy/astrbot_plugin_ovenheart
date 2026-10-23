@@ -807,7 +807,9 @@ class ParticipationController:
             provider=provider_id,
             completion=response.completion_text,
         )
-        return parse_plan(response.completion_text, settings, waited, messages)
+        # The retained window can contain thirty turns, but only these twenty
+        # were offered above. A guessed older sequence is not an informed target.
+        return parse_plan(response.completion_text, settings, waited, messages[-20:])
 
     def close(self):
         """Interrupt all live handlers and release retained conversation material."""
