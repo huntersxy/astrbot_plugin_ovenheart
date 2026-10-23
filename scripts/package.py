@@ -13,16 +13,40 @@ version = re.search(
 destination = root / "dist" / f"astrbot_plugin_ovenheart-v{version}.zip"
 destination.parent.mkdir(exist_ok=True)
 files = [
-    *root.glob("*.py"),
-    root / "metadata.yaml",
-    root / "_conf_schema.json",
-    root / "requirements.txt",
-    root / "README.md",
-    root / "LICENSE",
-    root / "CHANGELOG.md",
+    root / name
+    for name in (
+        "__init__.py",
+        "main.py",
+        "learning.py",
+        "memory_bridge.py",
+        "page_api.py",
+        "participation.py",
+        "prompts.py",
+        "retrieval.py",
+        "settings.py",
+        "store.py",
+        "metadata.yaml",
+        "_conf_schema.json",
+        "requirements.txt",
+        "README.md",
+        "LICENSE",
+        "CHANGELOG.md",
+    )
 ]
-for directory in ("views", "docs", ".astrbot-plugin"):
-    files.extend(p for p in (root / directory).rglob("*") if p.is_file())
+for directory, extensions in (
+    ("views", {".html", ".js", ".css"}),
+    (".astrbot-plugin", {".json"}),
+):
+    files.extend(
+        p
+        for p in (root / directory).rglob("*")
+        if p.is_file() and p.suffix in extensions
+    )
+files.extend(root / path for path in ("docs/zh/README.md", "docs/en/README.md"))
+files.extend(
+    root / "docs/assets" / name
+    for name in ("profile.jpg", "library-triage-v0.56-desktop.jpg")
+)
 with ZipFile(destination, "w", compression=ZIP_DEFLATED) as archive:
     for path in sorted(files):
         archive.write(path, path.relative_to(root).as_posix())

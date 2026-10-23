@@ -1,3 +1,12 @@
 * text=auto eol=lf
 *.jpg binary
 *.png binary
+
+# Keep developer tooling out of source archives used for plugin installation.
+/tests export-ignore
+/scripts export-ignore
+/.github export-ignore
+/pyproject.toml export-ignore
+/uv.lock export-ignore
+/.gitignore export-ignore
+/.gitattributes export-ignore
