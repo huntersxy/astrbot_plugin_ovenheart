@@ -1132,6 +1132,15 @@ Version 0.3 renames the internal 学习记录 tab to 学习与参与 without cha
 
 Default gates are three fresh messages, two seconds of input debounce, a 90-second reply cooldown and 12 autonomous admissions per rolling hour, shared by isolated sessions in the same physical group. Cooldown and quotas survive reload. A native send-stage reply also postpones autonomous participation. Planning starts at most every 30 seconds per scope (or the configured cooldown when shorter), with two global planning slots. Unmet gates wait for a new message rather than running an independent polling reply loop.
 
+Since 0.54.1, admitted decision rows reserve cooldown separately from observed
+native send-stage timestamps. Cancelling an unsent stale request releases its
+reservation without leaving a synthetic full reply cooldown. Actual send hooks
+still postpone participation, including after a later cancellation; a hook does
+not prove platform delivery. Uncancelled/failed attempts remain reserved under
+the existing rules, and the independent planning-check interval still applies.
+Group serialization and persistent quota checks remain atomic. Existing legacy
+timestamps expire normally rather than being reset during upgrade.
+
 The planner chooses reply, observe or one bounded wait followed by one reassessment. New input cancels obsolete work. Provider failure, timeout or invalid plans preserve observation. Plans state reasons, conversational goals and the recent message being answered; they cannot execute tools. The resulting native request binds a conversation and reloads history through the host's session lock, preserving persona/history. Before sending, the plugin points the host's quote and @ decoration at that message and sender instead of the newest message, which may be another bot's answer. Input, permission, profile and settings changes are checked again before generation.
 
 Autonomous tool access is an exact-name subset of tools already present in the native request. An empty allowlist means text-only; an empty denylist adds no restriction. Direct-wake tool policy is unaffected. Since 0.22.1, both schema modes remove denied and host-inactive handlers from the raw tool set, including native name lookup when a provider hallucinates a hidden name. In `skills_like`, a truthy initialization wrapper lets an actually empty input complete AstrBot 4.29.1's runner setup instead of returning before messages and stats exist. Its derived provider schemas are still empty; it retains no blocked handler. Explicitly allowing a tool permits autonomous invocation under existing host permissions. No model weight training is involved, and this is not a copy of every MaiBot subsystem.

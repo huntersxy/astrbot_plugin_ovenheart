@@ -652,7 +652,7 @@ class Store:
         )
 
     def participation_gate(self, db, scope, settings, room="", followup=False):
-        """Check persistent cooldown and rolling autonomous admission limits.
+        """Check observed replies and live reservations without counting cancellations.
 
         Args:
             db: Open database connection.
@@ -670,18 +670,20 @@ class Store:
             "SELECT MAX(last_reply) FROM participation_state WHERE scope=? OR scope=?",
             (scope, room),
         ).fetchone()
+        reservation = db.execute(
+            "SELECT MAX(created),COUNT(*) FROM decisions WHERE (scope=? OR (room<>'' AND room=?)) AND outcome='admitted' AND created>?",
+            (scope, room, now - 3600),
+        ).fetchone()
+        # Admission rows reserve both limits atomically. Cancelling a stale
+        # request releases that reservation without erasing a real send hook.
+        last_reply = max(row[0] or 0, reservation[0] or 0)
         if (
-            row
-            and row[0] is not None
-            and now - row[0] < settings["participation_cooldown"]
+            last_reply
+            and now - last_reply < settings["participation_cooldown"]
             and not (followup and settings["participation_followup"])
         ):
             return "距离上次回复或参与尝试过近，继续旁观。"
-        count = db.execute(
-            "SELECT COUNT(*) FROM decisions WHERE (scope=? OR (room<>'' AND room=?)) AND outcome='admitted' AND created>?",
-            (scope, room, now - 3600),
-        ).fetchone()[0]
-        if count >= settings["participation_hourly_limit"]:
+        if reservation[1] >= settings["participation_hourly_limit"]:
             return "已达到本小时自主参与上限，继续旁观。"
         return ""
 
@@ -720,8 +722,6 @@ class Store:
             if reason:
                 outcome = "cancelled"
                 plan = plan | {"reason": reason}
-            else:
-                self.note_reply(db, scope, plan.get("room", ""))
         cursor = db.execute(
             "INSERT INTO decisions(scope,action,confidence,reason,intent,mode,outcome,created,room) VALUES (?,?,?,?,?,?,?,?,?)",
             (

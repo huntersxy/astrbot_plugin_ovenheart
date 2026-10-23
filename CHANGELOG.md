@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.54.1
+
+- Keep native send-stage cooldown timestamps separate from autonomous reservations. Active admitted decision rows now reserve cooldown and rolling quota atomically; a cancelled unsent decision no longer leaves a synthetic full reply cooldown behind. Actual native send observations still postpone participation.
+- Preserve the independent decision-check interval, stale-input/permission/tool guards, group sharing, follow-up rules and reload persistence. Do not clear legacy timestamps; they expire normally under existing settings. This changes when a later legitimate decision can run, not its confidence or access requirements.
+- Pass five focused native-SDK/SQLite cases covering cancelled unsent requests, preserved real-send cooldown, cross-session group serialization, wrong-scope cancellation, persistent quota reservation and segmented sends. Live cancellation diagnostics motivated this fix; actual post-fix participation quality remains under observation.
+
 ## 0.54.0
 
 - Add speaker-local nearby-message groups to existing language features, distinguishing short individual messages from an idea distributed across multiple messages. Group only eligible batch observations within 30 seconds of each group's first persisted capture time; never join text, authors or evidence identities.
