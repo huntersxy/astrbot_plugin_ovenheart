@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.56.1
+
+- Resume interrupted autonomous work after the latest eligible input's debounce,
+  without waiting for the normal planner interval or minimum fresh-message count.
+- Cancel the obsolete unsent admission before checking the replacement's limits;
+  retain real-send cooldowns, hourly quotas, native direct-wake priority and scope
+  isolation. A send hook or finished observation clears continuation eligibility.
+- Wait for bounded planner capacity on an eligible continuation; newer inputs or
+  actual replies still interrupt that wait. Use fresh context and a fresh verdict,
+  never send an old generated answer after the topic changes.
+- Distinguish new-input cancellation from cancellation after another reply in logs.
+
+
 ## 0.56.0
 
 - Separate extraction self-ratings from semantic review verdicts in Library.

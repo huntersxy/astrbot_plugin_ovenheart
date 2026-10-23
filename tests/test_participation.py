@@ -574,13 +574,17 @@ async def test_skills_like_empty_allowlist_still_yields_a_truthy_tool_set(
 async def test_new_input_cancels_an_admitted_request_waiting_for_host(participant):
     incoming = event("first")
     request = (await requests(participant, incoming))[0]
-    assert await requests(participant, event("new-input")) == []
+    latest = event("new-input")
+    assert len(await requests(participant, latest)) == 1
     await participant.apply_participation(incoming, request)
     assert incoming.is_stopped()
-    scope = incoming.get_extra("ovenheart_decision")["scope"]
-    assert (await participant.store.call("state", scope))["decisions"][0][
-        "outcome"
-    ] == "cancelled"
+    plan = incoming.get_extra("ovenheart_decision")
+    records = (await participant.store.call("state", plan["scope"]))["decisions"]
+    assert (
+        next(row for row in records if row["id"] == plan["id"])["outcome"]
+        == "cancelled"
+    )
+    assert await participant.check_participation(latest)
 
 
 async def test_new_input_suppresses_a_generated_result_before_send(participant):
@@ -947,9 +951,12 @@ async def test_sent_reply_does_not_consume_newer_human_input(participant):
     plan = original.get_extra("ovenheart_decision")
     participant.settings["participation_min_messages"] = 3
     latest = event("arrived-during-send", text="等等，还有一个问题")
-    assert await requests(participant, latest) == []
+    participant.settings["participation_debounce"] = 0.05
+    pending = asyncio.create_task(requests(participant, latest))
+    await asyncio.sleep(0.02)
     original.set_result(original.plain_result("上一条问题的回答"))
     await participant.record_delivery(original)
+    assert await pending == []
     window = participant.participation.windows[plan["scope"]]
     fresh = [
         m

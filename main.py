@@ -1192,16 +1192,29 @@ class PersonaPlugin(Star):
             or room is None
             or room["source"] != plan["room_source"]
         ):
+            reason = (
+                "已有回复，取消过时的参与决策。"
+                if room is None
+                or room.get("source", "").startswith("bot:")
+                or (
+                    window
+                    and any(
+                        m.get("self") and m["sequence"] > plan["sequence"]
+                        for m in window.get("messages", [])
+                    )
+                )
+                else "出现新输入，取消旧参与决策，由最新输入等待消息稳定后续接。"
+            )
             await self.store.call(
                 "cancel_decision",
                 scope,
                 plan["id"],
-                "出现新输入或已有回复，取消过时的参与决策。",
+                reason,
             )
             await self.record_turn_trace(
                 event,
                 status="cancelled",
-                cancel_reason="出现新输入或已有回复，取消过时的参与决策。",
+                cancel_reason=reason,
             )
             event.stop_event()
             return False
@@ -2213,6 +2226,8 @@ class PersonaPlugin(Star):
                 owner = direct_reply.get("source", source)
             current = room is None or room["source"] == owner
             if room:
+                # A send hook supersedes any unsent continuation in this room.
+                room.pop("work", None)
                 room["changed"].set()
                 if not plan:
                     room["source"] = "bot:" + uuid4().hex

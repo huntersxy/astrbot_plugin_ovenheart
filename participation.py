@@ -220,6 +220,7 @@ class ParticipationController:
         self.rooms: dict[str, dict] = {}
         self.sources: dict[tuple[str, str], object] = {}
         self.inflight = 0
+        self.capacity_changed = asyncio.Event()
 
     def room_key(self, event) -> str:
         """Identify the physical group independently of native session isolation.
@@ -261,10 +262,20 @@ class ParticipationController:
             return None
         source = event_source(event)
         previous = self.rooms.get(key)
-        if previous and (
-            previous["source"] == source or previous["arrival"] > event.created_at
-        ):
+        if previous and previous["arrival"] > event.created_at:
             return previous
+        direct = bool(
+            event.is_at_or_wake_command
+            or event.call_llm
+            or event.get_extra("ovenheart_mention")
+        )
+        if previous and previous["source"] == source:
+            if direct:
+                previous.pop("work", None)
+            return previous
+        work = previous.get("work") if previous and not direct else None
+        if work:
+            work["interrupted"] = True
         if previous:
             previous["changed"].set()
         elif len(self.rooms) >= 128:
@@ -274,6 +285,7 @@ class ParticipationController:
             "source": source,
             "arrival": event.created_at,
             "changed": asyncio.Event(),
+            "work": work,
         }
         return self.rooms[key]
 
@@ -428,6 +440,8 @@ class ParticipationController:
         sequence, changed = window["sequence"], window["changed"]
         window["running"] += 1
         reserved = False
+        attempt = None
+        admitted = False
         try:
             try:
                 await asyncio.wait_for(
@@ -456,16 +470,40 @@ class ParticipationController:
                 and pending
                 and all(m["sender_id"] == event.get_sender_id() for m in pending)
             )
-            if not followup and (
-                len(pending) < settings["participation_min_messages"]
-                or time.monotonic() - window["last_check"]
-                < min(30, settings["participation_cooldown"])
+            previous = room.get("work")
+            resumed = bool(
+                previous
+                and previous["scope"] == scope
+                and previous["source"] != source
+                and previous["interrupted"]
+                and 0 <= time.time() - previous["created"] <= 600
+                and pending
+            )
+            if resumed and previous.get("id") is not None:
+                # Release only the superseded unsent reservation. Real send
+                # cooldowns remain in participation_state and still gate this turn.
+                await plugin.store.call(
+                    "cancel_decision",
+                    scope,
+                    previous["id"],
+                    "新输入打断旧回复，等待消息稳定后续接。",
+                )
+            if (
+                not followup
+                and not resumed
+                and (
+                    len(pending) < settings["participation_min_messages"]
+                    or time.monotonic() - window["last_check"]
+                    < min(30, settings["participation_cooldown"])
+                )
             ):
                 return None
             gate = await plugin.store.call(
                 "participation_gate", scope, settings, room_key, followup
             )
             if gate:
+                if resumed and room.get("work") is previous:
+                    room.pop("work", None)
                 await plugin.store.call(
                     "decide",
                     scope,
@@ -475,11 +513,42 @@ class ParticipationController:
                     settings,
                 )
                 return None
+            while resumed and self.inflight >= 2:
+                self.capacity_changed.clear()
+                capacity = asyncio.create_task(self.capacity_changed.wait())
+                interrupted = asyncio.create_task(changed.wait())
+                try:
+                    await asyncio.wait(
+                        (capacity, interrupted), return_when=asyncio.FIRST_COMPLETED
+                    )
+                finally:
+                    for work in (capacity, interrupted):
+                        if not work.done():
+                            work.cancel()
+                    await asyncio.gather(capacity, interrupted, return_exceptions=True)
+                if changed.is_set():
+                    return None
             if self.inflight >= 2:
                 return None
             self.inflight += 1
             reserved = True
             window["last_check"] = time.monotonic()
+            attempt = {
+                "scope": scope,
+                "source": source,
+                "id": None,
+                "created": time.time(),
+                "interrupted": False,
+            }
+            room["work"] = attempt
+            if resumed:
+                plugin.debug(
+                    "participation_resumed",
+                    scope=scope,
+                    source=source,
+                    previous_decision=previous.get("id"),
+                    pending=len(pending),
+                )
             # Older context remains visible, but only fresh inputs satisfy the admission gate.
             messages = list(window["messages"])
             for waited in (False, True):
@@ -539,6 +608,8 @@ class ParticipationController:
                     )
                     target = None
                 plan = plan | {"room": room_key, "target": target, "followup": followup}
+                if resumed:
+                    plan["reason"] = "新输入续接：" + plan["reason"][:235]
                 if followup:
                     plan["reason"] = "连续接话：" + plan["reason"][:235]
                 if (
@@ -584,6 +655,8 @@ class ParticipationController:
                 )
                 window["consumed"] = sequence
                 if decision["outcome"] == "admitted":
+                    admitted = True
+                    attempt["id"] = decision["id"]
                     offered = messages[-20:]
                     position = offered.index(target)
                     neighbors = []
@@ -635,6 +708,7 @@ class ParticipationController:
                         "reply_context": reply_context,
                         "sequence": sequence,
                         "profile": state["scope"]["profile"],
+                        "resumed": resumed,
                         "room_source": room["source"],
                     }
                 return None
@@ -664,9 +738,19 @@ class ParticipationController:
             )
             return None
         finally:
+            latest_room = self.rooms.get(room_key)
+            if (
+                attempt is not None
+                and not admitted
+                and not attempt["interrupted"]
+                and latest_room is not None
+                and latest_room.get("work") is attempt
+            ):
+                latest_room.pop("work", None)
             window["running"] -= 1
             if reserved:
                 self.inflight -= 1
+                self.capacity_changed.set()
 
     async def plan(
         self, event, scope, persona, state, messages, settings, waited, followup=False

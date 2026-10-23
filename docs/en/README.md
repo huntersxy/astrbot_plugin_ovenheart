@@ -1250,3 +1250,16 @@ Local simulated fixture screenshots, not production data or quality claims:
 ![Library review triage](../assets/library-triage-v0.56-desktop.jpg)
 
 [Mobile layout](../assets/library-triage-v0.56-mobile.jpg)
+
+### Continue after new input (0.56.1)
+
+New input still invalidates an unfinished plan or unsent autonomous reply. After
+an eligible latest input has been quiet for the existing debounce interval
+(default two seconds), the same-scope continuation immediately re-evaluates fresh
+context without waiting for the regular decision interval or minimum new-message
+count. Repeated inputs reset the wait. A fresh observe verdict still declines to
+reply; stale generated answers are never sent.
+
+Actual replies clear continuation eligibility. Real-send cooldowns, hourly quotas,
+permissions, tool policy, persona/session isolation and native direct-wake priority
+remain enforced. A completed observation is not treated as interrupted work.
