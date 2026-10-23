@@ -48,7 +48,7 @@ function fixture() {
   const nodes = new Map();
   let confirmations = [];
   const element = selector => {
-    if (!nodes.has(selector)) nodes.set(selector, {innerHTML:'', textContent:'', value:'', disabled:false, hidden:false, dataset:{}, addEventListener() {}});
+    if (!nodes.has(selector)) nodes.set(selector, {innerHTML:'', textContent:'', value:'', disabled:false, hidden:false, dataset:{}, insertAdjacentHTML(_where, html) { this.innerHTML += html; }, addEventListener() {}});
     return nodes.get(selector);
   };
   const context = createContext({
@@ -56,6 +56,7 @@ function fixture() {
     window:{addEventListener() {}},
     setInterval() {},
     console,
+    FormData: class { getAll() { return []; } },
   });
   const dialog = element('#confirmation');
   let onClose;
@@ -129,8 +130,8 @@ test('learning self-check reasons are visible and escaped in history and the lib
   const {context,element}=fixture();
   runInContext(`data.runs=[{started:1,status:'success',message:'完成',memory:'',review:{enabled:true,passed:0,flagged:1,candidates:[{kind:'expression',situation:'被调侃时',content:'原始习惯',approved:false,reason:'<img src=x onerror=alert(1)>'}]}}]; renderLibrary();`,context);
   let html=element('#content').innerHTML;
-  assert.ok(html.includes('学习自检提示'));
-  assert.ok(html.includes('人工审核可以覆盖'));
+  assert.ok(html.includes('自检存疑'));
+  assert.ok(html.includes('不是正确率，也不能覆盖自检结论'));
   assert.ok(html.includes('&lt;img src=x onerror=alert(1)&gt;'));
   assert.ok(!html.includes('<img src=x'));
   runInContext(`data.settings={participation_mode:'off'};data.revisions=[];data.applications=[];data.decisions=[];renderHistory();`,context);
@@ -166,7 +167,7 @@ test('all-library review uses the entry owner rather than the header conversatio
   const reviews=[{dataset:{review:'active'}}], feedback=[{dataset:{feedback:'-1'}}];
   context.document.querySelectorAll=selector => selector==='[data-review]'?reviews:selector==='[data-feedback]'?feedback:[];
   runInContext(`selectedScope='a'.repeat(24);data.traits[0].scope='b'.repeat(24);data.traits[0].label='<群>';data.traits[0].persona='烘焙';data.library={traits:data.traits,runs:[],total:1,offset:0};globalThis.sent=[];mutate=async(...args)=>sent.push(args);renderLibrary();`,context);
-  element('#field-situation').value='编辑情境';element('#field-content').value='编辑内容';
+  element('#field-situation').value='编辑情境';element('#field-content').value='编辑内容';element('#trait-form').situation={value:'编辑情境'};element('#trait-form').content={value:'编辑内容'};
   reviews[0].onclick();
   runInContext('dirty=false',context);await feedback[0].onclick();
   const form={situation:{value:'编辑情境'},content:{value:'编辑内容'}};
@@ -289,4 +290,21 @@ for (const approved of [false,true]) test(`switching prompt editor protects an u
   assert.equal(runInContext('selectedPrompt',context),approved?'review':'planner');
   assert.equal(runInContext('dirty',context),!approved);
   if (!approved) assert.equal(element('#content').innerHTML,before);
+});
+
+
+test('review triage separates scores and verdicts and only selects passed pending entries', () => {
+  const {context,element}=fixture();
+  runInContext(`dirty=false;data.library={total:237,offset:0,review_counts:{passed:1,flagged:1,unknown:235},issue_counts:{learning_target:1},traits:[{...data.traits[0],id:1,scope:'a'.repeat(24),updated:1,confidence:.9,review:{approved:false,reason:'没有机器人自身发言',issue:'learning_target'}},{...data.traits[0],id:2,scope:'b'.repeat(24),updated:2,review:{approved:true}}]};renderLibrary();`,context);
+  const html=element('#content').innerHTML;
+  assert.ok(html.includes('提取自评 90%'));
+  assert.ok(html.includes('自检存疑 · 学习对象混淆'));
+  assert.ok(html.includes('无匹配自检（235）'));
+  element('#select-passed').onclick();
+  assert.equal(runInContext('librarySelection.size',context),1);
+  assert.equal(runInContext('librarySelection.has(2)',context),true);
+  element('#select-page').onclick();
+  assert.equal(runInContext('librarySelection.size',context),2);
+  runInContext('data.library.traits[1].updated=3;renderLibrary();',context);
+  assert.equal(runInContext('librarySelection.has(2)',context),false);
 });

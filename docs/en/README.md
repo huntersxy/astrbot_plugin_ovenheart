@@ -1220,3 +1220,33 @@ The host still owns permissions, whitelists, rate limits, safety checks, the LLM
 ## Runtime boundaries (0.22.1)
 
 Autonomous restrictions also apply at native tool name lookup, including skills-like requests and host-inactive tools. Text-only requests initialize without retaining blocked handlers. Plain-text mention conversion now requires an unambiguous complete display name; longer-name prefixes, emails, URL paths and inline/fenced code remain literal, while full-width `＠` is supported. The 0.22 planner target and real quote/mention behavior is preserved. See [native execution regressions](../evaluation/runtime-boundaries.md).
+
+### Library review triage (0.56)
+
+The former confidence label is now **extraction self-rating**, not correctness or
+review success probability. Activation status and review verdict remain separate.
+The new review filter separates passed, flagged and unmatched audits. Flagged
+entries can be grouped by learning-target confusion, insufficient evidence,
+conditions/scope, identity/personal facts, incompatible merges, delivery/tools,
+and other concerns. These navigation groups use keywords in the visible reason;
+they do not replace the full explanation or evidence. Counts cover the entire
+selected scope/category/status before pagination.
+
+Select pending entries on the current page, or select only review-passed entries,
+then explicitly approve or reject the selection (at most 100 per page). Approval
+warns about flagged or unmatched entries. Any stale version rejects the whole
+selection. Each owner scope gets a restorable history snapshot. This does not
+silently approve or clear the backlog. Configurable automatic activation remains
+available; a high extraction score cannot bypass a failed enabled self-check.
+
+Matching audits are recovered from retained successful runs using wording,
+evidence IDs and expression samples, and persist beyond run-history pruning.
+Missing audits stay unknown. Editing wording or removing samples invalidates the
+current audit. Human expression can teach transferable styles without requiring
+bot-authored evidence; inferring an answer style from human questions is different.
+
+Local simulated fixture screenshots, not production data or quality claims:
+
+![Library review triage](../assets/library-triage-v0.56-desktop.jpg)
+
+[Mobile layout](../assets/library-triage-v0.56-mobile.jpg)

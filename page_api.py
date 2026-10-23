@@ -186,6 +186,7 @@ class PageAPI:
                 request.query.get("kind", "all"),
                 request.query.get("status", "pending"),
                 int(request.query.get("offset", "0")),
+                request.query.get("review", "all"),
             )
             return {"status": "ok", "data": result}
         except (ValueError, TypeError):
@@ -220,6 +221,23 @@ class PageAPI:
                 return {
                     "status": "ok",
                     "data": {"message": "学习设置已保存，并同步到 AstrBot 插件配置。"},
+                }
+            if operation == "review_batch":
+                if set(payload) != {"entries", "status"}:
+                    raise ValueError("批量审核请求无效，请刷新后重选。")
+                count = await self.plugin.store.call(
+                    "review_batch", payload["entries"], payload["status"]
+                )
+                if payload["status"] == "active":
+                    for owner in dict.fromkeys(
+                        entry["scope"] for entry in payload["entries"]
+                    ):
+                        self.plugin.track(self.plugin.prewarm_embeddings(owner))
+                return {
+                    "status": "ok",
+                    "data": {
+                        "message": f"已处理 {count} 条待审核条目，可在所属会话的历史版本中恢复。"
+                    },
                 }
             scope = (
                 SHARED_SCOPE

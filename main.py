@@ -34,12 +34,14 @@ from . import prompts
 from .learning import (
     LEARNING_DELIVERY_RULE,
     LEARNING_RHYTHM_RULE,
+    LEARNING_TRANSFER_RULE,
     LearningFormatError,
     build_guidance_parts,
     habit_text,
     normalize_quote,
     parse_candidates,
     parse_learning_review,
+    review_issue,
 )
 from .memory_bridge import MemoryBridge
 from .participation import ParticipationController, bound_reply_messages, event_source
@@ -2553,6 +2555,7 @@ class PersonaPlugin(Star):
             "conversation_context": context,
             "delivery_policy": LEARNING_DELIVERY_RULE,
             "language_feature_policy": LEARNING_RHYTHM_RULE,
+            "learning_transfer_policy": LEARNING_TRANSFER_RULE,
             "memory_context": memories,
             "candidates": candidates,
         }
@@ -2618,6 +2621,7 @@ class PersonaPlugin(Star):
                     "candidate_id": index,
                     "approved": approved,
                     "reason": verdicts[index] or "",
+                    "issue": review_issue(verdicts[index]) if not approved else "",
                     **{key: trait[key] for key in ("kind", "situation", "content")},
                     "evidence_ids": [e["id"] for e in trait["evidence"]],
                     "merge_target": trait.get("_merge_target"),
@@ -2629,7 +2633,11 @@ class PersonaPlugin(Star):
                 }
             )
         return [
-            t | {"_review_approved": verdicts[i] is None}
+            t
+            | {
+                "_review_approved": verdicts[i] is None,
+                "_review_audit": audit["candidates"][i - 1],
+            }
             for i, t in enumerate(traits, 1)
         ], audit
 
@@ -3015,6 +3023,7 @@ class PersonaPlugin(Star):
                     "memory_context": memories,
                     "language_features": language_features,
                     "language_feature_policy": LEARNING_RHYTHM_RULE,
+                    "learning_transfer_policy": LEARNING_TRANSFER_RULE,
                     "conversation_context": conversation_context,
                 },
                 ensure_ascii=False,

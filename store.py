@@ -9,7 +9,7 @@ import sqlite3
 import time
 from pathlib import Path
 
-from .learning import jargon_term, normalize_quote
+from .learning import jargon_term, normalize_quote, review_issue
 from .settings import KINDS, PROFILE_DEFAULTS, SHARED_SCOPE, validate_settings
 
 
@@ -188,6 +188,7 @@ class Store:
             "manual": "INTEGER NOT NULL DEFAULT 0",
             "meaning_stage": "INTEGER NOT NULL DEFAULT 0",
             "examples": "TEXT NOT NULL DEFAULT '[]'",
+            "review_audit": "TEXT NOT NULL DEFAULT '{}'",
         }.items():
             if column not in columns:
                 db.execute(f"ALTER TABLE traits ADD COLUMN {column} {definition}")
@@ -264,6 +265,51 @@ class Store:
                 "UPDATE trait_aliases SET scope=? WHERE trait_id=?",
                 (origin, row["id"]),
             )
+        if "review_audit" not in columns:
+            # Backfill all retained runs once, matching actual source IDs and wording.
+            # Missing historical audits stay unknown rather than being called passed.
+            matched = set()
+            for run in db.execute(
+                "SELECT id,scope,started,finished,review FROM runs WHERE status='success' ORDER BY id DESC"
+            ):
+                for candidate in json.loads(run["review"]).get("candidates", []):
+                    if type(candidate.get("approved")) is not bool:
+                        continue
+                    for trait in db.execute(
+                        "SELECT id,evidence,examples,created FROM traits WHERE (scope=? OR (scope=? AND kind<>'jargon')) AND kind=? AND situation=? AND content=?",
+                        (
+                            run["scope"],
+                            SHARED_SCOPE,
+                            candidate.get("kind"),
+                            candidate.get("situation"),
+                            candidate.get("content"),
+                        ),
+                    ):
+                        if (
+                            candidate["approved"] is False
+                            and trait["created"] < run["started"]
+                        ):
+                            continue
+                        if trait["id"] in matched or not set(
+                            candidate.get("evidence_ids", [])
+                        ).intersection(e["id"] for e in json.loads(trait["evidence"])):
+                            continue
+                        if [e["text"] for e in candidate.get("examples", [])] != [
+                            e["text"] for e in json.loads(trait["examples"])
+                        ]:
+                            continue
+                        audit = candidate | {
+                            "run_id": run["id"],
+                            "checked_at": run["finished"],
+                            "issue": review_issue(candidate.get("reason", ""))
+                            if not candidate["approved"]
+                            else "",
+                        }
+                        db.execute(
+                            "UPDATE traits SET review_audit=? WHERE id=?",
+                            (json.dumps(audit, ensure_ascii=False), trait["id"]),
+                        )
+                        matched.add(trait["id"])
         existing = {row[0] for row in db.execute("SELECT scope FROM learning_runtime")}
         recovered, succeeded = {}, set()
         for row in db.execute(
@@ -615,27 +661,44 @@ class Store:
             ]
         return result
 
-    def library(self, db, scope="all", kind="all", status="pending", offset=0):
-        """Read a filtered page across conversations without changing their ownership.
+    def library(
+        self, db, scope="all", kind="all", status="pending", offset=0, review="all"
+    ):
+        """Read a paginated library with independent extraction and review signals.
 
         Args:
             db: Open database connection.
-            scope: One conversation key, or all conversations.
-            kind: Learning category filter.
-            status: Review status filter.
+            scope: One native scope, or all scopes.
+            kind: Learned habit category.
+            status: Activation status, independent of review verdict.
             offset: Zero-based page offset.
+            review: Review verdict or concern category filter.
 
         Returns:
-            Entries with owner labels, scoped review audits and pagination metadata.
+            Entries, full-filter counts and stable pagination metadata.
 
         Raises:
-            ValueError: If any filter or page is invalid.
+            ValueError: If filters or pagination are invalid.
         """
         if (
             not isinstance(scope, str)
             or (scope != "all" and len(scope) != 24)
             or kind not in ("all", "personality", "expression", "jargon", "behavior")
             or status not in ("all", "pending", "active", "rejected", "disabled")
+            or review
+            not in (
+                "all",
+                "passed",
+                "flagged",
+                "unknown",
+                "learning_target",
+                "delivery",
+                "identity",
+                "merge",
+                "scope",
+                "evidence",
+                "other",
+            )
             or type(offset) is not int
             or offset < 0
         ):
@@ -646,44 +709,127 @@ class Store:
                 filters.append(f"t.{column}=?")
                 values.append(value)
         where = " AND ".join(filters) or "1=1"
+        verdict = "CASE json_extract(t.review_audit,'$.approved') WHEN 1 THEN 'passed' WHEN 0 THEN 'flagged' ELSE 'unknown' END"
+        counts = {"passed": 0, "flagged": 0, "unknown": 0}
+        issues = {}
+        for row in db.execute(
+            f"SELECT {verdict} verdict,json_extract(t.review_audit,'$.issue') issue,COUNT(*) count FROM traits t JOIN scopes s ON s.id=t.scope WHERE {where} GROUP BY verdict,issue",
+            values,
+        ):
+            counts[row["verdict"]] += row["count"]
+            if row["verdict"] == "flagged":
+                key = row["issue"] or "other"
+                issues[key] = issues.get(key, 0) + row["count"]
+        if review in counts:
+            where += f" AND ({verdict})=?"
+            values.append(review)
+        elif review != "all":
+            where += " AND json_extract(t.review_audit,'$.approved')=0 AND json_extract(t.review_audit,'$.issue')=?"
+            values.append(review)
         total = db.execute(
             f"SELECT COUNT(*) FROM traits t JOIN scopes s ON s.id=t.scope WHERE {where}",
             values,
         ).fetchone()[0]
         offset = min(offset // 100, max(0, (total - 1) // 100)) * 100
-        traits = [
-            dict(row)
-            | {
-                "evidence": json.loads(row["evidence"]),
-                "examples": json.loads(row["examples"]),
-            }
-            for row in db.execute(
-                f"SELECT t.*, s.label, s.persona FROM traits t JOIN scopes s ON s.id=t.scope WHERE {where} ORDER BY t.updated DESC, t.id DESC LIMIT 100 OFFSET ?",
-                (*values, offset),
+        traits = []
+        for row in db.execute(
+            f"SELECT t.*,s.label,s.persona FROM traits t JOIN scopes s ON s.id=t.scope WHERE {where} ORDER BY t.updated DESC,t.id DESC LIMIT 100 OFFSET ?",
+            (*values, offset),
+        ):
+            trait = dict(row)
+            audit = json.loads(trait.pop("review_audit"))
+            if audit and not audit.get("issue") and audit.get("approved") is False:
+                audit["issue"] = review_issue(audit.get("reason", ""))
+            trait.update(
+                evidence=json.loads(trait["evidence"]),
+                examples=json.loads(trait["examples"]),
+                review=audit or None,
             )
-        ]
-        for owner in dict.fromkeys(t["scope"] for t in traits):
-            candidates = [
-                candidate
-                for row in db.execute(
-                    "SELECT review FROM runs WHERE scope=? OR ?=? ORDER BY id DESC LIMIT 30",
-                    (owner, owner, SHARED_SCOPE),
-                )
-                for candidate in json.loads(row["review"]).get("candidates", [])
-            ]
-            for trait in (t for t in traits if t["scope"] == owner):
-                trait["review"] = next(
-                    (
-                        candidate
-                        for candidate in candidates
-                        if all(
-                            candidate.get(key) == trait[key]
-                            for key in ("kind", "situation", "content")
-                        )
-                    ),
-                    None,
-                )
-        return {"traits": traits, "total": total, "offset": offset}
+            traits.append(trait)
+        return {
+            "traits": traits,
+            "total": total,
+            "offset": offset,
+            "review_counts": counts,
+            "issue_counts": issues,
+        }
+
+    def review_batch(self, db, entries, status):
+        """Apply a bounded operator selection atomically with stale-entry checks.
+
+        Args:
+            db: Open database connection.
+            entries: At most 100 IDs, owner scopes and observed update times.
+            status: Explicit operator activation or rejection decision.
+
+        Returns:
+            Number of changed entries.
+
+        Raises:
+            ValueError: If the selection is stale, malformed or not pending.
+        """
+        if (
+            status not in ("active", "rejected")
+            or not isinstance(entries, list)
+            or not 1 <= len(entries) <= 100
+        ):
+            raise ValueError("请选择本页最多 100 条待审核条目。")
+        selected, seen = [], set()
+        for entry in entries:
+            if (
+                not isinstance(entry, dict)
+                or set(entry) != {"id", "scope", "updated"}
+                or type(entry["id"]) is not int
+                or entry["id"] in seen
+                or not isinstance(entry["scope"], str)
+                or type(entry["updated"]) not in (int, float)
+            ):
+                raise ValueError("批量审核条目无效，请刷新后重选。")
+            seen.add(entry["id"])
+            row = db.execute(
+                "SELECT * FROM traits WHERE id=? AND scope=?",
+                (entry["id"], entry["scope"]),
+            ).fetchone()
+            if (
+                row is None
+                or row["updated"] != entry["updated"]
+                or row["status"] != "pending"
+            ):
+                raise ValueError("所选条目已改变，本次全部未处理；请刷新后重选。")
+            if (
+                status == "active"
+                and row["kind"] == "jargon"
+                and row["scope"] == SHARED_SCOPE
+            ):
+                raise ValueError("旧共用词汇来源不明，不能批量生效。")
+            selected.append(dict(row))
+        now = time.time()
+        for scope in dict.fromkeys(row["scope"] for row in selected):
+            profile = db.execute(
+                "SELECT profile FROM scopes WHERE id=?", (scope,)
+            ).fetchone()
+            if profile is None:
+                raise ValueError("所属会话已改变，请刷新后重选。")
+            snapshot = {
+                "profile": json.loads(profile[0]),
+                "traits": [
+                    dict(t)
+                    for t in db.execute("SELECT * FROM traits WHERE scope=?", (scope,))
+                ],
+            }
+            db.execute(
+                "INSERT INTO revisions(scope,action,snapshot,created) VALUES (?,'review_batch',?,?)",
+                (scope, json.dumps(snapshot, ensure_ascii=False), now),
+            )
+            db.execute(
+                "DELETE FROM revisions WHERE scope=? AND id NOT IN (SELECT id FROM revisions WHERE scope=? ORDER BY id DESC LIMIT 30)",
+                (scope, scope),
+            )
+        db.executemany(
+            "UPDATE traits SET status=?,manual=1,updated=? WHERE id=?",
+            [(status, now, row["id"]) for row in selected],
+        )
+        return len(selected)
 
     def touch_scope(self, db, scope, umo, persona, label):
         """Create a scope even when raw-message learning is disabled.
@@ -1349,6 +1495,34 @@ class Store:
                             target["id"],
                         ),
                     )
+                    audit = trait.get("_review_audit")
+                    if (
+                        audit
+                        and situation == trait["situation"]
+                        and content == trait["content"]
+                        and [e["text"] for e in examples]
+                        == [e["text"] for e in trait.get("examples", [])]
+                    ):
+                        db.execute(
+                            "UPDATE traits SET review_audit=? WHERE id=?",
+                            (
+                                json.dumps(
+                                    audit | {"run_id": run_id, "checked_at": now},
+                                    ensure_ascii=False,
+                                ),
+                                target["id"],
+                            ),
+                        )
+                    elif (
+                        situation != target["situation"]
+                        or content != target["content"]
+                        or [e["text"] for e in examples]
+                        != [e["text"] for e in json.loads(target["examples"])]
+                    ):
+                        db.execute(
+                            "UPDATE traits SET review_audit='{}' WHERE id=?",
+                            (target["id"],),
+                        )
                     reinforced.add(target["id"])
                     continue
                 status = (
@@ -1376,6 +1550,18 @@ class Store:
                     ),
                 )
                 if cursor.rowcount:
+                    audit = trait.get("_review_audit")
+                    if audit:
+                        db.execute(
+                            "UPDATE traits SET review_audit=? WHERE id=?",
+                            (
+                                json.dumps(
+                                    audit | {"run_id": run_id, "checked_at": now},
+                                    ensure_ascii=False,
+                                ),
+                                cursor.lastrowid,
+                            ),
+                        )
                     added += 1
                     batch_support[cursor.lastrowid] = {
                         "count": 0,
@@ -1635,12 +1821,12 @@ class Store:
                     for key in ("situation", "content")
                 ):
                     db.execute(
-                        "UPDATE traits SET examples='[]' WHERE scope=? AND id=?",
+                        "UPDATE traits SET examples='[]',review_audit='{}' WHERE scope=? AND id=?",
                         (scope, payload["id"]),
                     )
                 elif removals:
                     db.execute(
-                        "UPDATE traits SET examples=?, updated=? WHERE scope=? AND id=?",
+                        "UPDATE traits SET examples=?, updated=?,review_audit='{}' WHERE scope=? AND id=?",
                         (
                             json.dumps(
                                 [e for e in examples if e["text"] not in removals],
@@ -1673,7 +1859,7 @@ class Store:
             )
             for trait in data["traits"]:
                 db.execute(
-                    "UPDATE traits SET situation=?, content=?, confidence=?, evidence=?, status=?, examples=?, updated=? WHERE scope=? AND id=?",
+                    "UPDATE traits SET situation=?, content=?, confidence=?, evidence=?, status=?, examples=?, review_audit=?, updated=? WHERE scope=? AND id=?",
                     (
                         trait["situation"],
                         trait["content"],
@@ -1681,6 +1867,7 @@ class Store:
                         trait["evidence"],
                         trait["status"],
                         trait.get("examples", "[]"),
+                        trait.get("review_audit", "{}"),
                         time.time(),
                         scope,
                         trait["id"],

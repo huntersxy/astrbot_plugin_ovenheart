@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.56.0
+
+- Separate extraction self-ratings from semantic review verdicts in Library.
+- Filter by passed, flagged or unknown review and seven visible concern groups;
+  show counts across the full selected scope/category/status, before pagination.
+- Recover matching historical reviews from all retained successful runs and retain
+  audits on entries beyond run-history pruning. Wording/sample edits invalidate
+  the current review; manual activation remains independent.
+- Add explicit page selection, passed-only selection and atomic bulk approval or
+  rejection with stale-entry checks and one restorable snapshot per owner scope.
+- Clarify that human expression is transferable learning material; bot-authored
+  evidence is neither required nor permitted as learned evidence. Include this
+  policy in both default prompts and structured inputs for custom templates.
+- Keep existing activation decisions, confidence values, material and configuration.
+
+
 ## 0.55.0
 
 - Persist per-native-scope learning attempt times and consecutive failure streaks in `learning_runtime`. Reloads retain automatic cadence and backoff; first upgrade recovers attempts/streaks from existing runs, excluding the two historical interruption markers. Start/finish updates share their run transactions; success resets the streak and interruptions do not add failures. Never shorten a configured interval longer than the one-hour exponential-backoff cap.

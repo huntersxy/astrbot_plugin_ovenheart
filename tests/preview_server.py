@@ -243,6 +243,9 @@ async def lifespan(app):
                     **{key: trait[key] for key in ("kind", "situation", "content")},
                 }
             )
+        for trait, audit in zip(traits, review["candidates"], strict=True):
+            audit["issue"] = "evidence" if not audit["approved"] else ""
+            trait["_review_audit"] = audit
         await plugin.store.call(
             "finish_run",
             run,
