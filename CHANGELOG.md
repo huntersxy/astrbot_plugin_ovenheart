@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.46.0
+
+- Cache completed, validated contextual selection IDs in memory for 60 seconds, at most 64 entries with access-order eviction. Fingerprint the effective retrieval scope, full actual selector request, provider instance/model/configuration and offered sample text; valid empty selections can be reused.
+- Serve exact hits before remote capacity checks and rebuild selected traits from current metadata. Keep existing permission/profile/status rechecks, literal jargon handling and final reply generation. Move the two-request limit into actual selector calls; do not share in-flight work.
+- Never cache invalid/failed outputs or requests cancelled during generation. Check provider identity/configuration again before publication; unknown/unfingerprintable providers retain normal uncached selection. Store only a digest, native provider reference and IDs, not request/configuration text or raw completions.
+- Expose `selector_cache_hit` and a readable reuse message. No new setting or model stage is introduced; vector/rerank recall may still run with its own caches. Pass four focused cache cases and three existing selection/prefix checks using simulated providers. Provider KV hits, production latency and billing improvements are not claimed.
+
 ## 0.45.0
 
 - Rotate explicit target evidence groups across successful batches when one batch cannot cover everyone. Break same-group ties by the least recently processed speaker in that native scope, retaining the scheduler's own order separately from restored chat chronology.

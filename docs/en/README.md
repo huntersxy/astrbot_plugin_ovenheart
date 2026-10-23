@@ -1,5 +1,35 @@
 # OvenHeart workshop guide
 
+## Exact contextual-choice cache (0.46)
+
+Completed validated selector IDs, including an intentional empty choice, can be
+reused for 60 seconds in memory. Keep at most 64 entries with access-order
+eviction; hits do not renew expiry and later requests purge expired entries.
+Fingerprint the effective habit scope, full actual request (identity, candidates/
+samples, limit, recent-expression hint, style intent, conversation and template)
+and native provider instance/model/configuration. Isolated scopes cannot share;
+shared mode still requires matching actual candidates, persona and conversation.
+
+Entries hold a digest, native provider reference and IDs, not copied request/config
+text or raw completions. Secrets are not emitted in cache diagnostics. Current
+metadata is rebuilt rather than cached trait copies; fields not seen by the
+selector can change without invalidating otherwise identical inputs. Changed
+candidate state/text/samples or actual request recomputes. Unresolvable providers
+or fingerprint failures retain ordinary calls. Provider/configuration replacement
+before completion prevents stale publication. Invalid/failed output and requests
+cancelled during generation do not seed the cache; in-flight work is not shared.
+
+Exact hits precede the two-remote-request capacity check. Misses retain existing
+timeouts/capacity. Permission/profile/persona/active-state rechecks, local literal
+vocabulary and final reply generation remain. Vector/rerank recall may still use
+services through their own caches/budgets; a hit does not promise zero other calls,
+adoption, delivery or approval. Free preview does not invoke the selector.
+
+Diagnostic `selector_cache_hit` and retrieval messages identify reuse. No switch
+or database migration is introduced; plugin reload clears entries. Four focused
+cache cases and three existing selection/prefix checks pass with simulated
+providers. Provider KV hits, production latency and billing remain unverified.
+
 ## Selective sample review (0.44)
 
 In Library details, mark individual samples with the removal checkbox, then Save

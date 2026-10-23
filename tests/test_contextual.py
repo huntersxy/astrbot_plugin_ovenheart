@@ -42,7 +42,7 @@ async def test_recent_expression_hint_filters_ids_without_forbidding_reuse(retri
         return_value=SimpleNamespace(completion_text='{"selected_ids":[1]}')
     )
     word = TRAITS[0] | {"id": 5, "kind": "jargon", "content": "LUX：平安到家"}
-    selected = await retriever.contextual_ids(
+    selected, _ = await retriever.contextual_ids(
         TRAITS + [word], "我想说说心情", DEFAULTS, "chat", "小夏", [1, 1, 5, True, 999]
     )
     payload = json.loads(retriever.context.llm_generate.await_args.kwargs["prompt"])

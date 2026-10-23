@@ -516,12 +516,10 @@ async def test_cached_selector_serializes_stable_candidates_before_changing_quer
         ("本轮问题一", pool),
         ("本轮问题二", list(reversed(pool))),
     ):
-        assert (
-            await plugin.retriever.contextual_ids(
-                candidates, query, plugin.settings, "fixture", "相同身份"
-            )
-            == []
+        selected, _ = await plugin.retriever.contextual_ids(
+            candidates, query, plugin.settings, "fixture", "相同身份"
         )
+        assert selected == []
     first, second = [
         call.kwargs["prompt"] for call in plugin.context.llm_generate.await_args_list
     ]

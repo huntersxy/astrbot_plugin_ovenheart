@@ -32,6 +32,10 @@ class RerankBusyError(RuntimeError):
     """Signal remote rerank capacity exhaustion after checking the local cache."""
 
 
+class SelectorBusyError(RuntimeError):
+    """Signal selector capacity exhaustion when no exact cached choice exists."""
+
+
 def parse_selection(text: str, candidates: list[dict], maximum: int) -> list[int]:
     """Accept only distinct identifiers offered to the selector for this request.
 
@@ -178,6 +182,7 @@ class HabitRetriever:
         self.lock = asyncio.Lock()
         self.query_cache: dict[str, tuple[float, list[float]]] = {}
         self.rerank_cache: dict[str, tuple[float, dict[int, float]]] = {}
+        self.selector_cache: dict[str, tuple[float, object, tuple[int, ...]]] = {}
         self.rerank_cache_provider = None
         self.status: dict[str, dict] = {}
         self.selecting = 0
@@ -285,46 +290,44 @@ class HabitRetriever:
             # Keyword overlap cannot establish applicability after a failed selector.
             result["traits"] = []
             result["mode"] = "contextual_fallback"
-            if self.selecting >= 2:
+            try:
+                selected, cached = await self.contextual_ids(
+                    pool,
+                    query,
+                    settings,
+                    provider_id,
+                    identity,
+                    recent_expression_ids,
+                    expression_intent,
+                    scope=scope,
+                )
+                offered = {t["id"]: t for t in pool}
+                result.update(
+                    traits=[
+                        offered[i] | {"_reason": "当前对话情境筛选"} for i in selected
+                    ],
+                    mode="contextual",
+                    selector_cache_hit=cached,
+                    message=("已复用一分钟内相同输入的情境筛选结果。" if cached else "")
+                    + f"情境模型从 {len(pool)} 条候选中选用 {len(selected)} 条；允许本轮不选习惯。",
+                )
+            except SelectorBusyError:
                 result["message"] = (
                     "情境筛选繁忙，本轮不选表达、性格与行为习惯；保留人格底稿和当前输入直接命中的词汇。"
                 )
-            else:
-                self.selecting += 1
-                try:
-                    selected = await self.contextual_ids(
-                        pool,
-                        query,
-                        settings,
-                        provider_id,
-                        identity,
-                        recent_expression_ids,
-                        expression_intent,
-                    )
-                    offered = {t["id"]: t for t in pool}
-                    result.update(
-                        traits=[
-                            offered[i] | {"_reason": "当前对话情境筛选"}
-                            for i in selected
-                        ],
-                        mode="contextual",
-                        message=f"情境模型从 {len(pool)} 条候选中选用 {len(selected)} 条；允许本轮不选习惯。",
-                    )
-                except asyncio.CancelledError:
-                    raise
-                except Exception as exc:
-                    problem = (
-                        "超时"
-                        if isinstance(exc, asyncio.TimeoutError)
-                        else "结果格式无效"
-                        if isinstance(exc, ValueError)
-                        else "调用失败"
-                    )
-                    result["message"] = (
-                        f"情境筛选{problem}，本轮不选表达、性格与行为习惯；保留人格底稿和当前输入直接命中的词汇。请检查学习模型与筛选等待上限。"
-                    )
-                finally:
-                    self.selecting -= 1
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                problem = (
+                    "超时"
+                    if isinstance(exc, asyncio.TimeoutError)
+                    else "结果格式无效"
+                    if isinstance(exc, ValueError)
+                    else "调用失败"
+                )
+                result["message"] = (
+                    f"情境筛选{problem}，本轮不选表达、性格与行为习惯；保留人格底稿和当前输入直接命中的词汇。请检查学习模型与筛选等待上限。"
+                )
         recent = {i for i in recent_expression_ids if type(i) is int}
         if recent and settings["selection_mode"] != "contextual":
             # Only rotate near-equivalent expressions inside the bounded pool.
@@ -556,6 +559,8 @@ class HabitRetriever:
         identity,
         recent_expression_ids=(),
         expression_intent=None,
+        *,
+        scope="",
     ):
         """Choose only offered identifiers without allowing rewriting or tools.
 
@@ -568,13 +573,16 @@ class HabitRetriever:
             recent_expression_ids: Scope-local send-stage exposure IDs, used only
                 as a soft variety hint, never as evidence or a rejection list.
             expression_intent: Validated style preferences for this reply only.
+            scope: Effective retrieval scope, isolated in the exact-result cache.
 
         Returns:
-            Validated selected IDs; an empty list intentionally applies no habits.
+            Validated selected IDs and whether an exact cached choice was reused.
+            An empty ID list intentionally applies no habits.
 
         Raises:
             ValueError: If the selector returns invalid or unoffered identifiers.
             asyncio.TimeoutError: If the selector exceeds its separate budget.
+            SelectorBusyError: If two remote selectors are already running.
         """
         maximum = min(5, settings["max_traits"])
         candidates = [
@@ -614,15 +622,73 @@ class HabitRetriever:
             "expression_intent": expression_intent or {},
             "conversation": query[:2400],
         }
-        response = await asyncio.wait_for(
-            self.context.llm_generate(
-                chat_provider_id=provider_id,
-                prompt=json.dumps(payload, ensure_ascii=False),
-                system_prompt=task,
-            ),
-            timeout=settings["selector_timeout"],
-        )
-        return parse_selection(response.completion_text, pool, maximum)
+        prompt = json.dumps(payload, ensure_ascii=False)
+        resolver = getattr(self.context, "get_provider_by_id", None)
+        cache_key = None
+        try:
+            provider = (
+                resolver(provider_id) if provider_id and callable(resolver) else None
+            )
+            if provider is not None:
+                model = provider.get_model()
+                config = json.dumps(
+                    getattr(provider, "provider_config", {}), sort_keys=True
+                )
+                # Only the digest survives; neither query nor configuration text
+                # is copied into cache entries or diagnostics.
+                cache_key = hashlib.sha256(
+                    json.dumps(
+                        [scope, provider_id, id(provider), model, config, prompt],
+                        ensure_ascii=False,
+                    ).encode()
+                ).hexdigest()
+        except Exception:
+            # An optional cache must not break an otherwise usable provider.
+            cache_key = None
+        now = time.monotonic()
+        for key in [
+            k for k, entry in self.selector_cache.items() if entry[0] <= now - 60
+        ]:
+            self.selector_cache.pop(key)
+        cached = self.selector_cache.pop(cache_key, None) if cache_key else None
+        if cached and cached[1] is provider:
+            self.selector_cache[cache_key] = cached
+            return list(cached[2]), True
+        if self.selecting >= 2:
+            raise SelectorBusyError
+        self.selecting += 1
+        try:
+            response = await asyncio.wait_for(
+                self.context.llm_generate(
+                    chat_provider_id=provider_id, prompt=prompt, system_prompt=task
+                ),
+                timeout=settings["selector_timeout"],
+            )
+        finally:
+            self.selecting -= 1
+        selected = parse_selection(response.completion_text, pool, maximum)
+        if cache_key:
+            try:
+                current_resolver = getattr(self.context, "get_provider_by_id", None)
+                if (
+                    callable(current_resolver)
+                    and current_resolver(provider_id) is provider
+                    and provider.get_model() == model
+                    and json.dumps(
+                        getattr(provider, "provider_config", {}), sort_keys=True
+                    )
+                    == config
+                ):
+                    self.selector_cache[cache_key] = (
+                        time.monotonic(),
+                        provider,
+                        tuple(selected),
+                    )
+                    if len(self.selector_cache) > 64:
+                        self.selector_cache.pop(next(iter(self.selector_cache)))
+            except Exception:
+                pass
+        return selected, False
 
     async def semantic_scores(
         self, scope, traits, query, settings, *, index_only=False
