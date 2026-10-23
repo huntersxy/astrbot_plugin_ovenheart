@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- Redesign the workshop with flat macOS-style surfaces, desktop sidebar navigation,
+  responsive top navigation, aligned review panels and a persistent settings save bar.
+  The five existing tabs move to the sidebar on desktop and remain at the top on
+  smaller screens; session controls move into the workspace header. Names, APIs,
+  learning, editing and review behavior remain unchanged.
+- Refresh the Chinese and English layout instructions and local fixture screenshots.
+
 ## 0.56.2
 
 - Merge a same-member empty native At into a still-running direct request within

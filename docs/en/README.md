@@ -22,6 +22,24 @@ git clone --branch main https://github.com/huntersxy/astrbot_plugin_ovenheart.gi
 
 Reload the plugin and open **人格工坊 (Persona workshop)** from its plugin card. The page uses AstrBot authentication and needs no separate port, frontend build or additional runtime dependency. Autonomous participation requires AstrBot's local Agent runner.
 
+### Workshop layout
+
+Desktop navigation sits on the left. On smaller screens it becomes a horizontally scrollable bar above the workspace. The five pages keep their existing names and functions. Session selection, source status and memory status appear at the top of the workspace. Light and dark modes follow AstrBot.
+
+| Previous location | Current location |
+| --- | --- |
+| Five tabs across the page header | Left navigation on desktop; scrollable top navigation on smaller screens |
+| Session and status bar below the header | Top of the main workspace |
+| Persona brief and preview cards | Side by side on wide screens; stacked on smaller screens |
+| Library filters and bulk actions | Below the library introduction and above the list and detail view |
+| Settings save button | Sticks to the viewport bottom while scrolling, returning to its position at the form end |
+
+![Persona brief and preview layout](../assets/profile.jpg)
+
+![Library filters, entries and review detail](../assets/library-triage-v0.56-desktop.jpg)
+
+Screenshots use local illustrative data and a simulated model, not real conversations or provider output. This layout update preserves learning, saving, review, preview and version restoration behavior.
+
 ## First run
 
 1. Add optional identity, expression and behavioral guidance in the persona tab. AstrBot's original persona remains in effect.
