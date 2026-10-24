@@ -32,6 +32,7 @@ from astrbot.core.star.session_llm_manager import SessionServiceManager
 from astrbot.core.star.session_plugin_manager import SessionPluginManager
 
 from . import prompts
+from .conversation import ConversationContext
 from .group_context import GroupContextBridge
 from .learning import (
     LEARNING_DELIVERY_RULE,
@@ -291,7 +292,8 @@ class ObservationFilter(filter.CustomFilter):
             task = asyncio.current_task()
             if task is not None:
                 event.set_extra("ovenheart_native_task", weakref.ref(task))
-            plugin.track(plugin.capture(event, cfg))
+            plugin.conversation.reserve(event)
+            plugin.track(plugin.observe_input(event, cfg))
         return False
 
 
@@ -373,6 +375,7 @@ class PersonaPlugin(Star):
         self.group_context = GroupContextBridge(self)
         self.retriever = HabitRetriever(context, self.store, self.prompts)
         self.participation = ParticipationController(self)
+        self.conversation = ConversationContext(self)
         self.tasks: set[asyncio.Task] = set()
         self.busy: set[str] = set()
         self.prewarming: set[str] = set()
@@ -850,6 +853,13 @@ class PersonaPlugin(Star):
         )
         return scope, persona, label
 
+    async def observe_input(self, event, cfg=None):
+        """Complete the ordered-ingestion ticket even if native access is revoked."""
+        try:
+            await self.capture(event, cfg)
+        finally:
+            self.conversation.finish(event)
+
     async def capture(self, event, cfg=None):
         """Capture plain human text without observing generated replies or commands.
 
@@ -860,6 +870,10 @@ class PersonaPlugin(Star):
         if not await self.permitted(event, cfg):
             self.debug("capture_skipped", reason="host_permissions_or_plugin_disabled")
             return
+        if self.conversation.active(event):
+            context_scope, _, _ = await self.resolve_scope(event)
+            await self.conversation.observe(event, context_scope)
+            self.conversation.finish(event)
         if self.settings["participation_mode"] != "off":
             self.participation.notice(event)
         if (
@@ -1251,6 +1265,9 @@ class PersonaPlugin(Star):
                 return
         if bare_at and req.prompt == NATIVE_EMPTY_MENTION_PROMPT:
             req.prompt = prompts.EMPTY_MENTION_CONTINUATION
+        if not await self.conversation.prepare(event, scope, req):
+            event.stop_event()
+            return
         self.register_direct_request(event, scope, req)
 
     def direct_reply_context(self, event: AstrMessageEvent, scope: str) -> dict:
@@ -1322,6 +1339,9 @@ class PersonaPlugin(Star):
         )
         if host_context:
             messages = []
+        frozen = event.get_extra("ovenheart_context_snapshot")
+        if self.conversation.active(event) and frozen and frozen["scope"] == scope:
+            messages = frozen["messages"]
         context = {
             "scope": scope,
             "route": route,
@@ -1354,6 +1374,12 @@ class PersonaPlugin(Star):
             or self.settings["participation_mode"] != "auto"
             or not self.settings["apply_enabled"]
             or (plan.get("followup") and not self.settings["participation_followup"])
+            or (
+                plan.get("context_epoch")
+                and not await self.conversation.valid(
+                    event, plan["scope"], plan["context_epoch"]
+                )
+            )
         ):
             await self.store.call(
                 "cancel_decision",
@@ -1772,6 +1798,9 @@ class PersonaPlugin(Star):
             if not self.settings["apply_enabled"] or not await self.permitted(event):
                 return
             scope, _, _ = await self.resolve_scope(event, req)
+            if not await self.conversation.prepare(event, scope, req):
+                event.stop_event()
+                return
             state = await self.store.call(
                 "guidance", scope, not self.settings["session_isolation"]
             )
@@ -1784,7 +1813,9 @@ class PersonaPlugin(Star):
             self.register_direct_request(event, scope, req)
             direct = self.direct_reply_context(event, scope)
             direct = direct | {
-                "messages": bound_reply_messages(direct["messages"], self.settings)
+                "messages": direct["messages"]
+                if self.conversation.active(event)
+                else bound_reply_messages(direct["messages"], self.settings)
             }
             event.set_extra("ovenheart_direct_context", direct)
             self.describe_request_tools(event, req)
@@ -1871,6 +1902,11 @@ class PersonaPlugin(Star):
                         scope=scope,
                     )
                     + json.dumps(direct, ensure_ascii=False)
+                    + (
+                        prompts.STRUCTURED_CONTEXT_RULE
+                        if self.conversation.active(event)
+                        else ""
+                    )
                     + "\n"
                     + prompts.REPLY_ADDRESS_RULE
                     + self.decorate_request(req)
@@ -1956,9 +1992,15 @@ class PersonaPlugin(Star):
         context_messages = (
             []
             if host_context
+            else plan["messages"]
+            if self.conversation.active(event)
             else bound_reply_messages(plan["messages"], self.settings)
         )
-        reply_context = [] if host_context else plan.get("reply_context", [])
+        reply_context = (
+            []
+            if host_context or self.conversation.active(event)
+            else plan.get("reply_context", [])
+        )
         event.set_extra("ovenheart_host_group_context", host_context)
         event.set_extra("ovenheart_context_messages", context_messages)
         system_injection = self.template(
@@ -2013,6 +2055,8 @@ class PersonaPlugin(Star):
                 system_injection += decoration
         event.set_extra("ovenheart_guided", True)
         req.system_prompt += system_injection
+        if self.conversation.active(event):
+            user_injection += prompts.STRUCTURED_CONTEXT_RULE
         req.extra_user_content_parts.append(
             TextPart(text=user_injection).mark_as_temp()
         )
@@ -2074,6 +2118,9 @@ class PersonaPlugin(Star):
         plan = event.get_extra("ovenheart_decision")
         if plan and plan["scope"] != scope:
             plan = None
+        if not plan and not await self.conversation.prepare(event, scope, req):
+            event.stop_event()
+            return
         direct = (
             self.direct_reply_context(event, scope)
             if not plan and event.get_message_type() == MessageType.GROUP_MESSAGE
@@ -2360,8 +2407,15 @@ class PersonaPlugin(Star):
                 "context_chars": len(json.dumps(messages, ensure_ascii=False))
                 if messages
                 else 0,
-                "context_limit": self.settings["reply_context_messages"],
-                "context_budget": self.settings["reply_context_budget"],
+                "context_limit": 40
+                if self.conversation.active(event)
+                else self.settings["reply_context_messages"],
+                "context_budget": 24000
+                if self.conversation.active(event)
+                else self.settings["reply_context_budget"],
+                "context_epoch": (
+                    event.get_extra("ovenheart_context_binding") or [None, None]
+                )[1],
                 "temporary_chars": metrics["habit_user_chars"]
                 + event.get_extra("ovenheart_context_chars", 0),
                 "tool_capabilities": event.get_extra("ovenheart_tool_capabilities", {}),
@@ -2395,11 +2449,29 @@ class PersonaPlugin(Star):
             event: Native message event after the send pipeline.
         """
         event.set_extra("ovenheart_direct_sent", True)
+        if (
+            event.get_extra("_clean_group_context_session")
+            and self.conversation.active(event)
+            and await self.permitted(event)
+        ):
+            await self.conversation.clear(event)
+            return
         key = (event.get_extra("ovenheart_reply_scope"), str(event.get_sender_id()))
         pending = self.direct_pending.get(key)
         if pending and pending["source"] == event_source(event):
             self.direct_pending.pop(key, None)
         await self.record_turn_trace(event, status="send_hook")
+        if (
+            self.settings["participation_mode"] == "off"
+            and self.conversation.active(event)
+            and await self.permitted(event)
+        ):
+            scope, _, _ = await self.resolve_scope(event)
+            result = event.get_result()
+            if result and result.get_plain_text().strip():
+                await self.conversation.delivered(
+                    event, scope, None, result.get_plain_text(), True
+                )
         application = event.get_extra("ovenheart_application")
         learning_source = event.get_extra("ovenheart_learning_source")
         if (
@@ -2517,7 +2589,9 @@ class PersonaPlugin(Star):
                         "running": 0,
                         "last_check": 0.0,
                     }
-            if window is not None and text:
+            if self.conversation.active(event) and text:
+                await self.conversation.delivered(event, scope, plan, text, current)
+            if window is not None and text and not self.conversation.active(event):
                 window["changed"].set()
                 owned = bool(plan and window["sequence"] == plan["sequence"])
                 window["sequence"] += 1

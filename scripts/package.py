@@ -20,6 +20,7 @@ files = [
         "learning.py",
         "memory_bridge.py",
         "group_context.py",
+        "conversation.py",
         "page_api.py",
         "participation.py",
         "prompts.py",

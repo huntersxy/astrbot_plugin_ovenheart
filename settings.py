@@ -6,6 +6,7 @@ LEARNING_TIMEOUT_SECONDS = 180
 SHARED_SCOPE = "0" * 24
 
 DEFAULTS = {
+    "context_mode": "native",
     "debug_enabled": False,
     "session_isolation": False,
     "enabled": True,
@@ -131,6 +132,9 @@ def validate_settings(values: dict) -> dict:
                 )
             ):
                 raise ValueError(f"{key} 必须为有效标识列表。")
+        elif key == "context_mode":
+            if value not in ("native", "structured"):
+                raise ValueError("群聊上下文方式必须为 native 或 structured。")
         elif key == "activation_mode":
             if value not in ("review", "auto"):
                 raise ValueError("生效方式必须为审核或自动。")

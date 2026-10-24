@@ -1,5 +1,7 @@
 # OvenHeart
 
+For owned room context, set `context_mode` to `structured` and disable AstrBot's group-context awareness and native active reply. Planning and generation share one frozen snapshot of up to 40 messages / 24000 characters, retaining message and member IDs, quotes and media state. Records survive plugin reloads; new dialogs and `/reset` isolate old context. Restored rows without their original event are background-only. Keep native conversation history, platform message storage, tools and media enabled. The default `native` mode preserves existing behavior. Room context is separate from learning evidence and does not bypass learning exclusions.
+
 [中文](../zh/README.md) · [Project home](../../README.md) · [Changelog](../../CHANGELOG.md)
 
 Personality, expression and conversational behavior learning for AstrBot. OvenHeart supplements the existing persona with evidence-based habits and gives the operator control over their activation. It uses retrieval and prompting, not model weight training.

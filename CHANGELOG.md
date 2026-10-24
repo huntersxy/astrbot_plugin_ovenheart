@@ -9,6 +9,20 @@
   learning, editing and review behavior remain unchanged.
 - Refresh the Chinese and English layout instructions and local fixture screenshots.
 
+## 0.57.0
+
+- Add an opt-in structured room context shared by the participation planner and
+  native reply hooks. Freeze up to 40 timestamped messages / 24000 characters per
+  request, including real message/sender IDs, quotes, mentions and media status.
+- Persist one bounded room ledger independently of learning; restore after reload,
+  bootstrap from native platform history, isolate native dialog changes and honor
+  /reset. Restored messages without their original event remain context-only.
+- Record bot answers with their actual targets, update image descriptions in their
+  original slots and wait for earlier input registration before freezing a turn.
+- Keep native conversation/tool/media processing. Structured context is active only
+  with host group-context and native active-reply injection disabled; existing
+  installations retain native mode until explicitly switched.
+
 ## 0.56.5
 
 - Reserve native group-context image placeholders before slow captioning and fill

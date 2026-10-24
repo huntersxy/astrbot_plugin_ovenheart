@@ -447,6 +447,27 @@ async def main(args):
                     "native_at_tag": at_bot.get_extra("ovenheart_mention"),
                     "quoted_woke": quoted.is_at_or_wake_command,
                 }
+                await configure({"context_mode": "structured"})
+                question = incoming(
+                    "structured-question", "STRUCTURED_EARLIER_QUESTION", "alice"
+                )
+                peer = incoming("structured-peer", "UNRELATED_PEER_TOPIC", "bob")
+                trigger = incoming(
+                    "structured-trigger", "小夏，请回答前面的问题", "alice"
+                )
+                trigger.message_obj.message.insert(0, At(qq="bot"))
+                trigger.set_extra("enable_streaming", False)
+                trigger.set_extra("selected_provider", "native-chat")
+                with patch.object(provider, "text_chat", generated):
+                    await submit([question, peer])
+                    await submit([trigger])
+                snapshot = trigger.get_extra("ovenheart_context_snapshot") or {}
+                report["native_structured_context"] = (
+                    "structured-question"
+                    in [m["message_id"] for m in snapshot.get("messages", [])]
+                    and "STRUCTURED_EARLIER_QUESTION" in str(generated.await_args)
+                    and not trigger.is_stopped()
+                )
             if not args.smoke:
                 await core.persona_mgr.update_persona(
                     "default",
@@ -671,6 +692,9 @@ async def main(args):
                 ],
             }
             if args.smoke:
+                report["checks"]["native_structured_context"] = report[
+                    "native_structured_context"
+                ]
                 report["checks"]["native_burst_counted"] = (
                     report["smoke_planner_calls"] == 1
                 )

@@ -8,6 +8,7 @@ import json
 import sqlite3
 import time
 from pathlib import Path
+from uuid import uuid4
 
 from .learning import jargon_term, normalize_quote, review_issue
 from .settings import KINDS, PROFILE_DEFAULTS, SHARED_SCOPE, validate_settings
@@ -135,6 +136,16 @@ class Store:
                 updated REAL NOT NULL
             );
             CREATE INDEX IF NOT EXISTS turn_traces_scope ON turn_traces(scope,id);
+            CREATE TABLE IF NOT EXISTS context_heads (
+                scope TEXT PRIMARY KEY, cid TEXT NOT NULL, epoch TEXT NOT NULL,
+                sequence INTEGER NOT NULL DEFAULT 0, updated REAL NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS context_messages (
+                scope TEXT NOT NULL, epoch TEXT NOT NULL, source TEXT NOT NULL,
+                sequence INTEGER NOT NULL, created REAL NOT NULL, payload TEXT NOT NULL,
+                PRIMARY KEY(scope,epoch,source)
+            );
+            CREATE INDEX IF NOT EXISTS context_messages_order ON context_messages(scope,epoch,created,sequence);
             CREATE TABLE IF NOT EXISTS decisions (
                 id INTEGER PRIMARY KEY, scope TEXT NOT NULL, action TEXT NOT NULL,
                 confidence REAL NOT NULL, reason TEXT NOT NULL, intent TEXT NOT NULL,
@@ -169,6 +180,12 @@ class Store:
         }:
             db.execute(
                 "ALTER TABLE messages ADD COLUMN reply_context TEXT NOT NULL DEFAULT '{}'"
+            )
+        if "native_seen" not in {
+            r[1] for r in db.execute("PRAGMA table_info(context_heads)")
+        }:
+            db.execute(
+                "ALTER TABLE context_heads ADD COLUMN native_seen INTEGER NOT NULL DEFAULT 0"
             )
         if "room" not in {r[1] for r in db.execute("PRAGMA table_info(decisions)")}:
             db.execute("ALTER TABLE decisions ADD COLUMN room TEXT NOT NULL DEFAULT ''")
@@ -352,6 +369,116 @@ class Store:
             )
         }
 
+    def chat_context(self, db, scope, cid, record=None, seed=None, native_seen=None):
+        """Restore or append the one bounded room ledger, isolated by native dialog."""
+        head = db.execute(
+            "SELECT * FROM context_heads WHERE scope=?", (scope,)
+        ).fetchone()
+        reset = bool(
+            head
+            and (
+                (head["cid"] and head["cid"] != cid)
+                or (head["native_seen"] and native_seen is False)
+            )
+        )
+        fresh = head is None
+        if fresh or reset:
+            db.execute("DELETE FROM context_messages WHERE scope=?", (scope,))
+            db.execute(
+                "INSERT OR REPLACE INTO context_heads(scope,cid,epoch,sequence,updated) VALUES (?,?,?,0,?)",
+                (scope, cid, uuid4().hex, time.time()),
+            )
+            head = db.execute(
+                "SELECT * FROM context_heads WHERE scope=?", (scope,)
+            ).fetchone()
+        elif head["cid"] != cid:
+            db.execute("UPDATE context_heads SET cid=? WHERE scope=?", (cid, scope))
+        if native_seen is not None:
+            db.execute(
+                "UPDATE context_heads SET native_seen=? WHERE scope=?",
+                (int(native_seen), scope),
+            )
+        epoch, sequence = head["epoch"], head["sequence"]
+        for incoming in [*(seed or []), *([record] if record else [])]:
+            previous = db.execute(
+                "SELECT payload FROM context_messages WHERE scope=? AND epoch=? AND source=?",
+                (scope, epoch, incoming["source"]),
+            ).fetchone()
+            if previous:
+                previous = json.loads(previous[0])
+                value = previous | incoming
+                value.update(sequence=previous["sequence"], time=previous["time"])
+                if previous.get("media"):
+                    value["media"] = previous["media"]
+            else:
+                sequence += 1
+                value = incoming | {"sequence": sequence}
+            db.execute(
+                "INSERT OR REPLACE INTO context_messages VALUES (?,?,?,?,?,?)",
+                (
+                    scope,
+                    epoch,
+                    value["source"],
+                    value["sequence"],
+                    value["time"],
+                    json.dumps(value, ensure_ascii=False),
+                ),
+            )
+        db.execute(
+            "UPDATE context_heads SET sequence=?,updated=? WHERE scope=?",
+            (sequence, time.time(), scope),
+        )
+        db.execute(
+            "DELETE FROM context_messages WHERE scope=? AND epoch=? AND source NOT IN (SELECT source FROM context_messages WHERE scope=? AND epoch=? ORDER BY created DESC,sequence DESC LIMIT 160)",
+            (scope, epoch, scope, epoch),
+        )
+        # Bound inactive room metadata as well as each room's rows.
+        db.execute(
+            "DELETE FROM context_messages WHERE scope IN (SELECT scope FROM context_heads ORDER BY updated DESC LIMIT -1 OFFSET 128)"
+        )
+        db.execute(
+            "DELETE FROM context_heads WHERE scope NOT IN (SELECT scope FROM context_heads ORDER BY updated DESC LIMIT 128)"
+        )
+        messages = [
+            json.loads(r[0])
+            for r in db.execute(
+                "SELECT payload FROM context_messages WHERE scope=? AND epoch=? ORDER BY created,sequence",
+                (scope, epoch),
+            )
+        ]
+        return {
+            "epoch": epoch,
+            "cid": cid,
+            "sequence": sequence,
+            "messages": messages,
+            "fresh": fresh,
+            "reset": reset,
+        }
+
+    def context_media(self, db, scope, epoch, source, media):
+        """Update an existing media slot; late completions cannot recreate records."""
+        row = db.execute(
+            "SELECT payload FROM context_messages WHERE scope=? AND epoch=? AND source=?",
+            (scope, epoch, source),
+        ).fetchone()
+        if not row:
+            return None
+        value = json.loads(row[0]) | {"media": media}
+        db.execute(
+            "UPDATE context_messages SET payload=? WHERE scope=? AND epoch=? AND source=?",
+            (json.dumps(value, ensure_ascii=False), scope, epoch, source),
+        )
+        return value
+
+    def clear_chat_context(self, db, scope, cid):
+        """Honor native /reset without allowing later bootstrap of cleared rows."""
+        db.execute("DELETE FROM context_messages WHERE scope=?", (scope,))
+        db.execute(
+            "INSERT OR REPLACE INTO context_heads(scope,cid,epoch,sequence,updated,native_seen) VALUES (?,?,?,0,?,0)",
+            (scope, cid, uuid4().hex, time.time()),
+        )
+        return self.chat_context(db, scope, cid)
+
     def settings(self, db, patch=None):
         """Read or patch runtime settings.
 
@@ -438,6 +565,10 @@ class Store:
         """
         db.execute(
             "DELETE FROM messages WHERE created < ?",
+            (time.time() - retention_days * 86400,),
+        )
+        db.execute(
+            "DELETE FROM context_messages WHERE created < ?",
             (time.time() - retention_days * 86400,),
         )
         db.execute(

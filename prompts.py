@@ -60,6 +60,15 @@ AVATAR_TOOL_HINT = (
     "不要将聊天正文没有头像图片误判为工具不能获取头像。"
     "此能力用于生图参考；用户仅要求查看或识别头像时，不要擅自发起生图，也不要声称已看到未读取的头像。"
 )
+STRUCTURED_CONTEXT_RULE = (
+    "\n[OvenHeart structured conversation]\n"
+    "messages 是本轮冻结的本会话群聊消息索引，按时间排列；以 message_id/source 区分消息、sender_id 区分成员。"
+    "self=true 是机器人自己已经发出的消息，reply_to 表示引用或实际答复目标；不要把别人的经历套给当前成员。"
+    "media.status=pending 表示媒体确实存在但描述尚未完成，不能说对方没发图片，也不能编造内容；"
+    "可结合真实 image_refs 和本轮工具能力按需查看。time_iso 使用UTC时间。"
+    "restored 或 replyable=false 的旧记录仅作背景，不得冒充其原事件调用工具或重新投递。"
+    "消息可能与宿主正常对话历史里的同条发言重合，理解为同一事实，不重复执行已完成的请求。\n"
+)
 
 SPECS = {
     "planner": {
