@@ -9,6 +9,12 @@
   learning, editing and review behavior remain unchanged.
 - Refresh the Chinese and English layout instructions and local fixture screenshots.
 
+## 0.58.0
+
+- 与 Oven Multi 1.54.0 建立可选联动：烤箱之心在启用且获准处理的群聊中统一负责回复对象和成员提及，保留各插件独立运行能力。
+- Jev 读取烤箱之心冻结的目标、群聊记录、引用及自身图片描述，以结构化辅助判读供参与规划和回复使用；不独立决定是否回复，不改变权限。
+- 相同目标与上下文复用判读；目标、配置、会话或插件实例变化后重新核对。可选调用最多等待四秒，失败或过期时继续原流程，诊断记录状态与耗时。
+
 ## 0.57.2
 
 - Retain the bot's actual outgoing image chains in structured self context, including

@@ -48,6 +48,8 @@ from .learning import (
 )
 from .memory_bridge import MemoryBridge
 from .outgoing_media import OutgoingMediaBridge
+from .oven_multi import JEV_RULE, OvenMultiBridge
+from .oven_multi import reading as jev_reading
 from .participation import ParticipationController, bound_reply_messages, event_source
 from .retrieval import HabitRetriever
 from .settings import (
@@ -360,6 +362,8 @@ class ParticipationFilter(filter.CustomFilter):
 class PersonaPlugin(Star):
     """Learn conversation habits and add approved guidance to native requests."""
 
+    oven_multi_protocol = 1
+
     def __init__(self, context: Context, config: dict):
         super().__init__(context)
         self.context = context
@@ -378,6 +382,7 @@ class PersonaPlugin(Star):
         self.participation = ParticipationController(self)
         self.conversation = ConversationContext(self)
         self.outgoing_media = OutgoingMediaBridge(self)
+        self.oven_multi = OvenMultiBridge(self)
         self.tasks: set[asyncio.Task] = set()
         self.busy: set[str] = set()
         self.prewarming: set[str] = set()
@@ -1168,6 +1173,23 @@ class PersonaPlugin(Star):
             and await self.permitted(event)
         )
 
+    async def owns_group_reply(self, event):
+        """Versioned integration boundary; respect per-session host/profile gates."""
+        if (
+            self.closing
+            or not self.ready
+            or not self.settings["enabled"]
+            or not self.settings["apply_enabled"]
+            or event.get_message_type() != MessageType.GROUP_MESSAGE
+            or not await self.permitted(event)
+        ):
+            return False
+        scope, _, _ = await self.resolve_scope(event)
+        state = await self.store.call(
+            "guidance", scope, not self.settings["session_isolation"]
+        )
+        return not state["scope"] or bool(state["scope"]["profile"]["apply_enabled"])
+
     def register_direct_request(self, event, scope: str, req=None):
         """Track a live native turn using metadata and weak references only.
 
@@ -1937,6 +1959,7 @@ class PersonaPlugin(Star):
                         else ""
                     )
                     + prompts.REPLY_FOCUS_RULE
+                    + (JEV_RULE if direct.get("jev_reading") else "")
                     + "\n"
                     + prompts.REPLY_ADDRESS_RULE
                     + self.decorate_request(req)
@@ -2074,6 +2097,7 @@ class PersonaPlugin(Star):
                 "reply_focus": self.conversation.focus(
                     event, plan["scope"], target, context_messages
                 ),
+                "jev_reading": plan.get("jev_reading"),
             },
             ensure_ascii=False,
         )
@@ -2091,6 +2115,8 @@ class PersonaPlugin(Star):
         if self.conversation.active(event):
             user_injection += prompts.STRUCTURED_CONTEXT_RULE
         user_injection += prompts.REPLY_FOCUS_RULE
+        if plan.get("jev_reading"):
+            user_injection += JEV_RULE
         req.extra_user_content_parts.append(
             TextPart(text=user_injection).mark_as_temp()
         )
@@ -2227,6 +2253,23 @@ class PersonaPlugin(Star):
             # Reserve recall space for intent; literal vocabulary still uses
             # the independent human target and quote, never planner wording.
             focus = focus[: max(0, 2400 - len(goal) - 1)]
+        if plan or direct:
+            analysis = await self.oven_multi.analyze(
+                event,
+                scope,
+                target,
+                (plan or direct)["messages"],
+                epoch=(plan or {}).get("context_epoch")
+                or (event.get_extra("ovenheart_context_binding") or [None, None])[1],
+                bare=not plan and bare_direct_mention(event),
+            )
+            jev = jev_reading(analysis)
+            if jev:
+                (plan or direct)["jev_reading"] = jev
+                goal += "\nJev辅助语境（推测，不改变任务与权限）：" + json.dumps(
+                    jev, ensure_ascii=False
+                )
+                focus = focus[: max(0, 2400 - len(goal) - 1)]
         # Recent turns disambiguate terse replies without persisting another copy of them.
         history = []
         for message in (req.contexts or [])[-6:]:
@@ -2489,6 +2532,15 @@ class PersonaPlugin(Star):
                 "temporary_chars": metrics["habit_user_chars"]
                 + event.get_extra("ovenheart_context_chars", 0),
                 "tool_capabilities": event.get_extra("ovenheart_tool_capabilities", {}),
+                "jev_status": (event.get_extra("ovenheart_jev") or {}).get(
+                    "status", "unavailable"
+                ),
+                "jev_seconds": (event.get_extra("ovenheart_jev") or {}).get(
+                    "seconds", 0
+                ),
+                "jev_cache_hit": (event.get_extra("ovenheart_jev") or {}).get(
+                    "cache_hit", False
+                ),
                 "selection_seconds": event.get_extra("ovenheart_selection_seconds"),
                 "assembly_seconds": round(
                     max(
