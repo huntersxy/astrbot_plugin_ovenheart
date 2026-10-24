@@ -14,7 +14,7 @@ from astrbot.core.star.session_plugin_manager import SessionPluginManager
 
 from . import prompts
 from .learning import build_guidance, build_guidance_parts, habit_text
-from .settings import PROFILE_DEFAULTS, SHARED_SCOPE
+from .settings import PROFILE_DEFAULTS, SHARED_SCOPE, learning_blocked
 
 
 class ModelPreviewError(ValueError):
@@ -111,6 +111,16 @@ class PageAPI:
                 "meme_bound": self.plugin.outgoing_media._owner is not None
             },
             busy=list(self.plugin.busy),
+            learning_blocked=learning_blocked(
+                (state.get("scope") or {}).get("umo"), self.plugin.settings
+            ),
+            auxiliary_usage={
+                "hour_buckets": 24,
+                "rows": await self.plugin.store.call("auxiliary_usage"),
+                "pending": len(self.plugin.auxiliary.pending),
+                "dropped": self.plugin.auxiliary.dropped,
+                "selector_backoff_skips": self.plugin.retriever.selector_backoff_skips,
+            },
             retrieval=self.plugin.retriever.status.get(
                 request.query.get("scope")
                 if self.plugin.settings["session_isolation"]

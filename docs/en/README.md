@@ -19,6 +19,8 @@ OvenHeart's way of being with people comes from [MaiBot](https://github.com/Mai-
 
 Neither project trains model weights: habits are evidence-backed data entries applied through retrieval and prompting.
 
+`learning_blocked_groups` accepts group IDs or exact unified session IDs. It stops learning capture, scheduled/manual learning and late commits for those groups, while keeping existing data, normal chat context and approved habits. The list defaults to empty. Explicit mentions preempt this plugin's unsent autonomous work in the same physical room before the host's session lock; ordinary planning defaults to a 60-second interval.
+
 MaiBot is a self-contained framework with its own message pipeline, persona, memory and emoji systems, and its learning loop runs mostly automatically. OvenHeart is an AstrBot plugin: delivery, wake, permissions, tools and the original persona stay with the host; new habits default to manual review in the library where you approve, edit or disable them, with automatic activation as an opt-in; memory is optional via the unmodified LivingMemory plugin.
 
 ## Requirements and installation

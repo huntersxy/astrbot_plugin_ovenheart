@@ -229,6 +229,12 @@
     "type": "int",
     "default": 2
   },
+  "planner_interval_seconds": {
+    "description": "普通群聊判断间隔（秒）",
+    "type": "int",
+    "default": 60,
+    "hint": "减少重复旁观判断；直接唤醒、同成员续话和未完成工作续接保留原流程。实际判断还受新消息数量与回复冷却限制。"
+  },
   "participation_cooldown": {
     "description": "自主参与冷却（秒）",
     "type": "int",
@@ -271,6 +277,12 @@
     "type": "list",
     "default": [],
     "hint": "QQ 用户直接填写 QQ 号，一项一个；黑名单优先于学习对象，不采集或学习其文字，也不作为学习上下文。已生效习惯不会自动删除。"
+  },
+  "learning_blocked_groups": {
+    "description": "学习黑名单群聊",
+    "type": "list",
+    "default": [],
+    "hint": "每项填一个群号或完整 unified_msg_origin。停止该群的学习素材采集与学习，已有素材保留；不影响正常聊天、参与判断和已审核习惯的应用。"
   },
   "debug_enabled": {
     "description": "Debug 调试日志",

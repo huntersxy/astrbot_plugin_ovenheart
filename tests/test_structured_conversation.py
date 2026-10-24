@@ -14,7 +14,11 @@ from astrbot.core.db.po import Conversation
 from astrbot.core.message.components import At, Image, Plain, Reply
 from astrbot.core.provider.entities import LLMResponse
 
-from astrbot_plugin_ovenheart.participation import ParticipationFormatError, parse_plan
+from astrbot_plugin_ovenheart.participation import (
+    ParticipationFormatError,
+    parse_plan,
+    planner_message,
+)
 from tests.test_participation import decision, requests
 from tests.test_runtime import event
 
@@ -209,10 +213,10 @@ async def test_planner_and_reply_share_snapshot_and_real_earlier_target(structur
     planner = json.loads(structured.context.llm_generate.await_args.kwargs["prompt"])[
         "recent_messages"
     ]
-    assert plan["messages"] == planner
+    assert [planner_message(m) for m in plan["messages"]] == planner
     await structured.apply_persona(trigger, yielded[0])
     await structured.apply_participation(trigger, yielded[0])
-    assert trigger.get_extra("ovenheart_context_messages") == planner
+    assert trigger.get_extra("ovenheart_context_messages") == plan["messages"]
     assert (
         plan["target"]["message_id"] == "earlier" and trigger.get_sender_id() == "bob"
     )

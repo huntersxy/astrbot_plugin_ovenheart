@@ -25,6 +25,7 @@ DEFAULTS = {
     "memory_top_k": 3,
     "target_senders": [],
     "blocked_senders": [],
+    "learning_blocked_groups": [],
     "allowed_sessions": [],
     "learn_personality": True,
     "learn_expression": True,
@@ -53,6 +54,7 @@ DEFAULTS = {
     "participation_hourly_limit": 12,
     "planner_provider_id": "",
     "planner_timeout": 20,
+    "planner_interval_seconds": 60,
     "planner_reply_threshold": 0.7,
     "planner_max_wait": 30,
     "autonomous_tools": [],
@@ -105,6 +107,7 @@ def validate_settings(values: dict) -> dict:
         "participation_cooldown": (5, 3600),
         "participation_hourly_limit": (1, 120),
         "planner_timeout": (3, 90),
+        "planner_interval_seconds": (5, 300),
         "planner_reply_threshold": (0.5, 1),
         "planner_max_wait": (1, 120),
     }
@@ -155,6 +158,7 @@ def validate_settings(values: dict) -> dict:
     result = values.copy()
     for key in (
         "blocked_senders",
+        "learning_blocked_groups",
         "autonomous_tools",
         "autonomous_tool_denylist",
         "mention_names",
@@ -162,3 +166,14 @@ def validate_settings(values: dict) -> dict:
         if key in result:
             result[key] = list(dict.fromkeys(v.strip() for v in result[key]))
     return result
+
+
+def learning_blocked(umo, settings):
+    """Match a full session or a group ID, without blocking private chats by ID."""
+    blocked = settings.get("learning_blocked_groups", [])
+    if not blocked or not umo:
+        return False
+    parts = str(umo).rsplit(":", 2)
+    if len(parts) != 3 or parts[1] != "GroupMessage":
+        return False
+    return str(umo) in blocked or parts[2] in blocked

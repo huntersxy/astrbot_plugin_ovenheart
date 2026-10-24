@@ -185,6 +185,15 @@ test('QQ blacklist accepts pasted numbers without platform prefixes',() => {
   assert.equal(runInContext('saved.blocked_senders.join(",")',context),'123456,234567,345678,456789,567890');
 });
 
+test('learning group blacklist accepts group numbers and exact session IDs', () => {
+  const {context,element}=fixture();
+  runInContext(`data={settings:{blocked_senders:[],learning_blocked_groups:[],target_senders:[],allowed_sessions:[],autonomous_tools:[]},memory:{}};renderSettings();globalThis.saved=null;mutate=(action,payload)=>saved=payload;`,context);
+  const input={value:'123456，234567\nbot:GroupMessage:345678'};
+  element('#settings-form').onsubmit({preventDefault(){},currentTarget:{elements:{namedItem:key=>key==='learning_blocked_groups'?input:null}}});
+  assert.equal(runInContext('saved.learning_blocked_groups.join(",")',context),'123456,234567,bot:GroupMessage:345678');
+  assert.ok(element('#content').innerHTML.includes('学习黑名单群聊'));
+});
+
 test('legacy common jargon is retained without a global approval action', () => {
   const {context,element}=fixture();
   runInContext(`data.shared_scope={id:'0'.repeat(24)};data.traits[0].kind='jargon';data.traits[0].scope='0'.repeat(24);renderLibrary();`,context);

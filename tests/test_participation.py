@@ -390,7 +390,7 @@ async def test_delayed_older_scope_resolution_does_not_cancel_latest_burst(
         payload = json.loads(
             participant.context.llm_generate.await_args.kwargs["prompt"]
         )
-        assert [m["source"] for m in payload["recent_messages"]] == [
+        assert [m["message_id"] for m in payload["recent_messages"]] == [
             "delayed-old",
             "latest",
         ]

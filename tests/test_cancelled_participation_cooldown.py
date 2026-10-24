@@ -122,7 +122,7 @@ async def test_interrupted_planner_resumes_on_latest_input_after_full_quiet_wind
         assert one == two == [] and len(three) == 1
         assert len(calls) == 2
         payload = json.loads(calls[-1]["prompt"])
-        assert payload["recent_messages"][-1]["source"] == "interruption-last"
+        assert payload["recent_messages"][-1]["message_id"] == "interruption-last"
     finally:
         for task in (first, second):
             task.cancel()

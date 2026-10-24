@@ -634,14 +634,17 @@ async def test_schema_drift_gets_one_correction_with_original_evidence(plugin):
         for call in plugin.context.llm_generate.await_args_list
         if json.loads(call.kwargs["prompt"])["enabled_kinds"] != ["jargon"]
     ]
-    assert first["task"] and second["observations"] == first["observations"]
+    assert "task" not in first and second["observations"] == first["observations"]
     assert "profile_updates" in second["format_error"]
     phase = [
         call.kwargs
         for call in plugin.context.llm_generate.await_args_list
         if json.loads(call.kwargs["prompt"])["enabled_kinds"] != ["jargon"]
     ]
-    assert first["task"] == second["task"] and second["correction_task"]
+    assert (
+        first["stage_instruction"] == second["stage_instruction"]
+        and second["correction_task"]
+    )
     assert phase[0]["system_prompt"] == phase[1]["system_prompt"]
     assert phase[1]["prompt"].startswith(phase[0]["prompt"][:-1] + ",")
 

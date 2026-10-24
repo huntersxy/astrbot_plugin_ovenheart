@@ -71,7 +71,8 @@ async function load(renderContent = true) {
   $("#memory-status").textContent = data.settings.memory_enabled ? data.memory.message : "记忆联动已关闭";
   $("#review-count").textContent = (data.review_count ?? data.scopes.reduce((sum, scope) => sum + scope.review_count, 0)) || "";
   const busy = data.busy.includes(selectedScope);
-  $("#learn").disabled = pending || !data.scope || !!data.busy.length || !data.settings.enabled || !data.settings.learning_enabled || !data.scope.profile.learning_enabled || data.scope.pending < data.settings.min_evidence;
+  $("#learn").disabled = pending || !data.scope || !!data.busy.length || !data.settings.enabled || !data.settings.learning_enabled || !!data.learning_blocked || !data.scope.profile.learning_enabled || data.scope.pending < data.settings.min_evidence;
+  $("#learn").title = data.learning_blocked ? "当前群聊在学习黑名单中；聊天与已有习惯继续生效" : "";
   $("#learn").textContent = busy ? "正在学习…" : "开始学习";
   const promptsChanged = tab === "prompts" && data.prompts?.revision !== previousPromptsRevision;
   if (!dirty && (renderContent || (tab === "settings" && data.settings_revision !== previousSettingsRevision) || promptsChanged)) render();
@@ -259,7 +260,7 @@ function renderSettings() {
       <div class="field"><label for="participation_mode">参与方式</label><select id="participation_mode" name="participation_mode"><option value="off" ${s.participation_mode === "off" ? "selected" : ""}>关闭自主参与</option><option value="observe" ${s.participation_mode === "observe" ? "selected" : ""}>仅观察，记录决策</option><option value="auto" ${s.participation_mode === "auto" ? "selected" : ""}>自动参与，交由宿主回复</option></select><small>建议先用「仅观察」检查决策。记录在「学习与参与」中。</small></div>
       <div class="number-fields">${field("participation_min_messages","最少新消息",s.participation_min_messages,"条；十分钟内保留最多 30 条上下文",{type:"number",min:1,max:30})}${field("participation_debounce","连续输入等待",s.participation_debounce,"秒；新输入会取消旧决策",{type:"number",min:0,max:10})}${field("participation_cooldown","回复冷却",s.participation_cooldown,"秒；直接唤醒的回复也会推迟自主参与",{type:"number",min:5,max:3600})}${field("participation_hourly_limit","每小时参与上限",s.participation_hourly_limit,"次；同群的隔离会话共享限额",{type:"number",min:1,max:120})}</div>
       ${switchField("participation_followup", "允许连续接话", "刚回复的成员在 120 秒内继续说话，且没有其他成员插话时，允许一次跳过新消息门槛与冷却的决策。仍可选择旁观，保留输入等待和每小时限额。关闭后统一遵守门槛与冷却。", s.participation_followup)}
-      </div><div><details><summary>决策模型与工具</summary>${field("planner_provider_id","参与决策模型 ID",s.planner_provider_id,"留空使用学习模型或当前会话模型。",{type:"text"})}<div class="number-fields">${field("planner_timeout","决策请求超时",s.planner_timeout,"秒；异常时保持旁观",{type:"number",min:3,max:90})}${field("planner_reply_threshold","最低参与把握",s.planner_reply_threshold,"由模型评估，不等同于统计概率",{type:"number",min:.5,max:1,step:.01})}${field("planner_max_wait","单次最长等待",s.planner_max_wait,"秒；最多等待后再判断一次",{type:"number",min:1,max:120})}</div></details><div id="autonomous-tool-picker"></div></div></div>
+      </div><div><details><summary>决策模型与工具</summary>${field("planner_provider_id","参与决策模型 ID",s.planner_provider_id,"留空使用学习模型或当前会话模型。",{type:"text"})}<div class="number-fields">${field("planner_interval_seconds","普通群聊判断间隔",s.planner_interval_seconds ?? 60,"秒；减少重复旁观判断，保留直接唤醒与未完成工作续接",{type:"number",min:5,max:300})}${field("planner_timeout","决策请求超时",s.planner_timeout,"秒；异常时保持旁观",{type:"number",min:3,max:90})}${field("planner_reply_threshold","最低参与把握",s.planner_reply_threshold,"由模型评估，不等同于统计概率",{type:"number",min:.5,max:1,step:.01})}${field("planner_max_wait","单次最长等待",s.planner_max_wait,"秒；最多等待后再判断一次",{type:"number",min:1,max:120})}</div></details><div id="autonomous-tool-picker"></div></div></div>
     </section>
     <section class="settings-group"><h2>学习与生效</h2><p>可以先审核，也可以让证据充足的结果自动加入习惯。</p>
       ${switchField("enabled", "启用人格工坊", "关闭后停止采集、学习和应用", s.enabled)}${switchField("learning_enabled", "启用素材采集与后台学习", "关闭后继续保留并应用已生效的习惯", s.learning_enabled)}${switchField("apply_enabled", "应用人格与学习结果", "可先积累，准备好后再启用", s.apply_enabled)}
@@ -275,6 +276,7 @@ function renderSettings() {
     <section class="settings-group"><h2>学习范围</h2><p>默认所有会话共用人格底稿、人格、表达与行为习惯。群聊词汇始终按来源会话与人格隔离；素材与真实聊天上下文也保留来源边界。AstrBot 的会话开关、插件开关与白名单始终有效。</p>${switchField("session_isolation", "启用会话隔离", "开启后，人格底稿和其他三类学习也按会话与人格分别设置、学习和应用。群聊词汇始终隔离。切换保留数据，进行中的旧学习不会跨模式提交。", s.session_isolation)}
       ${field("target_senders", "只向这些用户学习", s.target_senders.join("\n"), "每行一个用户 ID。留空学习所有人；指定后，旁人的邻近发言仅短暂用于理解语境，不入素材库或证据。", {maxlength:16000})}
       ${field("blocked_senders", "不学习的用户（QQ 号）", (s.blocked_senders || []).join("\n"), "直接填写 QQ 号即可，每行一个，也支持空格、逗号分隔。黑名单优先于学习对象；不采集、不学习，也不作为学习上下文。已学到的习惯保留，可在学习库手动停用。", {maxlength:128000})}
+      ${field("learning_blocked_groups", "学习黑名单群聊", (s.learning_blocked_groups || []).join("\n"), "填群号或完整会话标识，每行一个。停止该群素材采集和学习，已有素材保留；聊天、参与判断和已有习惯继续生效。", {maxlength:128000})}
       ${field("allowed_sessions", "允许学习与应用的会话", s.allowed_sessions.join("\n"), "每行一个完整 unified_msg_origin，可通过 AstrBot 的 /sid 获取。留空允许全部已启用会话。", {maxlength:32000})}
     </section>
     <section class="settings-group"><h2>记忆与表达</h2><p>记忆帮助理解来龙去脉；人格工坊只学习有原始聊天证据的习惯。</p>
@@ -300,7 +302,7 @@ function renderSettings() {
     for (const [key, value] of Object.entries(s)) {
       const input = form.elements.namedItem(key);
       if (!input) continue;
-      patch[key] = typeof value === "boolean" ? input.checked : typeof value === "number" ? Number(input.value) : Array.isArray(value) ? input.value.split(key === "blocked_senders" ? /[\s,，;；]+/ : "\n").map(v => v.trim()).filter(Boolean) : input.value.trim();
+      patch[key] = typeof value === "boolean" ? input.checked : typeof value === "number" ? Number(input.value) : Array.isArray(value) ? input.value.split(["blocked_senders", "learning_blocked_groups"].includes(key) ? /[\s,，;；]+/ : "\n").map(v => v.trim()).filter(Boolean) : input.value.trim();
     }
     const tools = toolSelection();
     if (!tools) return;

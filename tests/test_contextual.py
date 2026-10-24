@@ -68,7 +68,8 @@ async def test_contextual_selection_can_recover_synonyms_and_choose_nothing(retr
     payload = json.loads(retriever.context.llm_generate.await_args.kwargs["prompt"])
     assert payload["identity_anchor"] == "小夏，温柔的朋友"
     assert {t["id"] for t in payload["candidates"]} == {1, 2}
-    assert "task" in payload and "evidence" not in payload["candidates"][0]
+    assert "task" not in payload and "evidence" not in payload["candidates"][0]
+    assert retriever.context.llm_generate.await_args.kwargs["system_prompt"]
     retriever.context.llm_generate.return_value.completion_text = '{"selected_ids":[]}'
     empty = await retriever.select("scope-a", traits, "只回答几点了", DEFAULTS)
     assert empty["traits"] == [] and empty["mode"] == "contextual"

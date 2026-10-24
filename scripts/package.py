@@ -17,6 +17,8 @@ files = [
     for name in (
         "__init__.py",
         "main.py",
+        "auxiliary.py",
+        "direct_priority.py",
         "learning.py",
         "memory_bridge.py",
         "group_context.py",

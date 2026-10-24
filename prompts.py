@@ -273,6 +273,31 @@ def missing(template: str, available) -> list[str]:
     return seen
 
 
+def auxiliary_payload(system: str, payload: dict, *, prefix=()) -> str:
+    """Send instructions once, preserve stage-specific instructions at the tail.
+
+    Common evidence precedes pass-specific fields so the two learning passes
+    share an exact input prefix. Custom rendered system templates stay intact.
+    """
+    data = payload.copy()
+    task = data.get("task")
+    stage = ""
+    if isinstance(task, str) and task.startswith(system) and system:
+        stage = task[len(system) :].strip()
+        if stage:
+            data = {
+                "stage_instruction" if key == "task" else key: stage
+                if key == "task"
+                else value
+                for key, value in data.items()
+            }
+        else:
+            data.pop("task")
+    ordered = {key: data.pop(key) for key in prefix if key in data}
+    ordered.update(data)
+    return json.dumps(ordered, ensure_ascii=False, separators=(",", ":"))
+
+
 def validate(key: str, body) -> str:
     """Validate one submitted template body.
 

@@ -529,7 +529,7 @@ async def test_cached_selector_serializes_stable_candidates_before_changing_quer
     )
 
 
-async def test_learning_keeps_stable_known_traits_before_dynamic_counts_and_sources(
+async def test_learning_preserves_known_traits_and_groups_shared_evidence_before_phase_parameters(
     shared_plugin,
 ):
     plugin = shared_plugin
@@ -556,10 +556,9 @@ async def test_learning_keeps_stable_known_traits_before_dynamic_counts_and_sour
     assert first["known_trait_stats"] != second["known_trait_stats"]
     assert first["observations"] != second["observations"]
     assert phase[0]["system_prompt"] == phase[1]["system_prompt"]
-    assert (
-        phase[0]["prompt"].split('"known_trait_stats":')[0]
-        == phase[1]["prompt"].split('"known_trait_stats":')[0]
-    )
+    assert list(first).index("observations") < list(first).index("enabled_kinds")
+    assert list(second).index("observations") < list(second).index("known_traits")
+    assert "task" not in first and "task" not in second
     assert [t["id"] for t in first["known_traits"]] == sorted(
         t["id"] for t in first["known_traits"]
     )

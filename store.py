@@ -11,7 +11,13 @@ from pathlib import Path
 from uuid import uuid4
 
 from .learning import jargon_term, normalize_quote, review_issue
-from .settings import KINDS, PROFILE_DEFAULTS, SHARED_SCOPE, validate_settings
+from .settings import (
+    KINDS,
+    PROFILE_DEFAULTS,
+    SHARED_SCOPE,
+    learning_blocked,
+    validate_settings,
+)
 
 
 class Store:
@@ -136,6 +142,14 @@ class Store:
                 updated REAL NOT NULL
             );
             CREATE INDEX IF NOT EXISTS turn_traces_scope ON turn_traces(scope,id);
+            CREATE TABLE IF NOT EXISTS auxiliary_usage (
+                bucket INTEGER NOT NULL, stage TEXT NOT NULL, provider TEXT NOT NULL, model TEXT NOT NULL,
+                calls INTEGER NOT NULL, successes INTEGER NOT NULL, errors INTEGER NOT NULL,
+                cancelled INTEGER NOT NULL, reported INTEGER NOT NULL,
+                input_cached INTEGER NOT NULL, input_other INTEGER NOT NULL, output INTEGER NOT NULL,
+                system_chars INTEGER NOT NULL, prompt_chars INTEGER NOT NULL, seconds REAL NOT NULL,
+                PRIMARY KEY(bucket,stage,provider,model)
+            );
             CREATE TABLE IF NOT EXISTS context_heads (
                 scope TEXT PRIMARY KEY, cid TEXT NOT NULL, epoch TEXT NOT NULL,
                 sequence INTEGER NOT NULL DEFAULT 0, updated REAL NOT NULL
@@ -580,6 +594,9 @@ class Store:
             (time.time() - retention_days * 86400,),
         )
         db.execute(
+            "DELETE FROM auxiliary_usage WHERE bucket<?", (time.time() - 30 * 86400,)
+        )
+        db.execute(
             "UPDATE learning_runtime SET draft_key='',draft='[]',draft_created=0 WHERE draft_created>0 AND draft_created<?",
             (time.time() - 3600,),
         )
@@ -619,6 +636,8 @@ class Store:
         now = time.time()
         settings = settings | self.settings(db)
         if not settings["enabled"] or not settings["learning_enabled"]:
+            return False
+        if learning_blocked(umo, settings):
             return False
         if (
             not context_only
@@ -1359,6 +1378,11 @@ class Store:
             ):
                 raise ValueError("提示词在学习期间已修改，旧结果未保存，素材保留。")
             settings = settings | self.settings(db)
+            source_scope = db.execute(
+                "SELECT umo FROM scopes WHERE id=?", (scope,)
+            ).fetchone()
+            if source_scope and learning_blocked(source_scope["umo"], settings):
+                raise ValueError("当前群聊已加入学习黑名单，结果未保存、素材保留。")
             if (
                 expected_isolation is not None
                 and settings["session_isolation"] != expected_isolation
@@ -1801,6 +1825,43 @@ class Store:
                 (provider, scope, scope, SHARED_SCOPE),
             )
         }
+
+    def auxiliary_usage(self, db, rows=None):
+        """Persist bounded hourly totals only; unknown/cancelled usage stays unreported."""
+        fields = (
+            "calls",
+            "successes",
+            "errors",
+            "cancelled",
+            "reported",
+            "input_cached",
+            "input_other",
+            "output",
+            "system_chars",
+            "prompt_chars",
+            "seconds",
+        )
+        if rows:
+            columns = ("bucket", "stage", "provider", "model", *fields)
+            db.executemany(
+                f"INSERT INTO auxiliary_usage({','.join(columns)}) VALUES ({','.join('?' for _ in columns)}) "
+                "ON CONFLICT(bucket,stage,provider,model) DO UPDATE SET "
+                + ",".join(f"{key}={key}+excluded.{key}" for key in fields),
+                [tuple(row[key] for key in columns) for row in rows],
+            )
+            db.execute(
+                "DELETE FROM auxiliary_usage WHERE bucket<?",
+                (time.time() - 30 * 86400,),
+            )
+        return [
+            dict(row)
+            for row in db.execute(
+                "SELECT stage,provider,model,"
+                + ",".join(f"SUM({key}) AS {key}" for key in fields)
+                + " FROM auxiliary_usage WHERE bucket>=? GROUP BY stage,provider,model ORDER BY stage,provider,model",
+                ((int(time.time() // 3600) - 23) * 3600,),
+            )
+        ]
 
     def trace_turn(self, db, scope, event_key, status, details):
         """Store bounded request metadata without counting it as habit exposure.
