@@ -67,6 +67,53 @@ async def test_panel_save_is_visible_in_native_config_and_dashboard(
     )
 
 
+@pytest.mark.parametrize(
+    "patch",
+    [
+        {"debug_enabled": True},
+        {"memory_enabled": False},
+        {"participation_followup": False},
+    ],
+)
+async def test_panel_toggle_preserves_other_settings_after_native_reload(
+    native_plugin, monkeypatch, patch
+):
+    plugin = native_plugin
+    await plugin.update_settings(
+        {
+            "provider_id": "learning-provider",
+            "embedding_provider_id": "embedding-provider",
+            "rerank_provider_id": "rerank-provider",
+            "planner_provider_id": "planner-provider",
+            "blocked_senders": ["123456", "234567"],
+            "autonomous_tools": ["search", "read_file"],
+            "memory_top_k": 7,
+        }
+    )
+    expected = plugin.settings | patch
+    saved = []
+    original = AstrBotConfig.save_config
+
+    def capture_save(self, replace_config=None, **kwargs):
+        saved.append(json.loads(json.dumps(replace_config)))
+        return original(self, replace_config, **kwargs)
+
+    monkeypatch.setattr(AstrBotConfig, "save_config", capture_save)
+    response = await api_call(
+        plugin.page_api.action, {"action": "settings", "payload": patch}
+    )
+    assert response["status"] == "ok"
+    # Guard the full-snapshot contract at the host's shallow-merge boundary.
+    assert saved == [expected]
+    disk = json.loads(
+        await asyncio.to_thread(
+            Path(plugin.config.config_path).read_text, encoding="utf-8-sig"
+        )
+    )
+    reloaded = AstrBotConfig(plugin.config.config_path, schema=SCHEMA)
+    assert disk == dict(reloaded) == dict(plugin.config) == plugin.settings == expected
+
+
 async def test_native_config_save_and_reload_replaces_old_panel_guards(
     native_plugin, monkeypatch
 ):

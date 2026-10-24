@@ -415,6 +415,8 @@ class Store:
         )
         previous = dict(config)
         try:
+            # AstrBot shallow-merges top-level keys; persist complete values,
+            # never the Panel patch (which is only used for batch guards above).
             snapshot = json.loads(json.dumps(values))
             if callable(getattr(config, "save_config", None)):
                 config.save_config(snapshot)
