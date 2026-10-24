@@ -47,6 +47,7 @@ from .learning import (
     review_issue,
 )
 from .memory_bridge import MemoryBridge
+from .outgoing_media import OutgoingMediaBridge
 from .participation import ParticipationController, bound_reply_messages, event_source
 from .retrieval import HabitRetriever
 from .settings import (
@@ -376,6 +377,7 @@ class PersonaPlugin(Star):
         self.retriever = HabitRetriever(context, self.store, self.prompts)
         self.participation = ParticipationController(self)
         self.conversation = ConversationContext(self)
+        self.outgoing_media = OutgoingMediaBridge(self)
         self.tasks: set[asyncio.Task] = set()
         self.busy: set[str] = set()
         self.prewarming: set[str] = set()
@@ -581,6 +583,7 @@ class PersonaPlugin(Star):
         self.page_api.register()
         self.memory.install()
         self.group_context.install()
+        self.outgoing_media.install()
         self.ready = True
         _active = weakref.ref(self)
         self.worker = self.track(self.poll())
@@ -602,6 +605,7 @@ class PersonaPlugin(Star):
             self.memory.install()
         if not self.closing:
             self.group_context.install()
+            self.outgoing_media.install()
 
     @filter.on_plugin_unloaded()
     async def release_memory_adapter(self, metadata):
@@ -612,6 +616,8 @@ class PersonaPlugin(Star):
         """
         if metadata.name == "astrbot_plugin_livingmemory":
             self.memory.disconnect()
+        if metadata.name == "meme_manager":
+            self.outgoing_media.disconnect()
 
     async def update_settings(self, payload, expected_revision=None):
         """Save Panel settings to the host and publish one consistent runtime state.
@@ -1235,6 +1241,7 @@ class PersonaPlugin(Star):
             req: Native request; only the known synthetic bare-At prompt is adapted.
         """
         event.set_extra("ovenheart_request_started", time.monotonic())
+        self.outgoing_media.bind_event(event)
         if (
             event.get_message_type() != MessageType.GROUP_MESSAGE
             or event.get_extra("ovenheart_decision")
@@ -2117,6 +2124,7 @@ class PersonaPlugin(Star):
             event
         ):
             return
+        self.outgoing_media.bind_event(event)
         if not event.get_extra("ovenheart_observed", False):
             await self.capture(event)
         scope, persona, label = await self.resolve_scope(event, req)
@@ -2556,6 +2564,7 @@ class PersonaPlugin(Star):
         Args:
             event: Native message event after the send pipeline.
         """
+        await self.outgoing_media.capture_result(event)
         event.set_extra("ovenheart_direct_sent", True)
         if (
             event.get_extra("_clean_group_context_session")
@@ -3811,6 +3820,7 @@ class PersonaPlugin(Star):
         """Cancel plugin work and remove handlers that reference this instance."""
         global _active
         self.closing = True
+        self.outgoing_media.disconnect()
         self.group_context.disconnect()
         self.memory.disconnect()
         self.participation.close()

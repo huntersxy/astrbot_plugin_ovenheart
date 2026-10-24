@@ -8,6 +8,10 @@
 
 ## MaiBot 对照来源
 
+0.57.2 同时登记机器人发出的图片，而不只抽取回复的文字。混发图片在发送钩子登记；meme_manager 单独发送和流式结束后发图的路径，通过可卸载的实例适配器在发送函数成功返回后登记。所选表情的描述来自该轮候选资料；其他混发图片必须匹配内容摘要，否则不套用那张表情的描述。可用时复用 QQ 增强插件的真实会话图片引用、配额和有效期，不伪造引用。没有现成描述的临时图片在文件清理前取好输入，再按已有图片描述配置异步处理；关闭图片描述时不增加模型请求。发送记录及其描述进入下一轮 `reply_focus.recent_self`，仍不作为学习原始证据。这里记录的是发送路径已返回，不额外宣称客户端已收到图片。
+
+这与下列 MaiBot `reply.py` 中将实际 `MessageSequence` 交给发送服务并同步到会话历史的方式一致：机器人自己的媒体同样是聊天记录的一部分。
+
 对照本机 MaiBot 提交 `5c7637e6913c84d1c3d5e742fa9e95a7e70d3501`：
 
 - [maisaka_generator_base.py](https://github.com/Mai-with-u/MaiBot/blob/5c7637e6913c84d1c3d5e742fa9e95a7e70d3501/src/chat/replyer/maisaka_generator_base.py)：`_build_target_message_block`、`_build_final_user_message` 将回复目标、原文与本次要求独立交给回复器，区分机器人自己的发言。

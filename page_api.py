@@ -106,6 +106,9 @@ class PageAPI:
             memory=self.plugin.memory.status(),
             group_context=self.plugin.group_context.status(),
             conversation=self.plugin.conversation.status(),
+            outgoing_media={
+                "meme_bound": self.plugin.outgoing_media._owner is not None
+            },
             busy=list(self.plugin.busy),
             retrieval=self.plugin.retriever.status.get(
                 request.query.get("scope")

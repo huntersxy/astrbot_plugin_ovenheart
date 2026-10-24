@@ -307,7 +307,7 @@ class ConversationContext:
                     self.plugin.track(self._caption(event, key, images))
             return window
 
-    async def _caption(self, event, key, images):
+    async def _caption(self, event, key, images, media=None):
         scope, epoch, source = key
         try:
             cfg = self.plugin.context.get_config(event.unified_msg_origin)
@@ -321,9 +321,11 @@ class ConversationContext:
             )
             if provider is None:
                 return
-            descriptions = self.record(event)["media"]
+            descriptions = media if media is not None else self.record(event)["media"]
             image_slots = [
-                i for i, m in enumerate(descriptions) if m["type"] == "image"
+                i
+                for i, m in enumerate(descriptions)
+                if m["type"] == "image" and m.get("status") == "pending"
             ]
             for index, image in zip(image_slots[:4], images[:4], strict=True):
                 if not await self.plugin.permitted(event):
@@ -340,9 +342,10 @@ class ConversationContext:
                     ),
                     timeout=30,
                 )
-                descriptions[index] = {
+                descriptions[index] = descriptions[index] | {
                     "type": "image",
                     "status": "ready",
+                    "description_source": "vision",
                     "text": (response.completion_text or "")[:1000],
                 }
             if self.plugin.closing or not await self.plugin.permitted(event):
@@ -433,6 +436,12 @@ class ConversationContext:
                     "reply_to",
                 )
             } | {"text": m.get("text", "")[:700]}
+            value["media"] = [
+                {k: v for k, v in item.items() if k != "text"}
+                | {"text": item.get("text", "")[:400]}
+                for item in m.get("media", [])[:2]
+            ]
+            value["image_refs"] = list(m.get("image_refs", []))[:4]
             if value.get("reply_to"):
                 value["reply_to"]["text"] = value["reply_to"].get("text", "")[:200]
             return value
@@ -492,12 +501,26 @@ class ConversationContext:
         )
         return not window.get("cid") or window["cid"] == cid
 
-    async def delivered(self, event, scope, plan, text, acknowledge):
+    async def delivered(
+        self,
+        event,
+        scope,
+        plan,
+        text,
+        acknowledge,
+        *,
+        media=None,
+        image_refs=None,
+        source=None,
+    ):
         window = self.plugin.participation.windows.get(scope)
         if not window or not window.get("epoch"):
             return
         async with self.locks.setdefault(scope, asyncio.Lock()):
             expected = window["epoch"]
+            binding = event.get_extra("ovenheart_context_binding")
+            if binding and binding != (scope, expected):
+                return
             owned = bool(plan and window["sequence"] == plan["sequence"])
             room = self.plugin.participation.rooms.get(
                 self.plugin.participation.room_key(event)
@@ -521,7 +544,7 @@ class ConversationContext:
                 or self.record(event)
             )
             record = {
-                "source": "bot:" + uuid4().hex,
+                "source": source or "bot:" + uuid4().hex,
                 "message_id": "",
                 "sender": "机器人（自己）",
                 "sender_id": event.get_self_id(),
@@ -533,8 +556,8 @@ class ConversationContext:
                 },
                 "time": time.time(),
                 "arrival_order": next(self._arrivals),
-                "media": [],
-                "image_refs": [],
+                "media": media or [],
+                "image_refs": image_refs or [],
             }
             state = await self.plugin.store.call("chat_context", scope, cid, record)
             if state["epoch"] != expected:
@@ -546,6 +569,7 @@ class ConversationContext:
                 window["consumed"] = state["sequence"]
             if owned:
                 plan["sequence"] = state["sequence"]
+            return record
 
     async def clear(self, event):
         scope, _, _ = await self.plugin.resolve_scope(event)

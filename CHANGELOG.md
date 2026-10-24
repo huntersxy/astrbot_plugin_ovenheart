@@ -9,6 +9,18 @@
   learning, editing and review behavior remain unchanged.
 - Refresh the Chinese and English layout instructions and local fixture screenshots.
 
+## 0.57.2
+
+- Retain the bot's actual outgoing image chains in structured self context, including
+  image-only replies and meme_manager's separate sends after streaming completes.
+- Reuse captions of the selected, sent meme and real scoped QQ image references.
+  Mixed tool images require a byte match before borrowing a meme caption; unknown
+  temporary images can be described asynchronously before their files disappear.
+- Include self media in the next turn's reply focus. Search results, failed sends,
+  repeated hooks and late captions after /reset cannot invent posted images.
+- Adapt the installed meme sender reversibly in memory; upstream plugin source,
+  normal text learning and native sending remain unchanged.
+
 ## 0.57.1
 
 - Pin the reply target, same-member context and the bot's own recent speech as a
