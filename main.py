@@ -61,6 +61,30 @@ TOOL_SCHEMA_MODES = ("skills_like", "full")
 REPLY_ADDRESS_PREFIX = re.compile(
     r"^\s*[@＠]([^\s@＠，,:：。.!！?？;；`<>\[\]()/\\]{1,64})(?:\s+|[，,:：]\s*)"
 )
+# AstrBot's built-in bare-mention handler supplies this synthetic prompt.
+# Match it exactly so operator/custom-plugin prompts remain untouched.
+NATIVE_EMPTY_MENTION_PROMPT = (
+    "注意，你正在社交媒体上中与用户进行聊天，用户只是通过@来唤醒你，但并未在这条消息中输入内容，他可能会在接下来一条发送他想发送的内容。"
+    "你友好地询问用户想要聊些什么或者需要什么帮助，回复要符合人设，不要太过机械化。"
+    "请注意，你仅需要输出要回复用户的内容，不要输出其他任何东西"
+)
+
+
+def bare_direct_mention(event: AstrMessageEvent) -> bool:
+    """Recognize an At to this bot with only optional whitespace beside it."""
+    parts = event.get_messages()
+    return bool(
+        parts
+        and any(
+            isinstance(part, At) and str(part.qq) == str(event.get_self_id())
+            for part in parts
+        )
+        and all(
+            (isinstance(part, At) and str(part.qq) == str(event.get_self_id()))
+            or (isinstance(part, Plain) and not part.text.strip())
+            for part in parts
+        )
+    )
 
 
 def tool_schema_mode(host_config) -> str:
@@ -1169,7 +1193,7 @@ class PersonaPlugin(Star):
 
         Args:
             event: Original group event; explicit quotes, media and text are new input.
-            req: Prepared native request, whose prompt, tools and media stay intact.
+            req: Native request; only the known synthetic bare-At prompt is adapted.
         """
         if (
             event.get_message_type() != MessageType.GROUP_MESSAGE
@@ -1185,19 +1209,7 @@ class PersonaPlugin(Star):
         )
         if state["scope"] and not state["scope"]["profile"]["apply_enabled"]:
             return
-        parts = event.get_messages()
-        bare_at = bool(
-            parts
-            and any(
-                isinstance(part, At) and str(part.qq) == str(event.get_self_id())
-                for part in parts
-            )
-            and all(
-                (isinstance(part, At) and str(part.qq) == str(event.get_self_id()))
-                or (isinstance(part, Plain) and not part.text.strip())
-                for part in parts
-            )
-        )
+        bare_at = bare_direct_mention(event)
         key = (scope, str(event.get_sender_id()))
         previous = self.direct_pending.get(key)
         if bare_at and previous and previous["source"] != event_source(event):
@@ -1231,6 +1243,8 @@ class PersonaPlugin(Star):
                     previous["source"],
                 )
                 return
+        if bare_at and req.prompt == NATIVE_EMPTY_MENTION_PROMPT:
+            req.prompt = prompts.EMPTY_MENTION_CONTINUATION
         self.register_direct_request(event, scope, req)
 
     def direct_reply_context(self, event: AstrMessageEvent, scope: str) -> dict:
@@ -1312,10 +1326,8 @@ class PersonaPlugin(Star):
             "messages": messages,
             "host_group_context": host_context,
         }
-        if route == "at" and not target["text"].strip() and not reply_to:
-            context["reply_goal"] += (
-                "本条只有@，结合宿主已有上下文和当前处理进度理解，不默认当作新问候；已完成的任务不要重复执行。"
-            )
+        if route == "at" and bare_direct_mention(event):
+            context["reply_goal"] += prompts.EMPTY_MENTION_CONTINUATION
         event.set_extra("ovenheart_reply_target", target)
         event.set_extra("ovenheart_direct_context", context)
         return context

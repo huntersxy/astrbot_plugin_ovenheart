@@ -9,6 +9,12 @@
   learning, editing and review behavior remain unchanged.
 - Refresh the Chinese and English layout instructions and local fixture screenshots.
 
+## 0.56.4
+
+- Continue a bare native @ from the same member's unanswered earlier question,
+  using the host's existing context. Replace only AstrBot's exact synthetic
+  greeting prompt; preserve explicit input, media, permissions and pending-turn merging.
+
 ## 0.56.3
 
 - Replace the private LivingMemory reply-source API dependency with an OvenHeart-owned, reversible in-memory adapter around the upstream native recall/reflection hook entries. Official LivingMemory source files and version identifiers remain unchanged.
