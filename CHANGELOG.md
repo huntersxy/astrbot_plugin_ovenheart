@@ -9,6 +9,17 @@
   learning, editing and review behavior remain unchanged.
 - Refresh the Chinese and English layout instructions and local fixture screenshots.
 
+## 0.56.5
+
+- Reserve native group-context image placeholders before slow captioning and fill
+  their original slots when ready. Consumed, reset or evicted images never reappear
+  in another turn; missing trigger IDs cannot consume unrelated records.
+- Adapt only the supported native instance in memory, preserve its queues and
+  restore owned methods on unload. Continue using a single host transcript.
+- Describe the available avatar_references argument in request-local image tools,
+  including native skills-like schemas. Preserve handlers, schemas, registry
+  descriptions and autonomous permission gates; do not enable unavailable tools.
+
 ## 0.56.4
 
 - Continue a bare native @ from the same member's unanswered earlier question,

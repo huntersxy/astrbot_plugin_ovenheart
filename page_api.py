@@ -104,6 +104,7 @@ class PageAPI:
             tools=tools,
             prompts_revision=self.plugin.prompts_revision,
             memory=self.plugin.memory.status(),
+            group_context=self.plugin.group_context.status(),
             busy=list(self.plugin.busy),
             retrieval=self.plugin.retriever.status.get(
                 request.query.get("scope")

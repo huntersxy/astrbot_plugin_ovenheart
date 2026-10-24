@@ -639,6 +639,9 @@ async def main(args):
                 report["retrieval"] = plugin.retriever.status
             panel = report["panel"]
             report["checks"] = {
+                "native_group_context_ordering": plugin.group_context.status()[
+                    "ordered"
+                ],
                 "command_excluded": report["command_pending"] == 0,
                 "panel_anonymous_rejected": panel["anonymous_status"] == 401,
                 "panel_native_state": panel["state_status"] == 200

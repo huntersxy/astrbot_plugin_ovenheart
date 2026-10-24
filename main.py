@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import hashlib
 import json
 import re
@@ -31,6 +32,7 @@ from astrbot.core.star.session_llm_manager import SessionServiceManager
 from astrbot.core.star.session_plugin_manager import SessionPluginManager
 
 from . import prompts
+from .group_context import GroupContextBridge
 from .learning import (
     LEARNING_DELIVERY_RULE,
     LEARNING_RHYTHM_RULE,
@@ -368,6 +370,7 @@ class PersonaPlugin(Star):
         self.prompts = prompts.merge({})
         self.prompts_revision = uuid4().hex
         self.memory = MemoryBridge(context)
+        self.group_context = GroupContextBridge(self)
         self.retriever = HabitRetriever(context, self.store, self.prompts)
         self.participation = ParticipationController(self)
         self.tasks: set[asyncio.Task] = set()
@@ -574,6 +577,7 @@ class PersonaPlugin(Star):
         self.page_api = PageAPI(self)
         self.page_api.register()
         self.memory.install()
+        self.group_context.install()
         self.ready = True
         _active = weakref.ref(self)
         self.worker = self.track(self.poll())
@@ -593,6 +597,8 @@ class PersonaPlugin(Star):
             "astrbot_plugin_livingmemory",
         ):
             self.memory.install()
+        if not self.closing:
+            self.group_context.install()
 
     @filter.on_plugin_unloaded()
     async def release_memory_adapter(self, metadata):
@@ -1722,6 +1728,31 @@ class PersonaPlugin(Star):
         event.stop_event()
         event.clear_result()
 
+    def describe_request_tools(self, event, req):
+        """Expose supported avatar arguments in this request's light tool list.
+
+        Copy only the tool description and container, retaining native handlers,
+        parameters and any autonomous permission gate. Never enable a missing tool.
+        """
+        tools = req.func_tool
+        tool = tools.get_tool("generate_image") if tools is not None else None
+        parameter = (
+            tool.parameters.get("properties", {}).get("avatar_references")
+            if tool is not None and tool.active
+            else None
+        )
+        supported = isinstance(parameter, dict) and parameter.get("type") == "array"
+        event.set_extra("ovenheart_tool_capabilities", {"avatar_references": supported})
+        if not supported or prompts.AVATAR_TOOL_HINT in (tool.description or ""):
+            return
+        described = copy.copy(tool)
+        described.description = (tool.description or "") + prompts.AVATAR_TOOL_HINT
+        local = copy.copy(tools)
+        local.tools = [
+            described if current is tool else current for current in tools.tools
+        ]
+        req.func_tool = local
+
     @filter.on_llm_request(priority=-100000)
     async def apply_participation(self, event: AstrMessageEvent, req: ProviderRequest):
         """Apply the plan and an isolated tool allowlist to autonomous requests only.
@@ -1756,6 +1787,7 @@ class PersonaPlugin(Star):
                 "messages": bound_reply_messages(direct["messages"], self.settings)
             }
             event.set_extra("ovenheart_direct_context", direct)
+            self.describe_request_tools(event, req)
             target = direct["reply_message"]
             if (
                 event.get_platform_name() == "aiocqhttp"
@@ -1912,6 +1944,7 @@ class PersonaPlugin(Star):
             skills_like=tool_schema_mode(host_config) == "skills_like",
             permit=permit_tool,
         )
+        self.describe_request_tools(event, req)
         profile = plan.get("profile", {})
         target = plan.get("target") or {}
         target_label = target.get("sender") or "群聊"
@@ -2331,6 +2364,7 @@ class PersonaPlugin(Star):
                 "context_budget": self.settings["reply_context_budget"],
                 "temporary_chars": metrics["habit_user_chars"]
                 + event.get_extra("ovenheart_context_chars", 0),
+                "tool_capabilities": event.get_extra("ovenheart_tool_capabilities", {}),
             }
             previous = {
                 "key": previous["key"] if previous else uuid4().hex,
@@ -3595,6 +3629,7 @@ class PersonaPlugin(Star):
         """Cancel plugin work and remove handlers that reference this instance."""
         global _active
         self.closing = True
+        self.group_context.disconnect()
         self.memory.disconnect()
         self.participation.close()
         self.ready = False
