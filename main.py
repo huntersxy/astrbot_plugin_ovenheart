@@ -1205,6 +1205,25 @@ class PersonaPlugin(Star):
         if len(self.direct_pending) > 128:
             self.direct_pending.pop(next(iter(self.direct_pending)))
 
+    def pending_direct(self, scope):
+        """Reserve a room for a live direct wake without retaining a second transcript."""
+        for (room, _), pending in list(self.direct_pending.items()):
+            if room != scope:
+                continue
+            event, task = pending["event"](), pending["task"]()
+            if (
+                event is not None
+                and task is not None
+                and not task.done()
+                and not event.is_stopped()
+                and not event.get_extra("ovenheart_direct_sent")
+                and not event.get_extra("ovenheart_decision")
+                and pending["revision"] == self.settings_revision
+                and pending["prompts_revision"] == self.prompts_revision
+            ):
+                return True
+        return False
+
     @filter.on_llm_request(priority=100000)
     async def coordinate_direct_request(
         self, event: AstrMessageEvent, req: ProviderRequest
@@ -1215,6 +1234,7 @@ class PersonaPlugin(Star):
             event: Original group event; explicit quotes, media and text are new input.
             req: Native request; only the known synthetic bare-At prompt is adapted.
         """
+        event.set_extra("ovenheart_request_started", time.monotonic())
         if (
             event.get_message_type() != MessageType.GROUP_MESSAGE
             or event.get_extra("ovenheart_decision")
@@ -1351,6 +1371,7 @@ class PersonaPlugin(Star):
             "reply_context": [],
             "messages": messages,
             "host_group_context": host_context,
+            "reply_focus": self.conversation.focus(event, scope, target, messages),
         }
         if route == "at" and bare_direct_mention(event):
             context["reply_goal"] += prompts.EMPTY_MENTION_CONTINUATION
@@ -1371,6 +1392,7 @@ class PersonaPlugin(Star):
         plan = event.get_extra("ovenheart_decision")
         if (
             not await self.permitted(event)
+            or self.pending_direct(plan["scope"])
             or self.settings["participation_mode"] != "auto"
             or not self.settings["apply_enabled"]
             or (plan.get("followup") and not self.settings["participation_followup"])
@@ -1907,6 +1929,7 @@ class PersonaPlugin(Star):
                         if self.conversation.active(event)
                         else ""
                     )
+                    + prompts.REPLY_FOCUS_RULE
                     + "\n"
                     + prompts.REPLY_ADDRESS_RULE
                     + self.decorate_request(req)
@@ -2041,6 +2064,9 @@ class PersonaPlugin(Star):
                 "expression_intent": plan.get("expression_intent", {}),
                 "decoration": plan.get("decoration"),
                 "messages": context_messages,
+                "reply_focus": self.conversation.focus(
+                    event, plan["scope"], target, context_messages
+                ),
             },
             ensure_ascii=False,
         )
@@ -2057,6 +2083,7 @@ class PersonaPlugin(Star):
         req.system_prompt += system_injection
         if self.conversation.active(event):
             user_injection += prompts.STRUCTURED_CONTEXT_RULE
+        user_injection += prompts.REPLY_FOCUS_RULE
         req.extra_user_content_parts.append(
             TextPart(text=user_injection).mark_as_temp()
         )
@@ -2224,6 +2251,13 @@ class PersonaPlugin(Star):
                 )
                 for m in (plan or direct)["messages"][-6:]
             )
+            anchored = self.conversation.focus(
+                event, scope, target, (plan or direct)["messages"]
+            )
+            history.extend(
+                "你自己此前已说：" + m["text"][:350]
+                for m in anchored["recent_self"][-2:]
+            )
         recent, size = [], 0
         history_budget = min(1100, max(0, 2400 - len(focus) - len(goal) - 1))
         for line in reversed(history):
@@ -2248,7 +2282,8 @@ class PersonaPlugin(Star):
             ] or await self.context.get_current_chat_provider_id(
                 event.unified_msg_origin
             )
-        selection = await self.track(
+        selection_started = time.monotonic()
+        selection_task = self.track(
             self.retriever.select(
                 scope if settings["session_isolation"] else SHARED_SCOPE,
                 state["traits"],
@@ -2261,6 +2296,30 @@ class PersonaPlugin(Star):
                 recent_expression_ids=state.get("recent_expression_ids", []),
                 expression_intent=expression_intent,
             )
+        )
+        # wait_for waits for cancellation to finish. An optional selector whose
+        # provider delays cancellation must never hold the native room lock.
+        try:
+            done, _ = await asyncio.wait(
+                {selection_task},
+                timeout=settings["retrieval_timeout"] + settings["selector_timeout"],
+            )
+            if done:
+                selection = await selection_task
+            else:
+                selection_task.cancel()
+                selection = {
+                    "traits": [],
+                    "mode": "deadline",
+                    "message": "习惯检索超过本轮总等待上限，跳过可选习惯，保留人格底稿与真实消息。",
+                }
+                logger.warning("习惯检索超过总等待上限，本轮继续处理原请求")
+        except asyncio.CancelledError:
+            selection_task.cancel()
+            raise
+        event.set_extra(
+            "ovenheart_selection_seconds",
+            round(time.monotonic() - selection_started, 3),
         )
         self.debug(
             "retrieval",
@@ -2382,6 +2441,9 @@ class PersonaPlugin(Star):
             details = previous["details"] | (
                 {"cancel_reason": cancel_reason} if cancel_reason else {}
             )
+            details["elapsed_seconds"] = round(
+                max(0, time.time() - event.created_at), 3
+            )
         else:
             plan = event.get_extra("ovenheart_decision") or {}
             direct = event.get_extra("ovenheart_direct_context") or {}
@@ -2419,6 +2481,23 @@ class PersonaPlugin(Star):
                 "temporary_chars": metrics["habit_user_chars"]
                 + event.get_extra("ovenheart_context_chars", 0),
                 "tool_capabilities": event.get_extra("ovenheart_tool_capabilities", {}),
+                "selection_seconds": event.get_extra("ovenheart_selection_seconds"),
+                "assembly_seconds": round(
+                    max(
+                        0,
+                        time.monotonic()
+                        - event.get_extra(
+                            "ovenheart_request_started", time.monotonic()
+                        ),
+                    ),
+                    3,
+                ),
+                "input_age_seconds": round(max(0, time.time() - event.created_at), 3),
+                "focus_self_count": len(
+                    (event.get_extra("ovenheart_reply_focus") or {}).get(
+                        "recent_self", []
+                    )
+                ),
             }
             previous = {
                 "key": previous["key"] if previous else uuid4().hex,
@@ -2435,6 +2514,35 @@ class PersonaPlugin(Star):
             # Diagnostics must not block the native response path.
             self.debug(
                 "turn_trace_failed", scope=metrics["scope"], error=type(exc).__name__
+            )
+
+    @filter.on_agent_done(priority=-100000)
+    async def record_generation_outcome(self, event, run_context, response):
+        """Distinguish an empty model result from a still-running native task."""
+        if not event.get_extra("ovenheart_turn_trace") or event.is_stopped():
+            return
+        visible = bool(
+            response
+            and (
+                (response.completion_text or "").strip()
+                or (response.result_chain and response.result_chain.chain)
+            )
+        )
+        messages = run_context.messages
+        last_user = max(
+            (i for i, m in enumerate(messages) if m.role == "user"), default=-1
+        )
+        used_tools = any(m.role == "tool" for m in messages[last_user + 1 :])
+        if not visible and not used_tools and not event._has_send_oper:
+            await self.record_turn_trace(
+                event,
+                status="empty_response",
+                cancel_reason="模型结束但没有可见回复；不代表请求已完成。工具是否已执行需单独核对，未自动重复执行。",
+            )
+            logger.warning(
+                "本轮模型结束但没有可见回复 (scope=%s, source=%s)",
+                event.get_extra("ovenheart_reply_scope"),
+                event_source(event),
             )
 
     @filter.after_message_sent()

@@ -9,6 +9,18 @@
   learning, editing and review behavior remain unchanged.
 - Refresh the Chinese and English layout instructions and local fixture screenshots.
 
+## 0.57.1
+
+- Pin the reply target, same-member context and the bot's own recent speech as a
+  bounded, frozen reply focus, including when busy-room chatter exceeds 40 rows.
+  Explicit tasks take precedence over learned casual/short-reply preferences.
+- Pause autonomous planning while a native direct task is live and recheck before
+  generation; already answered targets remain background instead of repeat targets.
+- Bound optional habit selection even when provider cancellation is slow. Record
+  assembly/selection/input timing and distinguish empty model results from pending
+  requests without automatically replaying tools or claiming successful delivery.
+- Document the MaiBot mechanisms used as references and their upstream license.
+
 ## 0.57.0
 
 - Add an opt-in structured room context shared by the participation planner and

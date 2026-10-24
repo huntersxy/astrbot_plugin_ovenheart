@@ -1809,10 +1809,10 @@ class Store:
             db: Open database connection.
             scope: Native session/persona identity.
             event_key: One identity retained across request and send hooks.
-            status: prepared, send_hook or cancelled; never proof of delivery.
+            status: prepared, send_hook, cancelled or empty_response; never proof of delivery.
             details: Metadata assembled by the runtime, without prompt/chat bodies.
         """
-        if status not in {"prepared", "send_hook", "cancelled"}:
+        if status not in {"prepared", "send_hook", "cancelled", "empty_response"}:
             raise ValueError("Unknown turn trace status")
         now = time.time()
         db.execute(

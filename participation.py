@@ -344,6 +344,7 @@ class ParticipationController:
         if (
             not settings["apply_enabled"]
             or not state["scope"]["profile"]["apply_enabled"]
+            or plugin.pending_direct(scope)
         ):
             return None
         structured = plugin.conversation.active(event)
@@ -635,6 +636,7 @@ class ParticipationController:
                 if (
                     changed.is_set()
                     or window["sequence"] != sequence
+                    or plugin.pending_direct(scope)
                     or not await plugin.permitted(event)
                 ):
                     return None

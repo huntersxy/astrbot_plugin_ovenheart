@@ -12,6 +12,7 @@ from astrbot.api.provider import ProviderRequest
 from astrbot.builtin_stars.astrbot.main import Main
 from astrbot.core.db.po import Conversation
 from astrbot.core.message.components import At, Image, Plain, Reply
+from astrbot.core.provider.entities import LLMResponse
 
 from astrbot_plugin_ovenheart.participation import ParticipationFormatError, parse_plan
 from tests.test_participation import decision, requests
@@ -296,3 +297,142 @@ async def test_quote_and_budget_preserve_identity(structured):
     assert frozen[-1]["message_id"] == "final"
     stored = await structured.store.call("chat_context", scope, "dialog-a")
     assert stored["messages"][0]["reply_to"]["message_id"] == "quoted"
+
+
+async def test_own_speech_and_same_sender_survive_busy_room_window(structured):
+    plugin = structured
+    first = incoming("first", "先前的问题", sender="alice")
+    scope = (await plugin.resolve_scope(first))[0]
+    await plugin.capture(first)
+    await plugin.conversation.delivered(
+        first, scope, None, "我这条插座出厂就是温柔款的", True
+    )
+    for i in range(45):
+        await plugin.capture(
+            incoming(
+                f"peer-{i}", "别人的闲聊", sender="peer", sender_name="机器人（自己）"
+            )
+        )
+    wake = incoming("followup", "你怎么是条了", sender="alice")
+    wake.is_at_or_wake_command = True
+    request = ProviderRequest(prompt=wake.message_str)
+    await plugin.coordinate_direct_request(wake, request)
+    await plugin.apply_persona(wake, request)
+    await plugin.apply_participation(wake, request)
+    focus = wake.get_extra("ovenheart_reply_focus")
+    assert focus["recent_self"][-1]["text"] == "我这条插座出厂就是温柔款的"
+    assert focus["same_sender_before"][-1]["message_id"] == "first"
+    assert all(m["sender_id"] != "peer" for m in focus["recent_self"])
+    assert "first" not in [
+        m["message_id"]
+        for m in wake.get_extra("ovenheart_context_snapshot")["messages"]
+    ]
+    assert "我这条插座出厂就是温柔款的" in json.dumps(
+        await request.assemble_context(), ensure_ascii=False
+    )
+    assert request.extra_user_content_parts[-1].model_dump_for_context()["_no_save"]
+    before = json.dumps(focus)
+    await plugin.capture(incoming("future", "未来的话题"))
+    assert plugin.direct_reply_context(wake, scope)["reply_focus"] is focus
+    assert json.dumps(focus) == before
+
+
+async def test_already_answered_message_is_not_an_autonomous_target(structured):
+    original = incoming("original", "QUESTION")
+    scope = (await structured.resolve_scope(original))[0]
+    await structured.capture(original)
+    await structured.conversation.delivered(original, scope, None, "ANSWER", True)
+    next_turn = incoming("next", "NEW_TOPIC", sender="peer")
+    await structured.conversation.prepare(next_turn, scope, ProviderRequest())
+    messages = next_turn.get_extra("ovenheart_context_snapshot")["messages"]
+    answered = next(m for m in messages if m["message_id"] == "original")
+    assert not answered["replyable"]
+    with pytest.raises(ParticipationFormatError):
+        parse_plan(
+            decision(target_sequence=answered["sequence"]).completion_text,
+            structured.settings,
+            messages=messages,
+        )
+
+
+async def test_autonomous_planning_waits_for_live_direct_task(structured):
+    plugin = structured
+    plugin.settings.update(participation_mode="auto", participation_cooldown=0)
+    direct = incoming("direct", "主持辩论，每轮等评判再继续")
+    direct.is_at_or_wake_command = True
+    entered, release = asyncio.Event(), asyncio.Event()
+
+    async def working():
+        await plugin.coordinate_direct_request(
+            direct, ProviderRequest(prompt=direct.message_str)
+        )
+        entered.set()
+        await release.wait()
+
+    task = asyncio.create_task(working())
+    await asyncio.wait_for(entered.wait(), 1)
+    try:
+        assert (
+            await requests(plugin, incoming("chatter", "烤箱快来定规则", sender="peer"))
+            == []
+        )
+        plugin.context.llm_generate.assert_not_awaited()
+    finally:
+        release.set()
+        await task
+    # A finished task cannot keep the room blocked.
+    assert len(await requests(plugin, incoming("fresh", "新问题", sender="peer"))) == 1
+
+
+async def test_optional_selection_has_hard_deadline_even_if_cancellation_is_slow(
+    structured, monkeypatch
+):
+    release, cancelled = asyncio.Event(), asyncio.Event()
+    workers = []
+
+    async def slow(*args, **kwargs):
+        workers.append(asyncio.current_task())
+        try:
+            await release.wait()
+        except asyncio.CancelledError:
+            cancelled.set()
+            await release.wait()
+        return {"traits": [], "mode": "late", "message": "late"}
+
+    monkeypatch.setattr(structured.retriever, "select", slow)
+    structured.settings.update(retrieval_timeout=0.01, selector_timeout=0.01)
+    wake = incoming("wake", "真正要处理的任务")
+    request = ProviderRequest(prompt=wake.message_str)
+    try:
+        await asyncio.wait_for(structured.apply_persona(wake, request), 1)
+        await asyncio.wait_for(cancelled.wait(), 1)
+        assert not wake.is_stopped() and request.prompt == "真正要处理的任务"
+        assert wake.get_extra("ovenheart_trace_metrics")["retrieval_mode"] == "deadline"
+    finally:
+        release.set()
+        await asyncio.gather(*workers, return_exceptions=True)
+
+
+async def test_empty_generation_is_visible_in_audit_without_repeating_tools(structured):
+    wake = incoming("direct", "帮我主持辩论")
+    wake.is_at_or_wake_command = True
+    request = ProviderRequest(prompt=wake.message_str)
+    await structured.apply_persona(wake, request)
+    await structured.apply_participation(wake, request)
+    scope = (await structured.resolve_scope(wake))[0]
+    run = SimpleNamespace(
+        messages=[SimpleNamespace(role="user"), SimpleNamespace(role="assistant")]
+    )
+    await structured.record_generation_outcome(
+        wake, run, LLMResponse(role="assistant", reasoning_content="private reasoning")
+    )
+    trace = (await structured.store.call("state", scope))["turn_traces"][0]
+    assert trace["status"] == "empty_response"
+    assert "private reasoning" not in json.dumps(trace)
+    structured.context.llm_generate.assert_not_awaited()
+    # A send-stage observation may supersede an empty diagnostic, not a cancellation.
+    wake.set_result(wake.plain_result("实际回复"))
+    await structured.record_delivery(wake)
+    assert (await structured.store.call("state", scope))["turn_traces"][0][
+        "status"
+    ] == "send_hook"

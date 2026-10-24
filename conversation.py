@@ -373,6 +373,11 @@ class ConversationContext:
         ):
             return []
         result = []
+        answered = {
+            str((m.get("reply_to") or {}).get("message_id"))
+            for m in window["messages"]
+            if m.get("self") and (m.get("reply_to") or {}).get("message_id")
+        }
         for record in reversed(
             [
                 m
@@ -388,11 +393,73 @@ class ConversationContext:
             value["replyable"] = (
                 not value.get("self")
                 and (scope, value["source"]) in self.plugin.participation.sources
+                and value.get("message_id") not in answered
             )
             if len(json.dumps([value, *result], ensure_ascii=False)) > CONTEXT_BUDGET:
                 break
             result.insert(0, value)
         return result
+
+    def focus(self, event, scope, target, messages):
+        """Pin the addressee's thread and our own speech separately from room chatter.
+
+        These are excerpts of the same ledger, not a second transcript or a claim
+        that a nearby remark necessarily refers to our previous answer.
+        """
+        frozen = event.get_extra("ovenheart_reply_focus")
+        if (
+            frozen
+            and frozen["scope"] == scope
+            and frozen["source"] == target.get("source")
+        ):
+            return frozen
+        window = self.plugin.participation.windows.get(scope, {})
+        records = list(window.get("messages", [])) if self.active(event) else messages
+        boundary = (event.created_at, self.order(event))
+        records = [
+            m for m in records if (m["time"], m.get("arrival_order", 0)) <= boundary
+        ]
+
+        def excerpt(m):
+            value = {
+                k: copy.deepcopy(m.get(k))
+                for k in (
+                    "source",
+                    "message_id",
+                    "sender_id",
+                    "sender",
+                    "self",
+                    "time",
+                    "reply_to",
+                )
+            } | {"text": m.get("text", "")[:700]}
+            if value.get("reply_to"):
+                value["reply_to"]["text"] = value["reply_to"].get("text", "")[:200]
+            return value
+
+        own = [excerpt(m) for m in records if m.get("self")][-3:]
+        target_time = target.get("time") or event.created_at
+        thread = [
+            excerpt(m)
+            for m in records
+            if not m.get("self")
+            and m.get("sender_id") == target.get("sender_id")
+            and m.get("source") != target.get("source")
+            and 0 <= target_time - m["time"] <= 600
+        ][-4:]
+        focus = {
+            "scope": scope,
+            "source": target.get("source"),
+            "target": excerpt(target) | {"text": target.get("text", "")[:1200]},
+            "recent_self": own,
+            "same_sender_before": thread,
+        }
+        while len(json.dumps(focus, ensure_ascii=False)) > 6000 and (
+            thread or len(own) > 1
+        ):
+            (thread if thread else own).pop(0)
+        event.set_extra("ovenheart_reply_focus", focus)
+        return focus
 
     async def prepare(self, event, scope, req):
         if not self.active(event):
@@ -462,7 +529,7 @@ class ConversationContext:
                 "text": text[:4000],
                 "reply_to": {
                     k: target.get(k, "")
-                    for k in ("message_id", "sender", "sender_id", "text")
+                    for k in ("source", "message_id", "sender", "sender_id", "text")
                 },
                 "time": time.time(),
                 "arrival_order": next(self._arrivals),

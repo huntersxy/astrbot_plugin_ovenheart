@@ -1,0 +1,17 @@
+# 群聊回复的目标与执行边界
+
+0.57.1 在统一群聊记录之外，单独给本轮回复提供有界的 `reply_focus`：真实目标、同一成员此前的发言、机器人自己的近期发言。它们都来自当前会话，不作为系统指令，也不表示临近消息一定相关。机器人自己的身份由消息来源确定，不由昵称判断。焦点记录冻结后不受后续群消息修改，作为临时输入，不重复写入宿主会话。
+
+直接唤醒的原生任务仍然存活时，自主参与先等待，不额外占用同群生成流程；新的直接唤醒仍走宿主流程。自主回复前再次核对任务、会话与消息状态。已有实际答复关系的目标留作背景，不能再次被自主选中。这里的“已答复”只表示已有机器人发言，不证明用户的多步任务已经完成。
+
+可选习惯检索具有总等待上限；提供商取消缓慢时，也不能继续占着原生会话锁。超时跳过可选习惯，并在记录中明确说明。空模型结果单独记为“未生成回复”，不把它说成发送成功，也不自动重放可能已经执行的工具。诊断只记耗时、数量和状态，不保存模型内部推理。
+
+## MaiBot 对照来源
+
+对照本机 MaiBot 提交 `5c7637e6913c84d1c3d5e742fa9e95a7e70d3501`：
+
+- [maisaka_generator_base.py](https://github.com/Mai-with-u/MaiBot/blob/5c7637e6913c84d1c3d5e742fa9e95a7e70d3501/src/chat/replyer/maisaka_generator_base.py)：`_build_target_message_block`、`_build_final_user_message` 将回复目标、原文与本次要求独立交给回复器，区分机器人自己的发言。
+- [reply.py](https://github.com/Mai-with-u/MaiBot/blob/5c7637e6913c84d1c3d5e742fa9e95a7e70d3501/src/maisaka/builtin_tool/reply.py)：`_find_recent_reply_to_target`、`reply_reference` 明确关联目标及已回复关系，生成失败保留可检查的结果。
+- [planner_messages.py](https://github.com/Mai-with-u/MaiBot/blob/5c7637e6913c84d1c3d5e742fa9e95a7e70d3501/src/maisaka/context/planner_messages.py)：消息编号、时间、引用和自身发言具有独立的结构字段。
+
+这些机制按 AstrBot 的请求、权限和生命周期重新实现，没有复制 MaiBot 源代码或提示词。MaiBot 的原许可证为 [GPL-3.0](https://github.com/Mai-with-u/MaiBot/blob/5c7637e6913c84d1c3d5e742fa9e95a7e70d3501/LICENSE)；本插件继续使用仓库中的 AGPL-3.0 许可证。
