@@ -9,6 +9,12 @@
   learning, editing and review behavior remain unchanged.
 - Refresh the Chinese and English layout instructions and local fixture screenshots.
 
+## 0.58.1
+
+- 最终参与检查移至请求装饰之后、成本诊断尾钩之前，避免插件加载顺序让已取消请求污染缓存比较基线；成本诊断仍能看到真实工具权限和正常工具变化。
+- 可选习惯检索意外失败时保留固定人格底稿，仅跳过本轮习惯；继续核对权限、暂停、会话与配置变化，取消请求不会补注入。
+- 增加原生钩子调度回归，覆盖两种加载顺序、取消请求、最终工具集合、正常工具移除及检索异常与暂停。
+
 ## 0.58.0
 
 - 与 Oven Multi 1.54.0 建立可选联动：烤箱之心在启用且获准处理的群聊中统一负责回复对象和成员提及，保留各插件独立运行能力。

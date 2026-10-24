@@ -1830,7 +1830,10 @@ class PersonaPlugin(Star):
         ]
         req.func_tool = local
 
-    @filter.on_llm_request(priority=-100000)
+    # Run after request decorators (-30000), but before diagnostic tails (-100000).
+    # Equal priorities depend on plugin load order: an obsolete request can then
+    # poison the cache baseline before our final admission check cancels it.
+    @filter.on_llm_request(priority=-90000)
     async def apply_participation(self, event: AstrMessageEvent, req: ProviderRequest):
         """Apply the plan and an isolated tool allowlist to autonomous requests only.
 
@@ -2368,6 +2371,18 @@ class PersonaPlugin(Star):
         except asyncio.CancelledError:
             selection_task.cancel()
             raise
+        except Exception as exc:
+            # The host catches hook errors and continues generation. An optional
+            # retrieval failure must not silently remove the stable persona from
+            # that otherwise valid request and invalidate its system prefix.
+            selection = {
+                "traits": [],
+                "mode": "error",
+                "message": "习惯检索异常，本轮跳过可选习惯，保留人格底稿与真实消息。",
+            }
+            logger.warning(
+                "习惯检索异常，本轮保留人格底稿继续处理 (%s)", type(exc).__name__
+            )
         event.set_extra(
             "ovenheart_selection_seconds",
             round(time.monotonic() - selection_started, 3),
