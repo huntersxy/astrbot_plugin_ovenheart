@@ -63,6 +63,37 @@ MEMORY_SCHEMA = {
     },
 }
 
+REQUEST_EVIDENCE = MEMORY_SCHEMA["properties"]["evidence"] | {"maxItems": 1}
+CHANGE_SCHEMAS = {
+    "correct_memory": MEMORY_SCHEMA
+    | {
+        "required": ["memory_id", "content", "evidence", "relations"],
+        "properties": MEMORY_SCHEMA["properties"]
+        | {
+            "memory_id": {"type": "string", "minLength": 1, "maxLength": 80},
+            "evidence": REQUEST_EVIDENCE,
+        },
+    },
+    "forget_memory": {
+        "type": "object",
+        "required": ["memory_id", "evidence"],
+        "additionalProperties": False,
+        "properties": {
+            "memory_id": {"type": "string", "minLength": 1, "maxLength": 80},
+            "evidence": REQUEST_EVIDENCE,
+        },
+    },
+    "undo_memory_change": {
+        "type": "object",
+        "required": ["evidence"],
+        "additionalProperties": False,
+        "properties": {
+            "change_id": {"type": "string", "maxLength": 80},
+            "evidence": REQUEST_EVIDENCE,
+        },
+    },
+}
+
 
 def native_provenance(evidence, previous=()):
     proofs = list(
@@ -275,6 +306,10 @@ class RoomState:
                     "backend": "amemorix",
                     "metadata": {
                         "source_type": "episode",
+                        "paragraphs": [
+                            {"id": p["hash"], "content": p["content"][:800]}
+                            for p in paragraphs[:3]
+                        ],
                         "participants": episode.get("participants", []),
                         "evidence": [
                             {**e, "quote": e["quote"][:160]} for e in proofs[:4]
@@ -333,6 +368,196 @@ class RoomState:
             "vector_written": self.paragraph_vectors is not None
             and paragraph in self.paragraph_vectors,
             "backfill": self.metadata.get_paragraph_vector_backfill_status_counts(),
+        }
+
+    async def change(self, action, payload, evidence):
+        from .native_memory_kernel import correction_evidence
+        from .vendor.maibot.amemorix.utils.hash import normalize_text
+
+        actor = "ovenheart:" + evidence[0]["sender"]
+        reason = json.dumps(
+            {"native_action": action, "evidence": evidence}, ensure_ascii=False
+        )
+        if self.embedding.available:
+            try:
+                await asyncio.wait_for(self._prepare_vectors(evidence[0]["quote"]), 1.5)
+            except Exception:
+                pass  # Keep the SDK's authoritative metadata/deferred-index state.
+        if action == "undo_memory_change":
+            return await self._undo_change(payload.get("change_id", ""), actor, reason)
+        memory_id = payload["memory_id"]
+        row = self.metadata.get_paragraph(memory_id)
+        if row is None or row["source"] != "chat_summary:" + self.path.name:
+            return {
+                "success": False,
+                "error": "只能修改当前会话、人格中本插件学习的通用段落。",
+            }
+        # Use the SDK's existing deleted/inactive/protected-target checks.
+        self.kernel._correction_admin_service._collect_selected_fuzzy_modify_candidates(
+            [{"type": "paragraph", "id": memory_id}]
+        )
+        if action == "forget_memory":
+            result = await self.kernel.memory_delete_admin(
+                action="execute",
+                mode="paragraph",
+                selector={"hashes": [memory_id]},
+                requested_by=actor,
+                reason=reason,
+            )
+            return {
+                "success": result["success"],
+                "change_id": result.get("operation_id", ""),
+                "memory_id": memory_id,
+                "error": result.get("error", ""),
+            }
+        if normalize_text(payload["content"]) == normalize_text(row["content"]):
+            return {"success": False, "error": "新内容与原记录相同，无需更正。"}
+        plan = self.metadata.create_fuzzy_modify_plan(
+            request_text=evidence[0]["quote"],
+            scope="memory",
+            target_chat_id=self.path.name,
+            requested_by=actor,
+            reason=reason,
+            confidence=1.0,
+            preview={
+                "native_action": action,
+                "memory_id": memory_id,
+                "evidence": evidence,
+            },
+            plan={
+                "chat_id": self.path.name,
+                "operations": [
+                    {
+                        "action": "mark_superseded",
+                        "target_type": "paragraph",
+                        "hash": memory_id,
+                    },
+                    {
+                        "action": "ingest_text",
+                        "source_type": "chat_summary",
+                        "chat_id": self.path.name,
+                        "text": payload["content"],
+                        "relations": payload["relations"],
+                    },
+                ],
+            },
+        )
+        token = correction_evidence.set((plan["plan_id"], self.path.name, evidence))
+        try:
+            result = await self.kernel.memory_correction_admin(
+                action="execute",
+                plan_id=plan["plan_id"],
+                confirmed=True,
+                requested_by=actor,
+                reason=reason,
+            )
+        finally:
+            correction_evidence.reset(token)
+        execution = result.get("execution") or {}
+        return {
+            "success": result["success"],
+            "change_id": plan["plan_id"],
+            "memory_id": memory_id,
+            "new_ids": [
+                i
+                for i in execution.get("stored_ids", [])
+                if self.metadata.get_paragraph(i)
+            ],
+            "error": execution.get("error", result.get("error", "")),
+        }
+
+    async def _undo_change(self, change_id, actor, reason):
+        # The original journal also contains SDK-internal cleanup/rollback
+        # deletes. Only actions issued by this native author are undo targets.
+        changes = []
+        plans = (
+            [self.metadata.get_fuzzy_modify_plan(change_id)]
+            if change_id
+            else self.metadata.list_fuzzy_modify_plans(
+                limit=50, statuses=["executed"], scope="memory"
+            )
+        )
+        for plan in plans:
+            if (
+                plan
+                and plan["requested_by"] == actor
+                and plan["preview"].get("native_action") == "correct_memory"
+                and plan["status"] == "executed"
+            ):
+                changes.append(
+                    (
+                        plan["created_at"],
+                        "correct",
+                        plan["plan_id"],
+                        plan["preview"]["memory_id"],
+                    )
+                )
+        operations = (
+            [self.metadata.get_delete_operation(change_id)]
+            if change_id
+            else self.metadata.list_delete_operations(limit=50, mode="paragraph")
+        )
+        for operation in operations:
+            if (
+                not operation
+                or operation["requested_by"] != actor
+                or operation["status"]
+                not in {"pending_cleanup", "completed", "restore_pending"}
+            ):
+                continue
+            try:
+                provenance = json.loads(operation.get("reason") or "")
+            except ValueError:
+                continue
+            if provenance.get("native_action") == "forget_memory":
+                changes.append(
+                    (
+                        operation["created_at"],
+                        "forget",
+                        operation["operation_id"],
+                        operation["selector"]["hashes"][0],
+                    )
+                )
+        if not changes:
+            return {
+                "success": False,
+                "error": "没有找到你在当前会话、人格中可撤销的更正或遗忘。",
+            }
+        _, kind, identifier, memory_id = max(changes)
+        if kind == "correct":
+            result = await self.kernel.memory_correction_admin(
+                action="rollback", plan_id=identifier, requested_by=actor, reason=reason
+            )
+        else:
+            result = await self.kernel.memory_delete_admin(
+                action="restore",
+                operation_id=identifier,
+                requested_by=actor,
+                reason=reason,
+            )
+        row = self.metadata.get_paragraph(memory_id)
+        status = (
+            self.metadata.get_delete_operation(identifier)["status"]
+            if kind == "forget"
+            else result.get("plan", {}).get("status", "")
+        )
+        metadata_restored = bool(result["success"]) or (
+            kind == "forget"
+            and status == "restore_pending"
+            and row is not None
+            and not row["is_deleted"]
+        )
+        return {
+            "success": result["success"],
+            "change_id": identifier,
+            "status": status,
+            "restored_ids": [memory_id] if metadata_restored else [],
+            "metadata_restored": metadata_restored,
+            "pending_derived_indexes": metadata_restored and not result["success"],
+            "message": "文字记忆已恢复，派生索引仍在恢复中，尚未全部完成。"
+            if metadata_restored and not result["success"]
+            else "",
+            "error": result.get("error", ""),
         }
 
     async def summary_status(self, retained=None):
@@ -637,7 +862,7 @@ class RoomMemory:
         state = self.rooms.get(scope)
         if (
             state is not None
-            and operation in ("search", "write")
+            and operation in ("search", "write", "change")
             and state.operation == "consolidate"
             and state.revision == revision
         ):
@@ -748,9 +973,29 @@ class RoomMemory:
 
     async def remember(self, event, scope, persona, payload, messages):
         jsonschema.validate(payload, MEMORY_SCHEMA)
+        evidence = await self.verified_evidence(
+            event, scope, persona, payload["evidence"], messages
+        )
+        return await self.call(
+            scope,
+            "write",
+            payload["content"],
+            evidence,
+            payload["relations"],
+            event=event,
+        )
+
+    async def change(self, event, scope, persona, action, payload, messages):
+        jsonschema.validate(payload, CHANGE_SCHEMAS[action])
+        evidence = await self.verified_evidence(
+            event, scope, persona, payload["evidence"], messages
+        )
+        return await self.call(scope, "change", action, payload, evidence, event=event)
+
+    async def verified_evidence(self, event, scope, persona, citations, messages):
         revision = self.plugin.settings_revision
         evidence = []
-        for citation in payload["evidence"]:
+        for citation in citations:
             message = next(
                 (
                     m
@@ -773,7 +1018,7 @@ class RoomMemory:
                 or citation["quote"] not in source.get_message_str()
                 or not await self.permitted(source, scope, persona, learning=True)
             ):
-                raise ValueError("记忆入库需要本轮真实作者的原文和学习权限。")
+                raise ValueError("记忆操作需要本轮真实作者的原文和学习权限。")
             evidence.append(
                 {
                     "source_id": event_source(source),
@@ -786,14 +1031,7 @@ class RoomMemory:
             event, scope, persona, learning=True
         ):
             raise ValueError("记忆来源、配置或权限已经改变。")
-        return await self.call(
-            scope,
-            "write",
-            payload["content"],
-            evidence,
-            payload["relations"],
-            event=event,
-        )
+        return evidence
 
     async def close(self):
         self.closing = True

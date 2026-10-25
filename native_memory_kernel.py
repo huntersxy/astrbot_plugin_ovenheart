@@ -1,9 +1,13 @@
 """AstrBot lifecycle boundaries around the original A_memorix SDK kernel."""
 
+from contextvars import ContextVar
+
 from .vendor.maibot.amemorix.runtime.sdk_memory_kernel import SDKMemoryKernel
 from .vendor.maibot.amemorix.runtime.services.correction_admin_service import (
     MemoryCorrectionAdminService,
 )
+
+correction_evidence = ContextVar("ovenheart_memory_correction_evidence", default=None)
 
 
 class NativeCorrectionService(MemoryCorrectionAdminService):
@@ -22,6 +26,38 @@ class NativeMemoryKernel(SDKMemoryKernel):
 
     async def ingest_text(self, **values):
         metadata = values.get("metadata") or {}
+        correction = correction_evidence.get()
+        if (
+            correction is not None
+            and (metadata.get("memory_change") or {}).get("change_id") == correction[0]
+            and values.get("chat_id") == correction[1]
+        ):
+            from .room_memory import native_provenance
+            from .vendor.maibot.amemorix.utils.hash import compute_hash, normalize_text
+
+            previous = (
+                self.metadata_store.get_paragraph(
+                    compute_hash(normalize_text(values["text"]))
+                )
+                or {}
+            )
+            metadata = metadata | native_provenance(
+                correction[2], (previous.get("metadata") or {}).get("evidence", [])
+            )
+            values["metadata"] = metadata
+            values["participants"] = metadata["participants"]
+            values["entities"] = list(
+                dict.fromkeys(
+                    [
+                        *(values.get("entities") or []),
+                        *(
+                            name
+                            for relation in values.get("relations") or []
+                            for name in (relation["subject"], relation["object"])
+                        ),
+                    ]
+                )
+            )
         if values["source_type"] == "chat_summary" and metadata.get("evidence"):
             # The original summary facade passes participants inside metadata;
             # the SDK normalizes that field from its explicit argument instead.

@@ -39,8 +39,9 @@ async def material(
     source_id="memory-source",
     text="Neko喜欢猫咪，周末去看小猫。",
     session="123",
+    sender="alice",
 ):
-    incoming = event(source_id, text=text, session=session)
+    incoming = event(source_id, text=text, session=session, sender=sender)
     await plugin.capture(incoming)
     scope, persona, _ = await plugin.resolve_scope(incoming)
     plugin.participation.sources[scope, source_id] = incoming
