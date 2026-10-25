@@ -381,6 +381,22 @@ class ConversationContext:
                     await self.plugin.image_memory.description(
                         event, scope, persona, image_index, description
                     )
+                elif await self.plugin.image_memory.permitted(
+                    event, scope, persona, True
+                ):
+                    import base64
+                    import hashlib
+
+                    payload = base64.b64decode(
+                        await image.convert_to_base64(), validate=True
+                    )
+                    await self.plugin.room_memory.call(
+                        scope,
+                        "image_content_description",
+                        hashlib.sha256(payload).hexdigest(),
+                        description["description"],
+                        event=event,
+                    )
             if self.plugin.closing or not await self.plugin.permitted(event):
                 return
             value = await self.plugin.store.call(

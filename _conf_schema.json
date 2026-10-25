@@ -92,6 +92,14 @@
     "type": "bool", "description": "图片记忆", "default": true,
     "hint": "保存当前会话中有真实来源的图片与描述，支持同图召回及配置后的相似图召回。暂停学习后不再入库。"
   },
+  "emoji_enabled": {
+    "type": "bool", "description": "Planner表情动作", "default": true,
+    "hint": "Planner从当前会话已识别的表情包中选择，随文字回复后单独发送；自己的真实媒体发送进入后续规划。"
+  },
+  "planner_visual_enabled": {
+    "type": "bool", "description": "Planner视觉候选拼图", "default": false,
+    "hint": "仅当Planner模型支持图片输入时开启。开启后候选拼图进入内部工具上下文；关闭时使用已有描述选择，不假装看到了候选图。"
+  },
   "image_embedding_provider_id": {
     "type": "string", "description": "图片嵌入模型 ID", "default": "",
     "hint": "使用 AstrBot 原生 DashScope 多模态嵌入提供商，例如 qwen VL embedding；留空仍支持同图记忆，不用文字向量伪装图片相似度。"

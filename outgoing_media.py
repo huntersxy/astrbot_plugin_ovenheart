@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import copy
 import hashlib
 import inspect
+import time
 from pathlib import Path
 from uuid import uuid4
 
@@ -116,9 +118,7 @@ class OutgoingMediaBridge:
 
     def bind_event(self, event):
         """Observe this event's actual native sends without changing a platform class."""
-        if not self.plugin.conversation.active(event) or event.get_extra(
-            "ovenheart_media_send_bound"
-        ):
+        if event.get_extra("ovenheart_media_send_bound"):
             return
         original = event.send
 
@@ -161,7 +161,10 @@ class OutgoingMediaBridge:
 
     async def capture(self, event, images, *, meme=False):
         plugin = self.plugin
-        if not images or plugin.closing or not plugin.conversation.active(event):
+        if not images or plugin.closing:
+            return
+        if not plugin.conversation.active(event):
+            await self.capture_native(event, images, meme=meme)
             return
         try:
             if not await plugin.permitted(event):
@@ -191,14 +194,17 @@ class OutgoingMediaBridge:
             for image in images[:4]:
                 if id(image) in seen:
                     continue
-                caption = ""
+                caption = event.get_extra("ovenheart_explicit_image_hints", {}).get(
+                    id(image), ""
+                )
                 # Separate meme sends contain exactly the selected meme. For a
                 # mixed chain match bytes, never assign a selection to another
                 # tool's image just because it is the only candidate.
-                if meme and len(hints) == 1:
+                if not caption and meme and len(hints) == 1:
                     caption = hints[0]["caption"]
                 elif (
-                    hints
+                    not caption
+                    and hints
                     and image.file
                     and not image.file.startswith(("base64://", "http://", "https://"))
                 ):
@@ -264,6 +270,23 @@ class OutgoingMediaBridge:
             )
             if record:
                 seen.update(captured_ids)
+                if plugin.settings["image_memory_enabled"]:
+                    payloads = []
+                    for image in images[:4]:
+                        if id(image) in captured_ids:
+                            encoded = await asyncio.wait_for(
+                                image.convert_to_base64(), 3
+                            )
+                            payloads.append(base64.b64decode(encoded, validate=True))
+                    _, persona, _ = await plugin.resolve_scope(event)
+                    stored_media = [
+                        item | {"is_emoji": bool(item.get("text"))} for item in media
+                    ]
+                    plugin.track(
+                        plugin.image_memory.sent(
+                            event, scope, persona, source, payloads, stored_media
+                        )
+                    )
             if record and pending and len(plugin.conversation.pending) < 16:
                 key = scope, binding[1], source
                 plugin.conversation.pending.add(key)
@@ -278,3 +301,66 @@ class OutgoingMediaBridge:
             # A diagnostic storage failure must never turn a completed platform
             # send into a retry of the actual message.
             logger.warning("自己的图片上下文登记失败 (%s)", type(exc).__name__)
+
+    async def capture_native(self, event, images, *, meme=False):
+        plugin = self.plugin
+        try:
+            scope, persona, _ = await plugin.resolve_scope(event)
+            if scope != event.get_extra(
+                "ovenheart_reply_scope"
+            ) or not await plugin.permitted(event):
+                return
+            seen = event.get_extra("ovenheart_outgoing_media_seen", set())
+            media, payloads, captured = [], [], []
+            hints = event.get_extra("ovenheart_explicit_image_hints", {})
+            meme_hints = event.get_extra("ovenheart_outgoing_meme_hints", [])
+            for image in images[:4]:
+                if id(image) in seen:
+                    continue
+                caption = hints.get(id(image), "")
+                if not caption and meme and len(meme_hints) == 1:
+                    caption = meme_hints[0]["caption"]
+                item = {"type": "image", "status": "ready" if caption else "available"}
+                if caption:
+                    item |= {
+                        "text": caption,
+                        "is_emoji": True,
+                        "description_source": "selected_emoji",
+                    }
+                encoded = await asyncio.wait_for(image.convert_to_base64(), 3)
+                if len(encoded) > 14 * 1024 * 1024:
+                    continue
+                payloads.append(base64.b64decode(encoded, validate=True))
+                media.append(item)
+                captured.append(id(image))
+            if not media:
+                return
+            source = "bot-media:" + uuid4().hex
+            window = plugin.participation.windows.get(scope)
+            if window:
+                window["sequence"] += 1
+                window["messages"].append(
+                    {
+                        "sequence": window["sequence"],
+                        "source": source,
+                        "sender": "机器人（自己）",
+                        "sender_id": event.get_self_id(),
+                        "message_id": "",
+                        "self": True,
+                        "text": "",
+                        "media": media,
+                        "time": time.time(),
+                    }
+                )
+            seen.update(captured)
+            event.set_extra("ovenheart_outgoing_media_seen", seen)
+            if plugin.settings["image_memory_enabled"]:
+                plugin.track(
+                    plugin.image_memory.sent(
+                        event, scope, persona, source, payloads, media
+                    )
+                )
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.warning("原生已发送图片上下文登记失败 (%s)", type(exc).__name__)

@@ -537,11 +537,13 @@ class RoomState:
         self.metadata.update_paragraph_metadata(saved["id"], {"midterm": payload})
         return saved
 
-    async def image_ingest(self, image_bytes, source, message_id, index, created, text):
+    async def image_ingest(
+        self, image_bytes, source, message_id, index, created, text, own=False
+    ):
         return await self.kernel.image_memory(
             action="ingest",
             image_bytes=image_bytes,
-            source_kind="chat",
+            source_kind="bot" if own else "chat",
             external_ref=f"{self.path.name}:{source}:{index}",
             scope_type="chat",
             chat_id=self.path.name,
@@ -561,6 +563,11 @@ class RoomState:
             evidence={"is_emoji": description["is_emoji"], "native_sender": sender},
         )
 
+    async def image_content_description(self, content_hash, description):
+        return await self.kernel.image_memory_runtime.apply_model_description(
+            content_hash=content_hash, text=description
+        )
+
     async def image_search(self, payload, source, index):
         result = await self.kernel.image_memory(
             action="search",
@@ -574,6 +581,35 @@ class RoomState:
             for key in ("success", "status", "error", "hits")
             if key in result
         }
+
+    async def image_candidates(self):
+        rows = self.metadata._conn.execute(
+            """
+            SELECT o.asset_id, MAX(v.created_at) AS recent FROM image_occurrences o
+            JOIN image_observations v ON v.occurrence_id=o.occurrence_id
+            WHERE o.chat_id=? AND o.status='active' AND v.superseded_by=''
+              AND json_extract(v.evidence_json,'$.is_emoji')=1
+            GROUP BY o.asset_id ORDER BY recent DESC LIMIT 64
+        """,
+            (self.path.name,),
+        ).fetchall()
+        return [
+            result
+            for row in rows
+            if (result := await self.image_asset(row["asset_id"]))["success"]
+        ]
+
+    async def image_asset(self, asset_id):
+        result = await self.kernel.image_memory(
+            action="get", asset_id=asset_id, chat_ids=[self.path.name]
+        )
+        if result["success"]:
+            result["path"] = str(
+                self.kernel.image_memory_runtime.asset_store.path_for_read(
+                    result["asset"]["storage_key"]
+                )
+            )
+        return result
 
     async def change(self, action, payload, evidence):
         from .native_memory_kernel import correction_evidence

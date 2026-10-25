@@ -153,7 +153,7 @@ class ImageMemory:
         if not images or not await self.permitted(event, scope, persona, True):
             return
         key = scope, event_source(event)
-        if key not in self.busy:
+        if key not in self.busy and len(self.busy) < 16:
             self.busy[key] = self.plugin.track(
                 self.ingest(event, scope, persona, images, key)
             )
@@ -293,10 +293,10 @@ class ImageMemory:
             description = await self.describe(source, images[image_index])
             if description:
                 await self.description(source, scope, persona, image_index, description)
-        payload = base64.b64decode(
-            await asyncio.wait_for(images[image_index].convert_to_base64(), 10),
-            validate=True,
-        )
+        encoded = await asyncio.wait_for(images[image_index].convert_to_base64(), 10)
+        if len(encoded) > 14 * 1024 * 1024:
+            return {"success": False, "error": "图片超过10MB记忆检索限制。"}
+        payload = base64.b64decode(encoded, validate=True)
         result = await self.plugin.room_memory.call(
             scope, "image_search", payload, target["source"], image_index, event=event
         )
@@ -306,3 +306,49 @@ class ImageMemory:
             "current_image": description
             or {"status": "unavailable", "reason": "未配置可用图片描述模型。"}
         }
+
+    async def sent(self, event, scope, persona, source, payloads, media):
+        try:
+            for index, payload in enumerate(payloads):
+                if not await self.permitted(event, scope, persona, True):
+                    return
+                result = await self.plugin.room_memory.call(
+                    scope,
+                    "image_ingest",
+                    payload,
+                    source,
+                    "",
+                    index,
+                    event.created_at,
+                    "",
+                    True,
+                    event=event,
+                )
+                item = media[index]
+                if not item.get("text") and not self.plugin.conversation.active(event):
+                    description = await self.describe(
+                        event, Image.fromBase64(base64.b64encode(payload).decode())
+                    )
+                    if description:
+                        item |= {
+                            "text": description["description"],
+                            "status": "ready",
+                            "is_emoji": description["is_emoji"],
+                            "description_source": "vision",
+                        }
+                if item.get("text"):
+                    await self.plugin.room_memory.call(
+                        scope,
+                        "image_description",
+                        result["occurrence_id"],
+                        {
+                            "description": item["text"],
+                            "is_emoji": bool(item.get("is_emoji")),
+                        },
+                        event.get_self_id(),
+                        event=event,
+                    )
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.warning("已发送图片暂未记入图片记忆 (%s)", type(exc).__name__)

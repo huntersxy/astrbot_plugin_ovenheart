@@ -36,6 +36,7 @@ from . import prompts
 from .auxiliary import AuxiliaryUsage
 from .conversation import ConversationContext
 from .direct_priority import DirectPriority
+from .emoji_actions import EmojiActions
 from .group_context import GroupContextBridge
 from .image_memory import ImageMemory
 from .jev import JevService
@@ -418,6 +419,7 @@ class PersonaPlugin(Star):
         self.memory_consolidation = MemoryConsolidation(self)
         self.room_memory = RoomMemory(self)
         self.image_memory = ImageMemory(self)
+        self.emoji_actions = EmojiActions(self)
         self.midterm_memory = MidTermMemory(self)
         self.retriever = HabitRetriever(
             context, self.store, self.prompts, self.auxiliary.generate

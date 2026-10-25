@@ -1337,6 +1337,13 @@ class ParticipationController:
         # next action without cancelling that reply's consumed quota record.
         await session.check_current()
         scope = previous["scope"]
+        if previous.get("attach_emoji"):
+            receipt = receipt | {
+                "media": await self.plugin.emoji_actions.send(
+                    event, session, previous["attach_emoji"]
+                )
+            }
+            event.set_extra("ovenheart_planner_receipt", receipt)
         private = event.is_private_chat()
         if previous.get("direct") and not private:
             work = self.rooms[previous["room"]].get("work")

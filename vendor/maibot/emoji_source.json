@@ -1,0 +1,12 @@
+{
+  "commit": "5c7637e6913c84d1c3d5e742fa9e95a7e70d3501",
+  "source": "src/maisaka/builtin_tool/send_emoji.py",
+  "source_sha256": "6ddab12f407967c3b78be96277f8968c03870aab9db739f348bbda72a0cdb461",
+  "ported_sha256": "352469f8def0340517b03ee05127c9a1944d5b677ce66d4f4a26cffb49e92e0c",
+  "symbol_ast_sha256": {
+    "_calculate_grid_shape": "39008d01925ebf152a50573fd5ef51830f5da8023851aa88411b61cf7199cfa8",
+    "_build_placeholder_tile": "816ec9c0103b7985430b7ea583605f0a03352ba4ae30d9cc173f9bfd49fcd05f",
+    "_build_labeled_tile": "f8ce9f5917117590edb556cb9bf8b08095e3f9eabe5b8958338595afcacdbe6e",
+    "_merge_emoji_tiles": "565f28d337c63025dda70645ecd8391661fdb6018d1f6e575c07486c1586336b"
+  }
+}
