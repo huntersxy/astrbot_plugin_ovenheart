@@ -2610,6 +2610,7 @@ class PersonaPlugin(Star):
             )
             details = metrics | {
                 "route": "autonomous" if plan else direct.get("route", "native"),
+                "rhythm": event.get_extra("ovenheart_rhythm", {}),
                 "target_sender": str(
                     target.get("sender") or event.get_sender_name() or ""
                 )[:80],
@@ -2844,6 +2845,16 @@ class PersonaPlugin(Star):
             window = self.participation.windows.get(scope)
             result = event.get_result()
             text = result.get_plain_text()[:1200] if result else ""
+            rhythm_key = str(plan["id"]) if plan else source
+            counted = event.get_extra("ovenheart_rhythm_replies", set())
+            if text and rhythm_key not in counted:
+                self.participation.rhythm.observe(
+                    room_key,
+                    "reply:" + source + ":" + rhythm_key,
+                    time.time(),
+                    own=True,
+                )
+                event.set_extra("ovenheart_rhythm_replies", counted | {rhythm_key})
             if window is None and room_key and text:
                 if len(self.participation.windows) >= 128:
                     inactive = next(

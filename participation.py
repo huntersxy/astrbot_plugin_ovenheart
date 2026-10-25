@@ -22,6 +22,7 @@ from .learning import (
     habit_text,
 )
 from .prompts import auxiliary_payload
+from .rhythm import ConversationRhythm
 from .settings import SHARED_SCOPE
 
 PLANNER_SYSTEM = """你是群聊中的参与决策器，不是最终回复者。根据身份、行为习惯与最近真实消息，决定参与、等待或旁观。
@@ -228,6 +229,7 @@ class ParticipationController:
         self.sources: dict[tuple[str, str], object] = {}
         self.inflight = 0
         self.capacity_changed = asyncio.Event()
+        self.rhythm = ConversationRhythm()
 
     def room_key(self, event) -> str:
         """Identify the physical group independently of native session isolation.
@@ -269,13 +271,14 @@ class ParticipationController:
             return None
         source = event_source(event)
         previous = self.rooms.get(key)
-        if previous and previous["arrival"] > event.created_at:
-            return previous
         direct = bool(
             event.is_at_or_wake_command
             or event.call_llm
             or event.get_extra("ovenheart_mention")
         )
+        self.rhythm.observe(key, source, event.created_at, forced=direct)
+        if previous and previous["arrival"] > event.created_at:
+            return previous
         if previous and previous["source"] == source:
             if direct:
                 previous.pop("work", None)
@@ -303,6 +306,7 @@ class ParticipationController:
         elif len(self.rooms) >= 128:
             oldest = next(iter(self.rooms))
             self.rooms.pop(oldest)["changed"].set()
+            self.rhythm.forget(oldest)
         self.rooms[key] = {
             "source": source,
             "arrival": event.created_at,
@@ -661,8 +665,36 @@ class ParticipationController:
                     previous["id"],
                     "新输入打断旧回复，等待消息稳定后续接。",
                 )
+            dynamic = settings["participation_rhythm"] == "maibot"
+            if dynamic and settings["participation_frequency"] == 0:
+                window["consumed"] = sequence
+                return None
+            if dynamic and not resumed:
+                rhythm = self.rhythm.evaluate(
+                    room_key,
+                    pending,
+                    settings["participation_frequency"],
+                    bot_names=settings["mention_names"],
+                    has_at_bot=event.is_at_or_wake_command,
+                )
+                observed = (
+                    {
+                        "probability": rhythm.probability,
+                        "threshold": rhythm.threshold,
+                        "expected_replies": rhythm.expected_replies,
+                        "actual_replies": rhythm.actual_replies,
+                        "should_trigger": rhythm.should_trigger,
+                    }
+                    if rhythm
+                    else {}
+                )
+                event.set_extra("ovenheart_rhythm", observed)
+                plugin.debug("dynamic_rhythm", scope=scope, decision=observed)
+                if rhythm is None or not rhythm.should_trigger:
+                    return None
             if (
-                not followup
+                not dynamic
+                and not followup
                 and not resumed
                 and (
                     len(pending) < settings["participation_min_messages"]
@@ -1228,6 +1260,7 @@ class ParticipationController:
         for room in self.rooms.values():
             room["changed"].set()
         self.rooms.clear()
+        self.rhythm.rooms.clear()
         self.sources.clear()
 
 

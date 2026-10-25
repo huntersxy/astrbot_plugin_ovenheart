@@ -154,7 +154,9 @@ Report versions, platform, steps and redacted logs in [GitHub Issues](https://gi
 
 ## Credits and license
 
-Independently implemented with design inspiration from [MaiBot](https://github.com/Mai-with-u/MaiBot), built for [AstrBot](https://github.com/AstrBotDevs/AstrBot), with optional [LivingMemory](https://github.com/lxfight-s-Astrbot-Plugins/astrbot_plugin_livingmemory) integration. Their source implementations are not bundled. Licensed under [AGPL-3.0-or-later](../../LICENSE).
+Built for [AstrBot](https://github.com/AstrBotDevs/AstrBot), with optional [LivingMemory](https://github.com/lxfight-s-Astrbot-Plugins/astrbot_plugin_livingmemory) integration and mechanisms derived from [MaiBot](https://github.com/Mai-with-u/MaiBot). The 0.67 development version includes MaiBot's unmodified dynamic gate and probability scorer, with attribution and the original GPL-3.0 license in [vendor/maibot](../../vendor/maibot/NOTICE.md). The remaining implementation uses the repository's [AGPL-3.0-or-later](../../LICENSE).
+
+The development default `participation_rhythm=maibot` uses the original score and dynamic frequency feedback instead of stacking fixed message-count, interval and cooldown gates. `participation_frequency` defaults to 0.5 and is a target ratio, not a per-message random chance; zero consumes ordinary arrivals silently while explicit wakes remain unaffected. `fixed` retains previous scheduling. Operator quotas and native permissions still apply. Full Planner and memory parity remain in progress; see the [acceptance checklist](../design/maibot-parity.md).
 
 When Jev participation is enabled, a single typed request chooses a real target, waits, or observes. It replaces the chat-model planner entirely. Unavailable or malformed Jev results observe without a chat-model fallback. Explicit mentions still bypass participation decisions. Learning verification remains independent and conservative.
 

@@ -86,7 +86,7 @@ async def main(args):
         ]:
             shutil.copyfile(path, destination / path.name)
             assert path.read_bytes() == (destination / path.name).read_bytes()
-        for name in ("views", ".astrbot-plugin"):
+        for name in ("views", ".astrbot-plugin", "vendor"):
             shutil.copytree(ROOT / name, destination / name)
         (data / "cmd_config.json").write_text(
             json.dumps(

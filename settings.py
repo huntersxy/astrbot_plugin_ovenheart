@@ -46,6 +46,8 @@ DEFAULTS = {
     "semantic_threshold": 0.25,
     "habit_half_life": 90,
     "participation_mode": "off",
+    "participation_rhythm": "maibot",
+    "participation_frequency": 0.5,
     "participation_followup": True,
     "mentioned_bot_reply": False,
     "mention_names": [],
@@ -98,6 +100,7 @@ def validate_settings(values: dict) -> dict:
         "jev_max_state_chars": (1500, 16000),
         "jev_reply_threshold": (0.1, 1.0),
         "auto_confidence": (0.5, 1.0),
+        "participation_frequency": (0.0, 1.0),
         "min_evidence": (1, 10),
         "batch_size": (4, 100),
         "min_messages": (4, 100),
@@ -162,6 +165,9 @@ def validate_settings(values: dict) -> dict:
         elif key == "participation_mode":
             if value not in ("off", "observe", "auto"):
                 raise ValueError("参与方式必须为 off、observe 或 auto。")
+        elif key == "participation_rhythm":
+            if value not in ("maibot", "fixed"):
+                raise ValueError("参与节奏必须为 maibot 或 fixed。")
         elif key == "autonomous_tool_policy":
             if value not in ("allowlist", "denylist"):
                 raise ValueError("自主工具策略必须为白名单或黑名单。")

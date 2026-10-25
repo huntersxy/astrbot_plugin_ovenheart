@@ -1217,6 +1217,7 @@ class Store:
         last_reply = max(row[0] or 0, reservation[0] or 0)
         if (
             last_reply
+            and settings.get("participation_rhythm", "fixed") == "fixed"
             and now - last_reply < settings["participation_cooldown"]
             and not (followup and settings["participation_followup"])
         ):

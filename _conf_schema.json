@@ -221,6 +221,19 @@
     "type": "int",
     "default": 3
   },
+  "participation_rhythm": {
+    "description": "参与节奏",
+    "type": "string",
+    "default": "maibot",
+    "options": ["maibot", "fixed"],
+    "hint": "maibot 使用原版概率评分和动态频率门控，不再叠加固定消息数、判断间隔与回复冷却；保留明确唤醒、权限和每小时上限。fixed 保留旧节奏。"
+  },
+  "participation_frequency": {
+    "description": "动态回复频率",
+    "type": "float",
+    "default": 0.5,
+    "hint": "0到1，表示目标回复数相对预计可回复数的比例，不是每条消息的随机概率。0停止普通自主参与，明确唤醒仍正常；仅在maibot节奏生效。"
+  },
   "participation_followup": {
     "description": "允许连续接话",
     "type": "bool",
