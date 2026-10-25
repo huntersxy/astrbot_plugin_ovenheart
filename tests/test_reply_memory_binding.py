@@ -90,6 +90,19 @@ async def native_memory(participant, monkeypatch):
     participant.memory.disconnect()
 
 
+async def test_next_planner_reply_can_return_to_the_triggering_member(native_memory):
+    plugin, owner, _, entries = native_memory
+    trigger = event("current-target", sender="alice")
+    older = event("older-target", sender="bob")
+    plugin.memory.bind_reply_source(trigger, older, lambda: True)
+    await entries[0].handler(trigger, object())
+    assert owner.calls[-1][1].get_sender_id() == "bob"
+    plugin.memory.clear_reply_source(trigger)
+    await entries[0].handler(trigger, object())
+    assert owner.calls[-1][1] is trigger
+    assert trigger not in plugin.memory._reply_sources
+
+
 @pytest.mark.parametrize("missing", [False, True])
 async def test_real_targets_use_owned_adapter_even_with_learning_off(
     native_memory, missing

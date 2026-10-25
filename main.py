@@ -1143,90 +1143,109 @@ class PersonaPlugin(Star):
             return
         self.direct_priority.watch(event, direct=False)
         plan = await self.participation.consider(event)
-        if plan:
-            manager = self.context.conversation_manager
-            umo = event.unified_msg_origin
-            cid = await manager.get_curr_conversation_id(umo)
-            if not cid:
-                cid = await manager.new_conversation(umo, event.get_platform_id())
+        try:
+            while plan:
+                async for request in self.participation_request(event, plan):
+                    yield request
+                plan = await self.participation.after_reply(event, plan)
+        finally:
+            self.participation.planner.finish_event(event)
+
+    async def participation_request(self, event, plan):
+        """Dispatch one reply through the complete native request pipeline."""
+        manager = self.context.conversation_manager
+        umo = event.unified_msg_origin
+        cid = await manager.get_curr_conversation_id(umo)
+        if not cid:
+            cid = await manager.new_conversation(umo, event.get_platform_id())
+        conversation = await manager.get_conversation(umo, cid)
+        if conversation is None:
+            cid = await manager.new_conversation(umo, event.get_platform_id())
             conversation = await manager.get_conversation(umo, cid)
-            if conversation is None:
-                cid = await manager.new_conversation(umo, event.get_platform_id())
-                conversation = await manager.get_conversation(umo, cid)
-            if conversation is None:
-                logger.warning("OvenHeart could not bind a native conversation")
-                return
-            event.set_extra("ovenheart_decision", plan)
-            # Streaming completes after delivery, too late for pre-send guards.
-            # Buffer autonomous turns so stale checks, real quote/At decoration
-            # and the next planner's own-reply context run before/after delivery.
-            event.set_extra("enable_streaming", False)
-            event.call_llm = True
-            target = plan.get("target") or {}
-            if target.get("source") != plan["room_source"]:
-                source = self.participation.sources.get(
-                    (plan["scope"], target.get("source"))
-                )
-                if source is not None:
-                    current_source = event_source(source)
-                    native_id = getattr(source.message_obj, "message_id", None)
-                    if (
-                        source.get_sender_id() != target.get("sender_id")
-                        or current_source != target.get("source")
-                        or (str(native_id).strip() if native_id is not None else "")
-                        != target.get("message_id", "")
-                        or source.get_message_str()[:1200] != target.get("text")
-                        or source.unified_msg_origin != event.unified_msg_origin
-                        or not await self.permitted(source)
-                        or (await self.resolve_scope(source))[0] != plan["scope"]
-                    ):
-                        source = None
-                request_event = weakref.ref(event)
-                self.debug(
-                    "participation_memory_source",
-                    scope=plan["scope"],
-                    target_source=target.get("source"),
-                    status=self.memory.bind_reply_source(
-                        event,
-                        source,
-                        lambda: bool(
-                            request_event() is not None
-                            and not request_event().is_stopped()
-                            and self.settings["enabled"]
-                            and self.settings["apply_enabled"]
-                            and self.settings["participation_mode"] == "auto"
-                            and request_event().get_extra(
-                                "ovenheart_reply_scope", plan["scope"]
-                            )
-                            == plan["scope"]
-                            and (
-                                not plan.get("followup")
-                                or self.settings["participation_followup"]
-                            )
-                            and self.participation.current(plan)
-                        ),
-                    ),
-                )
-            if event.get_extra("ovenheart_memory_source_blocked", False):
-                # Keep call_llm set to prevent a native default-reply fallback.
-                await self.store.call(
-                    "cancel_decision",
-                    plan["scope"],
-                    plan["id"],
-                    "LivingMemory 钩子接口不兼容，取消跨消息主动回复以避免记忆来源错位。",
-                )
-                logger.warning(
-                    "OvenHeart cancelled a reply because memory source routing is unavailable"
-                )
-                return
-            # Keep the full original input when answering the triggering message;
-            # older targets are available only as the planner's bounded text.
-            prompt = (
-                event.get_message_str()
-                if target.get("source") == plan["room_source"]
-                else target.get("text") or event.get_message_str()
+        if conversation is None:
+            logger.warning("OvenHeart could not bind a native conversation")
+            return
+        event.set_extra("ovenheart_decision", plan)
+        # Streaming completes after delivery, too late for pre-send guards.
+        # Buffer autonomous turns so stale checks, real quote/At decoration
+        # and the next planner's own-reply context run before/after delivery.
+        event.set_extra("enable_streaming", False)
+        event.call_llm = True
+        self.memory.clear_reply_source(event)
+        target = plan.get("target") or {}
+        if target.get("source") != plan["room_source"]:
+            source = self.participation.sources.get(
+                (plan["scope"], target.get("source"))
             )
+            if source is not None:
+                current_source = event_source(source)
+                native_id = getattr(source.message_obj, "message_id", None)
+                if (
+                    source.get_sender_id() != target.get("sender_id")
+                    or current_source != target.get("source")
+                    or (str(native_id).strip() if native_id is not None else "")
+                    != target.get("message_id", "")
+                    or source.get_message_str()[:1200] != target.get("text")
+                    or source.unified_msg_origin != event.unified_msg_origin
+                    or not await self.permitted(source)
+                    or (await self.resolve_scope(source))[0] != plan["scope"]
+                ):
+                    source = None
+            request_event = weakref.ref(event)
+            self.debug(
+                "participation_memory_source",
+                scope=plan["scope"],
+                target_source=target.get("source"),
+                status=self.memory.bind_reply_source(
+                    event,
+                    source,
+                    lambda: bool(
+                        request_event() is not None
+                        and not request_event().is_stopped()
+                        and self.settings["enabled"]
+                        and self.settings["apply_enabled"]
+                        and self.settings["participation_mode"] == "auto"
+                        and request_event().get_extra(
+                            "ovenheart_reply_scope", plan["scope"]
+                        )
+                        == plan["scope"]
+                        and (
+                            not plan.get("followup")
+                            or self.settings["participation_followup"]
+                        )
+                        and self.participation.current(plan)
+                    ),
+                ),
+            )
+        if event.get_extra("ovenheart_memory_source_blocked", False):
+            # Keep call_llm set to prevent a native default-reply fallback.
+            await self.store.call(
+                "cancel_decision",
+                plan["scope"],
+                plan["id"],
+                "LivingMemory 钩子接口不兼容，取消跨消息主动回复以避免记忆来源错位。",
+            )
+            logger.warning(
+                "OvenHeart cancelled a reply because memory source routing is unavailable"
+            )
+            return
+        # Keep the full original input when answering the triggering message;
+        # older targets are available only as the planner's bounded text.
+        prompt = (
+            event.get_message_str()
+            if target.get("source") == plan["room_source"]
+            else target.get("text") or event.get_message_str()
+        )
+        original_id = event.message_obj.message_id
+        original_sender = event.message_obj.sender
+        event.set_extra("ovenheart_fallback_source", event_source(event))
+        try:
             yield event.request_llm(prompt=prompt, conversation=conversation)
+        finally:
+            # The result decorator temporarily retargets native quote/@ fields.
+            # The next planner action still belongs to the original arrival.
+            event.message_obj.message_id = original_id
+            event.message_obj.sender = original_sender
 
     async def check_mention(self, event: AstrMessageEvent) -> bool:
         """Recheck a name-triggered wake before dispatch, generation and delivery.
@@ -2141,6 +2160,8 @@ class PersonaPlugin(Star):
         )
         reply_payload = {
             "reply_goal": plan["intent"],
+            "reply_reference": plan.get("reply_reference", ""),
+            "reply_style": plan.get("reply_style", ""),
             "reply_target": target_label,
             "reply_message": target,
             "delivery_policy": prompts.REPLY_ADDRESS_RULE,
@@ -2168,6 +2189,12 @@ class PersonaPlugin(Star):
             if self.conversation.active(event)
             else json.dumps(reply_payload, ensure_ascii=False)
         )
+        if plan.get("planner_session"):
+            user_injection += (
+                "\nreply_reference 是本轮规划的具体背景和方向，结合真实消息判断，不照抄为正文。"
+                "reply_style 只控制本次表达：简短表达可用短句或残句；正常回复自然展开；"
+                "长回复完整完成当前任务。当前明确要求和宿主人格优先。"
+            )
         if self.settings["guidance_delivery"] == "cached":
             user_injection = system_injection + "\n" + user_injection
             system_injection = ""
@@ -2828,10 +2855,14 @@ class PersonaPlugin(Star):
                 owner = direct_reply.get("source", source)
             current = room is None or room["source"] == owner
             admission_owned = bool(plan and self.participation.current(plan))
+            planner_reply = bool(
+                plan and plan.get("planner_session") and admission_owned
+            )
             if room:
                 # A send hook supersedes any unsent continuation in this room.
-                room.pop("work", None)
-                room["changed"].set()
+                if not planner_reply:
+                    room.pop("work", None)
+                    room["changed"].set()
                 if not plan:
                     room["source"] = "bot:" + uuid4().hex
                     room["arrival"] = time.time()
@@ -2845,6 +2876,19 @@ class PersonaPlugin(Star):
             window = self.participation.windows.get(scope)
             result = event.get_result()
             text = result.get_plain_text()[:1200] if result else ""
+            if plan and plan.get("planner_session"):
+                receipt = event.get_extra("ovenheart_planner_receipt", {})
+                event.set_extra(
+                    "ovenheart_planner_receipt",
+                    {
+                        "send_hook": True,
+                        "reply_text": (
+                            receipt.get("reply_text", "") + "\n" + text
+                        ).strip()[:4000],
+                        "target_sequence": plan["target_sequence"],
+                        "delivery_status": "native_send_hook; platform receipt unverified",
+                    },
+                )
             rhythm_key = str(plan["id"]) if plan else source
             counted = event.get_extra("ovenheart_rhythm_replies", set())
             if text and rhythm_key not in counted:
@@ -2879,7 +2923,8 @@ class PersonaPlugin(Star):
             if self.conversation.active(event) and text:
                 await self.conversation.delivered(event, scope, plan, text, current)
             if window is not None and text and not self.conversation.active(event):
-                window["changed"].set()
+                if not planner_reply:
+                    window["changed"].set()
                 owned = admission_owned
                 window["sequence"] += 1
                 if current:

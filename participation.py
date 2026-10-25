@@ -230,6 +230,9 @@ class ParticipationController:
         self.inflight = 0
         self.capacity_changed = asyncio.Event()
         self.rhythm = ConversationRhythm()
+        from .planner import ConversationPlanner
+
+        self.planner = ConversationPlanner(plugin)
 
     def room_key(self, event) -> str:
         """Identify the physical group independently of native session isolation.
@@ -272,13 +275,18 @@ class ParticipationController:
         source = event_source(event)
         previous = self.rooms.get(key)
         direct = bool(
-            event.is_at_or_wake_command
-            or event.call_llm
-            or event.get_extra("ovenheart_mention")
+            not event.get_extra("ovenheart_decision")
+            and (
+                event.is_at_or_wake_command
+                or event.call_llm
+                or event.get_extra("ovenheart_mention")
+            )
         )
         self.rhythm.observe(key, source, event.created_at, forced=direct)
         if previous and previous["arrival"] > event.created_at:
             return previous
+        if direct:
+            self.planner.interrupt_direct(key)
         if previous and previous["source"] == source:
             if direct:
                 previous.pop("work", None)
@@ -288,6 +296,7 @@ class ParticipationController:
             previous
             and work
             and work.get("batch_id")
+            and self.plugin.settings["planner_mode"] == "legacy"
             and not direct
             and previous.get("umo") == event.unified_msg_origin
             and not previous["changed"].is_set()
@@ -638,7 +647,8 @@ class ParticipationController:
             # One early decision per own reply, only for the same addressee.
             # Consuming an observe/wait result cannot reopen that early slot.
             followup = bool(
-                settings["participation_followup"]
+                settings["participation_rhythm"] == "fixed"
+                and settings["participation_followup"]
                 and own
                 and own["sequence"] == window["consumed"]
                 and 0 <= event.created_at - own["time"] <= 120
@@ -750,6 +760,7 @@ class ParticipationController:
                 **(
                     {"batch_id": uuid4().hex}
                     if settings["participation_silence_seconds"] > 0
+                    and settings["planner_mode"] == "legacy"
                     else {}
                 ),
             }
@@ -1003,6 +1014,10 @@ class ParticipationController:
                 while recall is in progress.
         """
         plugin = self.plugin
+        if settings["planner_mode"] == "maibot":
+            return await self.planner.decide(
+                event, scope, persona, state, messages, settings
+            )
         if settings.get("jev_enabled") and settings.get(
             "jev_participation_enabled", True
         ):
@@ -1252,8 +1267,113 @@ class ParticipationController:
         )
         return plan
 
+    async def after_reply(self, event, previous):
+        """Feed a real send result back before admitting the next planner action."""
+        session = self.planner.sessions.get(previous["scope"])
+        if not session or session.id != previous.get("planner_session"):
+            if previous.get("planner_session"):
+                event.set_extra("ovenheart_planner_status", "session_missing")
+            return None
+        receipt = event.get_extra("ovenheart_planner_receipt")
+        event.set_extra(
+            "ovenheart_planner_status",
+            {
+                "send_hook": bool(receipt and receipt.get("send_hook")),
+                "stopped": event.is_stopped(),
+                "current": self.current(previous),
+            },
+        )
+        if (
+            not receipt
+            or not receipt.get("send_hook")
+            or event.is_stopped()
+            or not self.current(previous)
+        ):
+            self.planner.forget(previous["scope"])
+            return None
+        # The previous reply already reached sending. Revocation must stop the
+        # next action without cancelling that reply's consumed quota record.
+        await session.check_current()
+        scope = previous["scope"]
+        window = self.windows[scope]
+        messages = (
+            self.plugin.conversation.snapshot(
+                event, scope, through_sequence=window["sequence"]
+            )
+            if self.plugin.conversation.active(event)
+            else list(window["messages"])
+        )
+        session.messages = offered_messages(messages, session.settings)
+        session.acknowledge(receipt)
+        state = await self.plugin.store.call(
+            "guidance", scope, not self.plugin.settings["session_isolation"]
+        )
+        plan = await self.interruptible_plan(
+            event,
+            scope,
+            session.persona,
+            state,
+            messages,
+            session.settings,
+            False,
+            False,
+            window["changed"],
+        )
+        if not plan or not self.current(previous):
+            event.set_extra("ovenheart_planner_status", "continuation_cancelled")
+            return None
+        await session.check_current()
+        target = next(
+            (m for m in messages if m["sequence"] == plan["target_sequence"]), None
+        )
+        if plan["action"] == "reply" and target is None:
+            raise ParticipationFormatError("持续规划的回复目标不在真实上下文中。")
+        plan = plan | {"room": previous["room"], "followup": False}
+        decision = await self.plugin.store.call(
+            "decide",
+            scope,
+            plan,
+            "auto",
+            "admitted" if plan["action"] == "reply" else "observed",
+            self.plugin.settings,
+        )
+        if decision["outcome"] != "admitted":
+            return None
+        work = self.rooms[previous["room"]].get("work")
+        if work:
+            work["id"] = decision["id"]
+        # Clear only our per-request caches. The host, source identity and memory
+        # routing remain attached to this native event throughout the cycle.
+        for key in (
+            "ovenheart_guided",
+            "ovenheart_application",
+            "ovenheart_reply_target",
+            "ovenheart_reply_focus",
+            "ovenheart_turn_trace",
+            "ovenheart_direct_context",
+            "ovenheart_jev",
+            "ovenheart_request_started",
+            "ovenheart_selection_seconds",
+            "ovenheart_planner_receipt",
+            "ovenheart_stream_recorded",
+        ):
+            event.get_extra().pop(key, None)
+        event.clear_result()
+        return (
+            previous
+            | plan
+            | {
+                "id": decision["id"],
+                "target": target,
+                "sequence": window["sequence"],
+                "messages": messages,
+                "reply_context": [],
+            }
+        )
+
     def close(self):
         """Interrupt all live handlers and release retained conversation material."""
+        self.planner.close()
         for window in self.windows.values():
             window["changed"].set()
         self.windows.clear()

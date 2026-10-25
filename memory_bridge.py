@@ -99,6 +99,15 @@ class MemoryBridge:
             self._hooks.append((entry, original, routed))
         return True
 
+    def clear_reply_source(self, event):
+        """Release one completed reply before routing the next planner target."""
+        self._reply_sources.pop(event, None)
+        for key in (
+            "ovenheart_memory_source_requested",
+            "ovenheart_memory_source_blocked",
+        ):
+            event.get_extra().pop(key, None)
+
     def bind_reply_source(self, event, source, is_current) -> str:
         """Retain a real target for the two native memory hook invocations.
 
@@ -338,6 +347,7 @@ class MemoryBridge:
         observations: list[dict] | None = None,
         defer_user_scope: bool = False,
         include_social_metadata: bool = False,
+        search_query: str | None = None,
     ) -> tuple[list[dict], str]:
         """Retrieve context using LivingMemory's own policy and engine.
 
@@ -419,6 +429,8 @@ class MemoryBridge:
                 "use_persona_filtering", True
             )
             engine = plugin.initializer.memory_engine
+            if search_query is not None:
+                query = search_query[:500]
             memories = await asyncio.wait_for(
                 engine.search_memories(
                     query=query,

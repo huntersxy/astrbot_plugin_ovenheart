@@ -144,6 +144,9 @@ async def main(args):
                     deliveries.append(
                         {
                             "id": self.message_obj.message_id,
+                            "source": self.get_extra(
+                                "ovenheart_fallback_source", self.message_obj.message_id
+                            ),
                             "text": "".join(
                                 c.text for c in message.chain if isinstance(c, Plain)
                             ),
@@ -362,6 +365,7 @@ async def main(args):
                     {
                         "participation_mode": "observe",
                         "planner_provider_id": "controlled-smoke",
+                        "planner_mode": "legacy",
                     }
                 )
                 controlled = AsyncMock(
@@ -468,6 +472,99 @@ async def main(args):
                     and "STRUCTURED_EARLIER_QUESTION" in str(generated.await_args)
                     and not trigger.is_stopped()
                 )
+                await configure(
+                    {
+                        "planner_mode": "maibot",
+                        "planner_provider_id": "native-chat",
+                        "participation_mode": "auto",
+                        "participation_rhythm": "maibot",
+                        "participation_frequency": 1,
+                        "participation_debounce": 1,
+                        "memory_enabled": False,
+                        "jev_enabled": False,
+                    }
+                )
+                planner_old = incoming("planner-old", "先问文件在哪儿", "bob")
+                planner_new = incoming("planner-new", "我还想问另一个问题", "alice")
+                planner_new.set_extra("selected_provider", "native-chat")
+                planner_calls, reply_calls, planner_inputs = [], [], []
+
+                async def planner_completion(**kwargs):
+                    tools = kwargs.get("func_tool")
+                    if tools and tools.get_tool("reply"):
+                        index = len(planner_calls)
+                        planner_calls.append(index)
+                        planner_inputs.append(str(kwargs))
+                        if index < 2:
+                            source = "planner-old" if index == 0 else "planner-new"
+                            target = next(
+                                m
+                                for window in plugin.participation.windows.values()
+                                for m in window["messages"]
+                                if m.get("message_id") == source
+                            )
+                            return LLMResponse(
+                                role="assistant",
+                                tools_call_name=["reply"],
+                                tools_call_ids=[f"planner-{index}"],
+                                tools_call_args=[
+                                    {
+                                        "msg_id": str(target["sequence"]),
+                                        "reply_reference": f"具体回应 {source} 的问题。",
+                                    }
+                                ],
+                            )
+                        return LLMResponse(
+                            role="assistant",
+                            tools_call_name=["stop"],
+                            tools_call_ids=["planner-stop"],
+                            tools_call_args=[{}],
+                        )
+                    reply_calls.append(str(kwargs))
+                    return LLMResponse(
+                        role="assistant",
+                        completion_text=(
+                            "先看看下载目录。"
+                            if len(reply_calls) == 1
+                            else "另一个问题也说来听听。"
+                        ),
+                    )
+
+                with patch.object(provider, "text_chat", planner_completion):
+                    await submit([planner_old, planner_new])
+                actual = [d["text"] for d in deliveries if d["source"] == "planner-new"]
+                cid = (
+                    await plugin.context.conversation_manager.get_curr_conversation_id(
+                        planner_new.unified_msg_origin
+                    )
+                )
+                saved = await plugin.context.conversation_manager.get_conversation(
+                    planner_new.unified_msg_origin, cid
+                )
+                saved_history = json.dumps(
+                    json.loads(saved.history or "[]"), ensure_ascii=False
+                )
+                report["native_continuous_planner"] = {
+                    "planner_calls": len(planner_calls),
+                    "reply_calls": len(reply_calls),
+                    "replies": actual,
+                    "receipt_returned": len(planner_inputs) == 3
+                    and "先看看下载目录。" in planner_inputs[1]
+                    and "另一个问题也说来听听。" in planner_inputs[2],
+                    "history_saved": "先看看下载目录。" in saved_history
+                    and "另一个问题也说来听听。" in saved_history,
+                    "stopped": not plugin.participation.planner.sessions,
+                    "no_errors": not planner_new.trace._summary["has_errors"],
+                    "last_receipt": planner_new.get_extra("ovenheart_planner_receipt"),
+                    "planner_status": planner_new.get_extra("ovenheart_planner_status"),
+                    "source_restored": planner_new.message_obj.message_id
+                    == "planner-new"
+                    and planner_new.get_sender_id() == "alice",
+                }
+                planner_scope = (await plugin.resolve_scope(planner_new))[0]
+                report["native_continuous_planner"]["decisions"] = (
+                    await plugin.store.call("state", planner_scope)
+                )["decisions"]
             if not args.smoke:
                 await core.persona_mgr.update_persona(
                     "default",
@@ -692,6 +789,18 @@ async def main(args):
                 ],
             }
             if args.smoke:
+                continuous = report["native_continuous_planner"]
+                report["checks"]["native_continuous_planner"] = (
+                    continuous["planner_calls"] == 3
+                    and continuous["reply_calls"] == 2
+                    and continuous["replies"]
+                    == ["先看看下载目录。", "另一个问题也说来听听。"]
+                    and continuous["receipt_returned"]
+                    and continuous["history_saved"]
+                    and continuous["stopped"]
+                    and continuous["no_errors"]
+                    and continuous["source_restored"]
+                )
                 report["checks"]["native_structured_context"] = report[
                     "native_structured_context"
                 ]

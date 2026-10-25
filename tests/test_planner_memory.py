@@ -16,6 +16,36 @@ from tests.test_runtime import POLICY_PATH, event
 pytest_plugins = ["tests.test_runtime", "tests.test_participation"]
 
 
+async def test_planner_query_changes_search_terms_without_widening_scope(
+    planner_memory,
+):
+    plugin, engine, values = planner_memory
+    incoming = event("query-scope", sender="alice")
+    await plugin.memory.recall(
+        incoming,
+        "default",
+        plugin.settings,
+        observations=[{"id": 1, "sender": "alice", "text": "真实当前输入"}],
+        defer_user_scope=True,
+        search_query="此前的毕业设计进展",
+    )
+    args = engine.search_memories.await_args.kwargs
+    assert args["query"] == "此前的毕业设计进展"
+    assert args["session_id"] == incoming.unified_msg_origin
+    assert args["persona_id"] == "default"
+    values["filtering_settings.memory_scope_mode"] = "user"
+    engine.search_memories.reset_mock()
+    await plugin.memory.recall(
+        incoming,
+        "default",
+        plugin.settings,
+        observations=[{"id": 1, "sender": "alice", "text": "真实当前输入"}],
+        defer_user_scope=True,
+        search_query="别的成员信息",
+    )
+    engine.search_memories.assert_not_awaited()
+
+
 @pytest.fixture
 async def planner_memory(participant, monkeypatch):
     """Attach a simulated engine behind LivingMemory's actual access policy.

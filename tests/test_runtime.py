@@ -153,6 +153,7 @@ async def plugin(monkeypatch, tmp_path):
             "session_isolation": True,
             "guidance_delivery": "system",
             "participation_rhythm": "fixed",
+            "planner_mode": "legacy",
         },
     )
     await instance.initialize()

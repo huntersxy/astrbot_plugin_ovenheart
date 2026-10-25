@@ -583,7 +583,8 @@ class ConversationContext:
                 self._publish(scope, state)
                 return
             window = self._publish(scope, state)
-            window["changed"].set()
+            if not (plan and plan.get("planner_session") and owned and acknowledge):
+                window["changed"].set()
             if acknowledge and (room is None or room["source"] == stamp):
                 window["consumed"] = state["sequence"]
             if owned:

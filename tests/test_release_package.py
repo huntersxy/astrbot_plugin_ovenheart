@@ -29,6 +29,8 @@ sys.modules[spec.name] = module
 spec.loader.exec_module(module)
 main = importlib.import_module(spec.name+'.main')
 assert main.PersonaPlugin
+planner = importlib.import_module(spec.name+'.planner')
+assert planner.ConversationPlanner
 """
     result = subprocess.run(
         [sys.executable, "-I", "-c", code, str(extracted)],

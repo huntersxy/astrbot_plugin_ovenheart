@@ -148,6 +148,6 @@ SDK 集成测试需要相邻的兼容 AstrBot 源码。
 
 ## 致谢与许可
 
-运行于 [AstrBot](https://github.com/AstrBotDevs/AstrBot)，可联动 [LivingMemory](https://github.com/lxfight-s-Astrbot-Plugins/astrbot_plugin_livingmemory)。表达学习和聊天机制对照 [MaiBot](https://github.com/Mai-with-u/MaiBot)；0.67开发版直接移植其动态门控与概率评分，来源、原文哈希和 GPL-3.0 许可证保留于 [vendor/maibot](vendor/maibot/NOTICE.md)。其余实现遵循本仓库许可。
+运行于 [AstrBot](https://github.com/AstrBotDevs/AstrBot)，可联动 [LivingMemory](https://github.com/lxfight-s-Astrbot-Plugins/astrbot_plugin_livingmemory)。表达学习和聊天机制对照 [MaiBot](https://github.com/Mai-with-u/MaiBot)；0.67开发版直接移植其动态门控与概率评分，来源、原文哈希和 GPL-3.0 许可证保留于 [vendor/maibot](vendor/maibot/NOTICE.md)。其余实现遵循本仓库许可。持续 Planner 的原生接入与验证范围见[设计说明](docs/design/conversation-planner.md)，完整对齐目标仍在进行。
 
 采用 [AGPL-3.0-or-later](LICENSE) 许可。

@@ -57,6 +57,7 @@ DEFAULTS = {
     "participation_cooldown": 90,
     "participation_hourly_limit": 12,
     "planner_provider_id": "",
+    "planner_mode": "maibot",
     "jev_enabled": False,
     "jev_participation_enabled": True,
     "jev_learning_enabled": True,
@@ -165,6 +166,9 @@ def validate_settings(values: dict) -> dict:
         elif key == "participation_mode":
             if value not in ("off", "observe", "auto"):
                 raise ValueError("参与方式必须为 off、observe 或 auto。")
+        elif key == "planner_mode":
+            if value not in ("maibot", "legacy"):
+                raise ValueError("planner_mode 必须为 maibot 或 legacy。")
         elif key == "participation_rhythm":
             if value not in ("maibot", "fixed"):
                 raise ValueError("参与节奏必须为 maibot 或 fixed。")
