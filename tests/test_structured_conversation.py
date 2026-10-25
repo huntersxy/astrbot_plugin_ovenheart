@@ -440,3 +440,51 @@ async def test_empty_generation_is_visible_in_audit_without_repeating_tools(stru
     assert (await structured.store.call("state", scope))["turn_traces"][0][
         "status"
     ] == "send_hook"
+
+
+@pytest.mark.parametrize("autonomous", [False, True])
+@pytest.mark.parametrize("limit", [0, 3])
+async def test_reply_window_obeys_settings_without_trimming_planner_or_native_history(
+    structured, autonomous, limit
+):
+    from astrbot_plugin_ovenheart.reply_payload import dumps
+
+    plugin = structured
+    plugin.settings.update(reply_context_messages=limit, reply_context_budget=1000)
+    for index in range(18):
+        await plugin.capture(incoming(str(index), f"背景消息{index}", sender="peer"))
+    wake = incoming("current", "真实任务", sender="alice")
+    if autonomous:
+        plugin.settings.update(participation_mode="auto", participation_min_messages=1)
+        request = (await requests(plugin, wake))[0]
+        assert len(wake.get_extra("ovenheart_decision")["messages"]) > 3
+    else:
+        wake.is_at_or_wake_command = True
+        request = ProviderRequest(prompt=wake.message_str)
+        await plugin.coordinate_direct_request(wake, request)
+    request.contexts = [{"role": "assistant", "content": "完整原生历史"}]
+    original_tools = request.func_tool
+    await plugin.apply_persona(wake, request)
+    await plugin.apply_participation(wake, request)
+    temporary = request.extra_user_content_parts[-1]
+    marker = '{"reply_goal"' if autonomous else '{"scope"'
+    payload = json.JSONDecoder().raw_decode(
+        temporary.text[temporary.text.index(marker) :]
+    )[0]
+    assert len(payload["messages"]) == limit and len(dumps(payload["messages"])) <= 1000
+    assert payload["reply_message"]["sender_id"] == "alice"
+    assert payload["reply_message"]["message_id"] == "current"
+    assert all("arrival_order" not in row for row in payload["messages"])
+    assert request.contexts == [{"role": "assistant", "content": "完整原生历史"}]
+    if not autonomous:
+        assert request.func_tool is original_tools
+    assert temporary.model_dump_for_context()["_no_save"]
+    if not autonomous:
+        assert len(wake.get_extra("ovenheart_context_snapshot")["messages"]) > 3
+    else:
+        assert len(wake.get_extra("ovenheart_decision")["messages"]) > 3
+    trace = (await plugin.store.call("state", (await plugin.resolve_scope(wake))[0]))[
+        "turn_traces"
+    ][0]
+    assert trace["details"]["context_limit"] == limit
+    assert trace["details"]["context_budget"] == 1000

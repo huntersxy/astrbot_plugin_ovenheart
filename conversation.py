@@ -91,8 +91,10 @@ class ConversationContext:
             "mode": self.plugin.settings["context_mode"],
             "active_default": self.plugin.settings["context_mode"] == "structured"
             and not native,
-            "window": CONTEXT_COUNT,
-            "budget": CONTEXT_BUDGET,
+            "window": self.plugin.settings["reply_context_messages"],
+            "budget": self.plugin.settings["reply_context_budget"],
+            "planner_window": CONTEXT_COUNT,
+            "planner_budget": CONTEXT_BUDGET,
             "storage": "persistent",
             "media_pending": len(self.pending),
         }

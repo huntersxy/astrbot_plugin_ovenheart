@@ -56,6 +56,8 @@ from .outgoing_media import OutgoingMediaBridge
 from .oven_multi import JEV_RULE, OvenMultiBridge
 from .oven_multi import reading as jev_reading
 from .participation import ParticipationController, bound_reply_messages, event_source
+from .reply_payload import dumps as dump_reply_payload
+from .reply_payload import message_view, payload_view, reply_messages
 from .retrieval import HabitRetriever
 from .settings import (
     DEFAULTS,
@@ -1458,7 +1460,7 @@ class PersonaPlugin(Star):
             messages = []
         frozen = event.get_extra("ovenheart_context_snapshot")
         if self.conversation.active(event) and frozen and frozen["scope"] == scope:
-            messages = frozen["messages"]
+            messages = reply_messages(frozen["messages"], self.settings)
         context = {
             "scope": scope,
             "route": route,
@@ -1995,9 +1997,7 @@ class PersonaPlugin(Star):
             ):
                 text = (
                     marker
-                    + "当前回复对象以以下本轮真实消息为准，历史回答的 @ 和称呼不是本轮收件人。"
-                    "只写回复正文，不要沿用历史开头的 @昵称；需要提醒时由宿主绑定真实对象。\n"
-                    "下面的消息文本为有界摘录；完整正文与媒体以宿主原请求为准，不因摘录缺失而忽略原请求中的补充。\n"
+                    + "以下为本轮真实目标与有界摘录；完整正文和媒体以宿主原请求为准。只输出回复正文。\n"
                     + self.template(
                         "participation_system",
                         goal=direct["reply_goal"],
@@ -2018,7 +2018,11 @@ class PersonaPlugin(Star):
                         profile=state["scope"]["profile"] if state["scope"] else {},
                         scope=scope,
                     )
-                    + json.dumps(direct, ensure_ascii=False)
+                    + (
+                        dump_reply_payload(payload_view(direct))
+                        if self.conversation.active(event)
+                        else json.dumps(direct, ensure_ascii=False)
+                    )
                     + (
                         prompts.STRUCTURED_CONTEXT_RULE
                         if self.conversation.active(event)
@@ -2106,7 +2110,7 @@ class PersonaPlugin(Star):
         context_messages = (
             []
             if host_context
-            else plan["messages"]
+            else reply_messages(plan["messages"], self.settings)
             if self.conversation.active(event)
             else bound_reply_messages(plan["messages"], self.settings)
         )
@@ -2135,6 +2139,20 @@ class PersonaPlugin(Star):
             },
             ensure_ascii=False,
         )
+        reply_payload = {
+            "reply_goal": plan["intent"],
+            "reply_target": target_label,
+            "reply_message": target,
+            "delivery_policy": prompts.REPLY_ADDRESS_RULE,
+            "reply_context": reply_context,
+            "expression_intent": plan.get("expression_intent", {}),
+            "decoration": plan.get("decoration"),
+            "messages": context_messages,
+            "reply_focus": self.conversation.focus(
+                event, plan["scope"], target, context_messages
+            ),
+            "jev_reading": plan.get("jev_reading"),
+        }
         user_injection = self.template(
             "participation_user",
             reply_goal=plan["intent"],
@@ -2145,22 +2163,10 @@ class PersonaPlugin(Star):
             expression_intent=plan.get("expression_intent", {}),
             profile=profile,
             scope=plan["scope"],
-        ) + json.dumps(
-            {
-                "reply_goal": plan["intent"],
-                "reply_target": target_label,
-                "reply_message": target,
-                "delivery_policy": prompts.REPLY_ADDRESS_RULE,
-                "reply_context": reply_context,
-                "expression_intent": plan.get("expression_intent", {}),
-                "decoration": plan.get("decoration"),
-                "messages": context_messages,
-                "reply_focus": self.conversation.focus(
-                    event, plan["scope"], target, context_messages
-                ),
-                "jev_reading": plan.get("jev_reading"),
-            },
-            ensure_ascii=False,
+        ) + (
+            dump_reply_payload(payload_view(reply_payload))
+            if self.conversation.active(event)
+            else json.dumps(reply_payload, ensure_ascii=False)
         )
         if self.settings["guidance_delivery"] == "cached":
             user_injection = system_injection + "\n" + user_injection
@@ -2590,15 +2596,15 @@ class PersonaPlugin(Star):
                 )[:128],
                 "reason": plan.get("reason", "宿主直接应答；无需参与决策。")[:240],
                 "context_count": len(messages),
-                "context_chars": len(json.dumps(messages, ensure_ascii=False))
+                "context_chars": (
+                    len(dump_reply_payload([message_view(m) for m in messages]))
+                    if self.conversation.active(event)
+                    else len(json.dumps(messages, ensure_ascii=False))
+                )
                 if messages
                 else 0,
-                "context_limit": 40
-                if self.conversation.active(event)
-                else self.settings["reply_context_messages"],
-                "context_budget": 24000
-                if self.conversation.active(event)
-                else self.settings["reply_context_budget"],
+                "context_limit": self.settings["reply_context_messages"],
+                "context_budget": self.settings["reply_context_budget"],
                 "context_epoch": (
                     event.get_extra("ovenheart_context_binding") or [None, None]
                 )[1],
