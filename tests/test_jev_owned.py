@@ -58,6 +58,25 @@ async def test_unavailable_jev_observes_without_main_model_fallback(participant)
     participant.context.llm_generate.assert_not_awaited()
 
 
+async def test_minimum_jev_budget_keeps_a_real_target_with_long_persona(
+    participant, monkeypatch
+):
+    enable(participant)
+    participant.settings["jev_max_state_chars"] = 1500
+    monkeypatch.setattr(
+        participant.context.persona_manager,
+        "get_persona_v3_by_id",
+        lambda _: {"prompt": "identity " * 1000},
+    )
+    participant.jev.client.evaluate = AsyncMock(return_value={"status": "error"})
+    await requests(participant, event("small-budget", text='"' * 700))
+    state = participant.jev.client.evaluate.await_args.args[1]
+    assert len(state) <= 1500
+    data = json.loads(state)
+    assert data["messages"][-1]["text"] and data["eligible_targets"]
+    participant.context.llm_generate.assert_not_awaited()
+
+
 @pytest.mark.parametrize(
     "selected,value,expected",
     [
