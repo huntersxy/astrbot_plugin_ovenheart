@@ -62,6 +62,16 @@ class EmbeddingAPIAdapter:
             raise ValueError("嵌入模型返回的向量数量、维度或数值不正确。")
         return vectors
 
+    def get_embedding_fingerprint(self, *, dimension):
+        fingerprint = self.fingerprint | {"dimension": dimension}
+        fingerprint["hash"] = (
+            "sha256:"
+            + hashlib.sha256(
+                json.dumps(fingerprint, sort_keys=True).encode()
+            ).hexdigest()
+        )
+        return fingerprint
+
     async def encode(self, texts, **kwargs):
         single = isinstance(texts, str)
         values = [texts] if single else list(texts)

@@ -88,6 +88,15 @@ class Store:
             )
         ]
 
+    def room_memory_inputs(self, db, scope):
+        return [
+            dict(row)
+            for row in db.execute(
+                "SELECT id,source_id,sender,text,created FROM messages WHERE scope=? ORDER BY id",
+                (scope,),
+            )
+        ]
+
     def _transaction(self, operation: str, args: tuple):
         """Open, commit or roll back, and close one database transaction.
 

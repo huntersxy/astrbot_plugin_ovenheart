@@ -39,8 +39,8 @@ def get_logger(name):
 
 
 @contextmanager
-def bind(engine, generate=None):
-    token = _binding.set((engine, generate))
+def bind(engine, generate=None, model_name="native"):
+    token = _binding.set((engine, generate, model_name))
     try:
         yield
     finally:
@@ -75,7 +75,12 @@ class LLMServiceResult:
 
 
 def get_available_models():
-    return {"memory": TaskConfig(model_list=["native"])} if _binding.get()[1] else {}
+    if not _binding.get()[1]:
+        return {}
+    return {"memory": TaskConfig(
+        model_list=[_binding.get()[2]], temperature=None, max_tokens=None,
+        selection_strategy="native", hard_timeout=None,
+    )}
 
 
 async def generate(request):

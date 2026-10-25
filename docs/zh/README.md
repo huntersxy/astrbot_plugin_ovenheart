@@ -179,4 +179,7 @@ Debug 默认关闭。开启后在 AstrBot INFO 日志搜索 `OvenHeart debug`，
 
 ### 通用记忆（0.67 开发版）
 
-`native_memory_enabled` 接入 A_memorix 原双路检索、BM25、关系图与双向量池。Planner 可保存有真实原文支持的段落和关系，回复器共用该检索；现有 LivingMemory 数据继续保留。嵌入模型沿用 `embedding_provider_id`，未配置或请求失败时使用原稀疏/图通道。新增运行依赖见 requirements；完整SDK内核、自动摘要、情景/图片记忆及通用纠错/遗忘仍在适配。范围与验证见[通用记忆设计](../design/room-memory.md)。
+`native_memory_enabled` 接入 A_memorix 原双路检索、BM25、关系图与双向量池。Planner 可保存有真实原文支持的段落和关系，回复器共用该检索；现有 LivingMemory 数据继续保留。嵌入模型沿用 `embedding_provider_id`，未配置或请求失败时使用原稀疏/图通道。新增运行依赖见 requirements；后续阶段已接入自动摘要与情景；完整SDK内核、图片记忆及通用纠错/遗忘仍在适配。范围与验证见[通用记忆设计](../design/room-memory.md)。
+
+
+`memory_summary_enabled` 默认开启：累计12条新素材后，按600秒最短尝试间隔生成增量摘要，并通过原版情景分组、语义切分和版本发布形成可检索的经历；每批最多50条。`memory_summary_provider_id` 留空使用学习模型或当前会话模型。空增量会保留检查点，失败保留原记忆；后台调用计入辅助用量。现阶段仍需完善慢整理期间的召回调度、通用纠错/遗忘、人物近期关联、完整SDK运行时和旧数据导入；详见[自动整理](../design/memory-consolidation.md)。

@@ -490,6 +490,81 @@ async def main(args):
                         "learning_enabled": True,
                     }
                 )
+                await configure(
+                    {
+                        "participation_mode": "off",
+                        "memory_summary_enabled": True,
+                        "memory_summary_min_messages": 1,
+                        "memory_summary_interval": 0,
+                        "memory_summary_provider_id": "native-chat",
+                    }
+                )
+                summary_source = incoming(
+                    "native-summary", "我们周六一起整理文件", "bob"
+                )
+                summary_requests = []
+
+                async def consolidate_completion(**kwargs):
+                    summary_requests.append(str(kwargs))
+                    if "episode segmentation engine" in str(kwargs):
+                        payload = {
+                            "episodes": [
+                                {
+                                    "title": "整理文件的约定",
+                                    "summary": "群聊经历：周六整理文件",
+                                    "paragraph_indices": [1],
+                                    "participants": ["bob"],
+                                    "keywords": ["文件"],
+                                    "time_confidence": 1,
+                                    "llm_confidence": 1,
+                                }
+                            ]
+                        }
+                    else:
+                        payload = {
+                            "summary": "群聊经历：周六整理文件",
+                            "entities": ["文件"],
+                            "relations": [],
+                            "facts": [],
+                            "evidence": [
+                                {
+                                    "source_id": "native-summary",
+                                    "quote": "我们周六一起整理文件",
+                                }
+                            ],
+                        }
+                    return LLMResponse(
+                        role="assistant",
+                        completion_text=json.dumps(payload, ensure_ascii=False),
+                    )
+
+                before_summary_deliveries = len(deliveries)
+                with patch.object(provider, "text_chat", consolidate_completion):
+                    await submit([summary_source])
+                    await asyncio.gather(
+                        *tuple(plugin.memory_consolidation.busy.values())
+                    )
+                summary_scope, summary_persona, _ = await plugin.resolve_scope(
+                    summary_source
+                )
+                summary_context = await plugin.room_memory.context(
+                    summary_source, summary_scope, summary_persona, "文件"
+                )
+                report["native_auto_memories"] = {
+                    "model_calls": len(summary_requests),
+                    "episode_available": any(
+                        m["type"] == "episode" for m in summary_context
+                    ),
+                    "no_visible_send": len(deliveries) == before_summary_deliveries,
+                    "source_retained": any(
+                        e["source_id"] == "native-summary"
+                        for m in summary_context
+                        for e in m["metadata"]["evidence"]
+                    ),
+                }
+                await configure(
+                    {"memory_summary_enabled": False, "participation_mode": "auto"}
+                )
                 planner_old = incoming("planner-old", "我是学生，先问文件在哪儿", "bob")
                 planner_new = incoming("planner-new", "我还想问另一个问题", "alice")
                 planner_new.set_extra("selected_provider", "native-chat")
@@ -642,6 +717,9 @@ async def main(args):
                     and "群聊话题：文件位置" in planner_inputs[2]
                     and "群聊话题：文件位置" in reply_calls[0],
                     "room_memory_temporary": "群聊话题：文件位置" not in saved_history,
+                    "episode_shared": "群聊经历：周六整理文件" in planner_inputs[0]
+                    and "群聊经历：周六整理文件" in reply_calls[0],
+                    "episode_temporary": "群聊经历：周六整理文件" not in saved_history,
                 }
                 planner_scope = (await plugin.resolve_scope(planner_new))[0]
                 report["native_continuous_planner"]["decisions"] = (
@@ -886,6 +964,14 @@ async def main(args):
                     and continuous["person_memory_temporary"]
                     and continuous["room_memory_shared"]
                     and continuous["room_memory_temporary"]
+                    and continuous["episode_shared"]
+                    and continuous["episode_temporary"]
+                )
+                report["checks"]["native_auto_memories"] = (
+                    report["native_auto_memories"]["model_calls"] == 2
+                    and report["native_auto_memories"]["episode_available"]
+                    and report["native_auto_memories"]["no_visible_send"]
+                    and report["native_auto_memories"]["source_retained"]
                 )
                 report["checks"]["native_structured_context"] = report[
                     "native_structured_context"

@@ -24,6 +24,10 @@ DEFAULTS = {
     "provider_id": "",
     "memory_enabled": True,
     "native_memory_enabled": True,
+    "memory_summary_enabled": True,
+    "memory_summary_min_messages": 12,
+    "memory_summary_interval": 600,
+    "memory_summary_provider_id": "",
     "memory_top_k": 3,
     "person_memory_enabled": True,
     "person_memory_min_messages": 6,
@@ -133,6 +137,8 @@ def validate_settings(values: dict) -> dict:
         "planner_max_wait": (1, 120),
         "person_memory_min_messages": (1, 30),
         "person_memory_interval": (0, 86400),
+        "memory_summary_min_messages": (1, 50),
+        "memory_summary_interval": (0, 86400),
     }
     for key, value in values.items():
         default = DEFAULTS[key]

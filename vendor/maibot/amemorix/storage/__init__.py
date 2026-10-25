@@ -1,6 +1,7 @@
 """Keep the light SQLite lane available without eager Faiss/SciPy loading."""
 
 from .metadata_store import MetadataStore
+from .knowledge_types import KnowledgeType, resolve_stored_knowledge_type
 
 
 def __getattr__(name):

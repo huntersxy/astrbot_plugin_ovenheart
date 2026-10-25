@@ -35,6 +35,8 @@ people = importlib.import_module(spec.name+'.person_memory')
 assert people.PersonMemory
 retrieval = importlib.import_module(spec.name+'.vendor.maibot.amemorix.retrieval')
 assert retrieval.DualPathRetriever
+summary = importlib.import_module(spec.name+'.memory_summary')
+assert summary.NativeSummaryImporter
 """
     result = subprocess.run(
         [sys.executable, "-I", "-c", code, str(extracted)],

@@ -30,3 +30,15 @@ are namespaced. `storage/__init__.py` loads heavy modules lazily, and the explic
 embedding transport in `memory_embedding.py` calls AstrBot's configured provider.
 The complete SDK runtime, ingestion/feedback orchestration and migration remain
 in progress; see `docs/design/room-memory.md`.
+
+The consolidation stage adds 9 original modules (46 modules total) and 3 original
+localized summary prompt templates. SummaryImporter retains the original
+incremental-review, model parsing, checkpoints and metadata/entity/relation writes;
+only its embedding runtime preflight is replaced by the initialized native room
+check. NativeSummaryImporter extends vector persistence and native provenance.
+EpisodeService, EpisodeSegmentationService, EpisodeRetrievalService and the
+MemoryIngestService job/lease/revision publication algorithms remain unchanged.
+The latter's complete service is ported, but only its episode job path is bound
+in this stage; this is not a claim that SDKMemoryKernel is integrated.
+`summary_host.py` binds real authorized retained text and AstrBot model transport.
+Image evidence is not yet supplied by this native text boundary.

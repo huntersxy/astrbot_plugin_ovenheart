@@ -52,6 +52,7 @@ from .learning import (
     review_issue,
 )
 from .memory_bridge import MemoryBridge
+from .memory_consolidation import MemoryConsolidation
 from .outgoing_media import OutgoingMediaBridge
 from .oven_multi import JEV_RULE, OvenMultiBridge
 from .oven_multi import reading as jev_reading
@@ -409,6 +410,7 @@ class PersonaPlugin(Star):
         self.group_context = GroupContextBridge(self)
         self.auxiliary = AuxiliaryUsage(context, self.store)
         self.person_memory = PersonMemory(self)
+        self.memory_consolidation = MemoryConsolidation(self)
         self.room_memory = RoomMemory(self)
         self.retriever = HabitRetriever(
             context, self.store, self.prompts, self.auxiliary.generate
@@ -1054,6 +1056,7 @@ class PersonaPlugin(Star):
         if context_only:
             return
         await self.person_memory.observe(event, scope, persona)
+        await self.memory_consolidation.observe(event, scope, persona)
         self.events[scope] = event
         self.speaker_events.pop((scope, sender), None)
         self.speaker_events[scope, sender] = event
@@ -3003,6 +3006,17 @@ class PersonaPlugin(Star):
             await asyncio.sleep(15)
             try:
                 await self.auxiliary.flush()
+                if (
+                    self.settings["memory_summary_enabled"]
+                    and not self.memory_consolidation.busy
+                ):
+                    for source in tuple(self.events.values()):
+                        room_scope, persona, _ = await self.resolve_scope(source)
+                        await self.memory_consolidation.observe(
+                            source, room_scope, persona
+                        )
+                        if self.memory_consolidation.busy:
+                            break
                 if (
                     self.settings["person_memory_enabled"]
                     and not self.person_memory.busy

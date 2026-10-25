@@ -185,6 +185,66 @@
       "source": "src/A_memorix/core/utils/matcher.py",
       "upstream_sha256": "67d661700e8a3b8407359bba118499ca337d3725b24fb14c845aa03174345028",
       "ported_sha256": "c7e4b30ca08a2549c0cff28e91a2f0f8720e784ec46ea8900fb629da3231ac7f"
+    },
+    "utils/summary_importer.py": {
+      "source": "src/A_memorix/core/utils/summary_importer.py",
+      "upstream_sha256": "ee3983e810812239c1b3cfece947b07473cb2fe0783df0bc6ffa84fe9129e770",
+      "ported_sha256": "efbe78354316da660221f3b7162a7aea169706a5fe6265e6d05f7dac0ecbc77e"
+    },
+    "utils/episode_service.py": {
+      "source": "src/A_memorix/core/utils/episode_service.py",
+      "upstream_sha256": "3a40973547a7a7c37e702e1e2fdd1f307ae2eca5adca51f75466955e712684ca",
+      "ported_sha256": "b195ed68198ba0135239951fe225966bbebec03973fd18a77bcfec376548265e"
+    },
+    "utils/episode_segmentation_service.py": {
+      "source": "src/A_memorix/core/utils/episode_segmentation_service.py",
+      "upstream_sha256": "58a1305425415411ff8c23964f8fc580e5c0984732c17737523318b63dba5a20",
+      "ported_sha256": "a1eed71895b7882d87aac6f7dc3bbd008361d0a744f5d2d20f55f48eb4039589"
+    },
+    "utils/episode_retrieval_service.py": {
+      "source": "src/A_memorix/core/utils/episode_retrieval_service.py",
+      "upstream_sha256": "ae2478b6758474be6d030c7f698af9cd858ea3a759bf38dc0410667e64921633",
+      "ported_sha256": "6908449a269e17079c85e6415caf05ce1a6e7f8e0b96a4e982f05a28166af9e0"
+    },
+    "utils/runtime_payloads.py": {
+      "source": "src/A_memorix/core/utils/runtime_payloads.py",
+      "upstream_sha256": "26ab39ef1ad29710ba91f15483251a30b2881567846eb93b237239673a02cf2f",
+      "ported_sha256": "30d713d5030325813b0df218473286fa278f481525414eae370d9692d0bae7aa"
+    },
+    "utils/profile_policy.py": {
+      "source": "src/A_memorix/core/utils/profile_policy.py",
+      "upstream_sha256": "37e1544365ef04fc5410c60132e8eb94ead56f4abc46f8fc058d061da527d7dd",
+      "ported_sha256": "cdae9a42584efc5fdbb60de008814623583c32310b62dc6e0e433d97eb8c02e9"
+    },
+    "image/component_paths.py": {
+      "source": "src/A_memorix/core/image/component_paths.py",
+      "upstream_sha256": "88f23e89e4fa1bfb804c6ae366fbcb1063aed882efa82387da5818c3ba67e7c3",
+      "ported_sha256": "b1f2916cda05b29ab0c76b9fb24981aa89aa5e09cbd0728402b855968f45466c"
+    },
+    "runtime/services/base.py": {
+      "source": "src/A_memorix/core/runtime/services/base.py",
+      "upstream_sha256": "506763a6dd8d0922e7ec27be324f433afcfc2a4fbf2fbdbdfdca33e2a5d1c7a8",
+      "ported_sha256": "df7f600aba7cf6ac5db041cc9bfea52011c82fe3316f0df73f3f31dc978a3b7c"
+    },
+    "runtime/services/ingest_service.py": {
+      "source": "src/A_memorix/core/runtime/services/ingest_service.py",
+      "upstream_sha256": "d792710623ed4fffcb69d385fcb6bc9375da45ab52d5f5f54afec23ae5bae010",
+      "ported_sha256": "e736cb4418ad9b9efe4682c52e2a410c0923289605f10d8442e5c39b5ac2cb20"
+    },
+    "prompts/chat_summary.zh-CN.txt": {
+      "source": "prompts/zh-CN/a_memorix_chat_summary.prompt",
+      "upstream_sha256": "5d33bc76b2484a32e0423a03476a4b6364a1c95d9529ffc14bc736547d2e777d",
+      "ported_sha256": "5d33bc76b2484a32e0423a03476a4b6364a1c95d9529ffc14bc736547d2e777d"
+    },
+    "prompts/chat_summary.en-US.txt": {
+      "source": "prompts/en-US/a_memorix_chat_summary.prompt",
+      "upstream_sha256": "a19a31427fedece9c732d6a7f14d02faea0ea0b0844896ec7b2b36a3fdd2bbb7",
+      "ported_sha256": "a19a31427fedece9c732d6a7f14d02faea0ea0b0844896ec7b2b36a3fdd2bbb7"
+    },
+    "prompts/chat_summary.ja-JP.txt": {
+      "source": "prompts/ja-JP/a_memorix_chat_summary.prompt",
+      "upstream_sha256": "061b7e95b8747de11a39cba3ca11672bdad96739a26529b8b6b32d44987cc632",
+      "ported_sha256": "061b7e95b8747de11a39cba3ca11672bdad96739a26529b8b6b32d44987cc632"
     }
   }
 }

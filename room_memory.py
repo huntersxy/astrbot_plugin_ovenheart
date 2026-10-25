@@ -6,6 +6,7 @@ import asyncio
 import hashlib
 import json
 import threading
+import time
 from collections import OrderedDict
 
 import jsonschema
@@ -61,6 +62,22 @@ MEMORY_SCHEMA = {
 }
 
 
+def native_provenance(evidence, previous=()):
+    proofs = list(
+        {
+            (entry["source_id"], entry["sender"], entry["quote"]): entry
+            for entry in [*previous, *evidence]
+        }.values()
+    )
+    if len(proofs) > 64:
+        proofs = [proofs[0], *proofs[-63:]]
+    return {
+        "source_type": "chat_summary",
+        "evidence": proofs,
+        "participants": sorted({e["sender"] for e in proofs}),
+    }
+
+
 class RoomState:
     """Keep upstream async primitives on one loop, with database work off-host."""
 
@@ -73,6 +90,15 @@ class RoomState:
         self.lock = lock
         self.metadata = MetadataStore(path / "metadata")
         self.metadata.connect()
+        self.metadata._conn.executescript("""
+            CREATE TABLE IF NOT EXISTS ovenheart_summary_processed (
+                source_id TEXT PRIMARY KEY, created REAL NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS ovenheart_summary_runtime (
+                singleton INTEGER PRIMARY KEY CHECK(singleton=1), attempted REAL NOT NULL
+            );
+            INSERT OR IGNORE INTO ovenheart_summary_runtime VALUES (1,0);
+        """)
         (path / "graph").mkdir(parents=True, exist_ok=True)
         self.graph = GraphStore(data_dir=path / "graph")
         if self.graph.has_data():
@@ -109,13 +135,10 @@ class RoomState:
             self.paragraph_vectors = self.graph_vectors = None
             return False
         await self.embedding.encode(text)
-        fingerprint = self.embedding.fingerprint | {
-            "dimension": self.embedding.dimension
-        }
-        space = hashlib.sha256(
-            json.dumps(fingerprint, sort_keys=True).encode()
-        ).hexdigest()
-        fingerprint["hash"] = "sha256:" + space
+        fingerprint = self.embedding.get_embedding_fingerprint(
+            dimension=self.embedding.dimension
+        )
+        space = fingerprint["hash"].removeprefix("sha256:")
         if self.vector_space == space and self.paragraph_vectors is not None:
             return True
         self.fingerprint = fingerprint
@@ -230,7 +253,41 @@ class RoomState:
                     },
                 }
             )
-        return result
+        episodes = await self.episodes(query, min(1, top_k))
+        if episodes:
+            episode = episodes[0]
+            paragraphs = episode.get("paragraphs", [])
+            proofs = [
+                e
+                for p in paragraphs
+                for e in (p.get("metadata") or {}).get("evidence", [])
+            ]
+            result.insert(
+                0,
+                {
+                    "id": episode["episode_id"],
+                    "content": (episode["title"] + ": " + episode["summary"])[:800],
+                    "score": episode.get("score", 0),
+                    "type": "episode",
+                    "backend": "amemorix",
+                    "metadata": {
+                        "source_type": "episode",
+                        "participants": episode.get("participants", []),
+                        "evidence": [
+                            {**e, "quote": e["quote"][:160]} for e in proofs[:4]
+                        ],
+                        "time_meta": {
+                            k: episode.get(k)
+                            for k in (
+                                "event_time_start",
+                                "event_time_end",
+                                "time_granularity",
+                            )
+                        },
+                    },
+                },
+            )
+        return result[:top_k]
 
     async def write(self, content, evidence, relations):
         from .vendor.maibot.amemorix.utils.hash import compute_hash, normalize_text
@@ -244,19 +301,7 @@ class RoomState:
             self.metadata.get_paragraph(compute_hash(normalize_text(content))) or {}
         )
         previous_metadata = previous.get("metadata") or {}
-        proofs = list(
-            {
-                (entry["source_id"], entry["sender"], entry["quote"]): entry
-                for entry in [*previous_metadata.get("evidence", []), *evidence]
-            }.values()
-        )
-        if len(proofs) > 64:
-            proofs = [proofs[0], *proofs[-63:]]
-        metadata = {
-            "source_type": "chat_summary",
-            "evidence": proofs,
-            "participants": sorted({e["sender"] for e in proofs}),
-        }
+        metadata = native_provenance(evidence, previous_metadata.get("evidence", []))
         paragraph = self.metadata.add_paragraph(
             content,
             source="chat_summary:astrbot",
@@ -295,6 +340,128 @@ class RoomState:
             "vector_written": vector_written,
             "backfill": self.metadata.get_paragraph_vector_backfill_status_counts(),
         }
+
+    async def summary_status(self, retained=None):
+        if retained is not None:
+            # Progress contains IDs only for the bounded native material store.
+            with self.metadata.transaction():
+                if retained:
+                    self.metadata._conn.execute(
+                        "DELETE FROM ovenheart_summary_processed WHERE source_id NOT IN ("
+                        + ",".join("?" for _ in retained)
+                        + ")",
+                        retained,
+                    )
+                else:
+                    self.metadata._conn.execute(
+                        "DELETE FROM ovenheart_summary_processed"
+                    )
+        summary = self.metadata.get_episode_source_rebuild_summary()["counts"]
+        return {
+            "attempted": self.metadata._conn.execute(
+                "SELECT attempted FROM ovenheart_summary_runtime WHERE singleton=1"
+            ).fetchone()[0],
+            "processed": {
+                r[0]
+                for r in self.metadata._conn.execute(
+                    "SELECT source_id FROM ovenheart_summary_processed"
+                )
+            },
+            "episode_pending": summary["pending"] > 0
+            or summary["failed"] > 0
+            or summary["running"] > 0,
+        }
+
+    async def summary_attempt(self):
+        self.metadata._conn.execute(
+            "UPDATE ovenheart_summary_runtime SET attempted=? WHERE singleton=1",
+            (time.time(),),
+        )
+        self.metadata._conn.commit()
+
+    async def consolidate(self, scope, messages, generate, bot_name, model_name):
+        from .memory_summary import NativeEpisodeRuntime, NativeSummaryImporter
+        from .vendor.maibot.amemorix import host
+        from .vendor.maibot.amemorix.summary_host import bind_chat
+        from .vendor.maibot.amemorix.utils.relation_write_service import (
+            RelationWriteService,
+        )
+
+        metadata = {"source_type": "chat_summary"}
+
+        async def generate_bound(request):
+            return await generate(request, metadata)
+
+        async def preflight():
+            return self.metadata._conn is not None, ""
+
+        result = {}
+        with host.bind(None, generate_bound, model_name), bind_chat(messages, bot_name):
+            if messages:
+                try:
+                    await asyncio.wait_for(
+                        self._prepare_vectors(messages[-1]["text"]), 1.5
+                    )
+                except Exception:
+                    self.paragraph_vectors = self.graph_vectors = None
+                metadata["external_id"] = (
+                    "summary:"
+                    + hashlib.sha256(
+                        json.dumps([scope, [m["source_id"] for m in messages]]).encode()
+                    ).hexdigest()
+                )
+                importer = NativeSummaryImporter(
+                    self.paragraph_vectors,
+                    self.graph,
+                    self.metadata,
+                    self.embedding,
+                    {
+                        "native_preflight": preflight,
+                        "graph_vector_store": self.graph_vectors,
+                        "relation_write_service": RelationWriteService(
+                            self.metadata, self.graph, None, None
+                        ),
+                        "retrieval": {"vector_pools": {"mode": "dual"}},
+                        "summarization": {"model_name": ["auto"]},
+                    },
+                )
+                imported = await importer.import_from_stream(
+                    scope,
+                    context_length=len(messages),
+                    include_personality=False,
+                    time_end=max(m["created"] for m in messages),
+                    metadata=metadata,
+                )
+                if not imported.success:
+                    raise RuntimeError("原版摘要导入未完成：" + imported.detail[:200])
+                with self.metadata.transaction():
+                    self.metadata._conn.executemany(
+                        "INSERT OR IGNORE INTO ovenheart_summary_processed VALUES (?,?)",
+                        [(m["source_id"], m["created"]) for m in messages],
+                    )
+                result.update(
+                    summary_id=imported.paragraph_hash, skipped=imported.skipped
+                )
+            episodes = await NativeEpisodeRuntime(self).rebuild()
+            result.update(
+                episodes=episodes["episode_count"], episode_failures=episodes["failed"]
+            )
+        return result
+
+    async def episodes(self, query, top_k):
+        from .vendor.maibot.amemorix.utils.episode_retrieval_service import (
+            EpisodeRetrievalService,
+        )
+
+        service = EpisodeRetrievalService(
+            metadata_store=self.metadata, retriever=self._retriever()
+        )
+        found = await service.query(query=query, top_k=top_k, include_paragraphs=True)
+        return [
+            row
+            for row in found
+            if not self.metadata.is_episode_source_query_blocked(row.get("source", ""))
+        ]
 
     def close(self):
         self.sparse.unload()

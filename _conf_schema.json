@@ -98,13 +98,21 @@
     "description": "人物记忆最少新发言",
     "type": "int",
     "default": 6,
-    "slider": {"min": 1, "max": 30, "step": 1}
+    "slider": {
+      "min": 1,
+      "max": 30,
+      "step": 1
+    }
   },
   "person_memory_interval": {
     "description": "人物记忆更新间隔秒数",
     "type": "int",
     "default": 600,
-    "slider": {"min": 0, "max": 86400, "step": 60}
+    "slider": {
+      "min": 0,
+      "max": 86400,
+      "step": 60
+    }
   },
   "person_memory_provider_id": {
     "description": "人物记忆提取模型 ID",
@@ -255,7 +263,10 @@
     "description": "参与节奏",
     "type": "string",
     "default": "maibot",
-    "options": ["maibot", "fixed"],
+    "options": [
+      "maibot",
+      "fixed"
+    ],
     "hint": "maibot 使用原版概率评分和动态频率门控，不再叠加固定消息数、判断间隔与回复冷却；保留明确唤醒、权限和每小时上限。fixed 保留旧节奏。"
   },
   "participation_frequency": {
@@ -280,7 +291,11 @@
     "type": "int",
     "default": 8,
     "hint": "首次决定回复后先静默收集；新消息不重置计时、不打断判断请求。到期有新输入才统一判断继续静默或回复其中一条，无新输入复用原决定。设为 0 使用即时模式。",
-    "slider": {"min": 0, "max": 120, "step": 1}
+    "slider": {
+      "min": 0,
+      "max": 120,
+      "step": 1
+    }
   },
   "planner_interval_seconds": {
     "description": "普通群聊判断间隔（秒）",
@@ -302,7 +317,10 @@
     "description": "群聊规划方式",
     "type": "string",
     "default": "maibot",
-    "options": ["maibot", "legacy"],
+    "options": [
+      "maibot",
+      "legacy"
+    ],
     "hint": "maibot 使用持续工具规划，支持查询、回复、等待和结束；legacy 保留原 Jev/JSON 单次判断。"
   },
   "planner_provider_id": {
@@ -452,5 +470,29 @@
       "max": 1,
       "step": 0.05
     }
+  },
+  "memory_summary_enabled": {
+    "description": "自动整理群聊经历",
+    "type": "bool",
+    "default": true,
+    "hint": "将新素材增量摘要为长期记忆，并生成可检索的情景。遵守会话、人格、来源与学习开关；后台模型调用计入辅助用量。"
+  },
+  "memory_summary_min_messages": {
+    "description": "群聊摘要最少新发言",
+    "type": "int",
+    "default": 12,
+    "hint": "范围1–50；每批最多50条真实人类素材。"
+  },
+  "memory_summary_interval": {
+    "description": "群聊记忆整理间隔（秒）",
+    "type": "int",
+    "default": 600,
+    "hint": "范围0–86400；同会话摘要与情景整理的最短尝试间隔。"
+  },
+  "memory_summary_provider_id": {
+    "description": "群聊记忆整理模型 ID",
+    "type": "string",
+    "default": "",
+    "hint": "留空使用学习模型或当前会话模型；同时用于摘要与情景切分。"
   }
 }
