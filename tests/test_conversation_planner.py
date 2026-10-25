@@ -7,6 +7,8 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from astrbot.api.event import AstrMessageEvent
+from astrbot.api.platform import MessageType, PlatformMetadata
 from astrbot.core.agent.tool import FunctionTool, ToolSet
 from astrbot.core.message.components import At, Image, Plain, Reply
 from astrbot.core.provider.entities import LLMResponse
@@ -52,6 +54,80 @@ def native_planner(participant):
 async def send_reply(plugin, incoming, text):
     incoming.set_result(incoming.plain_result(text))
     await plugin.record_delivery(incoming)
+
+
+def private_event(identifier, text, sender="alice"):
+    message = event(identifier, text=text, sender=sender).message_obj
+    message.type = MessageType.FRIEND_MESSAGE
+    message.group = None
+    return AstrMessageEvent(
+        text, message, PlatformMetadata("aiocqhttp", "test", "qq"), sender
+    )
+
+
+async def test_private_native_wake_uses_shared_memory_loop_and_receipt(native_planner):
+    plugin, provider = native_planner
+    plugin.settings.update(participation_mode="off", participation_frequency=0)
+    incoming = private_event("private-request", "帮我找上次的文件")
+    assert not ParticipationFilter().filter(incoming, {})
+    incoming.is_at_or_wake_command = True
+    assert ParticipationFilter().filter(incoming, {})
+    provider.text_chat.side_effect = [
+        action("search_memory", query="上次的文件"),
+        action("reply", msg_id="1", reply_reference="回答当前私聊请求。"),
+        action("stop"),
+    ]
+    plugin.memory.recall = AsyncMock(return_value=([], "没有历史"))
+    replies = plugin.participate(incoming)
+    request = await anext(replies)
+    await plugin.apply_participation(incoming, request)
+    assert incoming.get_extra("ovenheart_decision")["direct"]
+    await send_reply(plugin, incoming, "上次的文件在下载目录。")
+    with pytest.raises(StopAsyncIteration):
+        await anext(replies)
+    assert '"chat_type": "private"' in str(
+        provider.text_chat.await_args.kwargs["contexts"]
+    )
+    assert "上次的文件在下载目录。" in str(
+        provider.text_chat.await_args.kwargs["contexts"]
+    )
+    assert incoming.call_llm
+    assert plugin.participation.room_key(incoming) != plugin.participation.room_key(
+        private_event("bob", "同一句话", sender="bob")
+    )
+
+
+async def test_private_continuation_retains_native_tools_despite_group_zero_frequency(
+    native_planner,
+):
+    plugin, provider = native_planner
+    plugin.settings["participation_frequency"] = 0
+    older = private_event("private-older", "还有旧文件的备份呢")
+    assert await plugin.participation.consider(older) is None
+    incoming = private_event("private-new", "先找当前的文件")
+    incoming.is_at_or_wake_command = True
+    provider.text_chat.side_effect = [
+        action("reply", msg_id="2", reply_reference="先找当前文件。"),
+        action("reply", msg_id="1", reply_reference="补充之前问的备份。"),
+        action("stop"),
+    ]
+    replies = plugin.participate(incoming)
+    first = await anext(replies)
+    await plugin.apply_participation(incoming, first)
+    await send_reply(plugin, incoming, "当前文件找到了。")
+    second = await anext(replies)
+    assert second is not first
+    second.func_tool = ToolSet(
+        [FunctionTool(name="native_task", description="宿主任务", parameters={})]
+    )
+    await plugin.apply_participation(incoming, second)
+    assert not incoming.is_stopped()
+    assert second.func_tool.get_tool("native_task")
+    assert incoming.get_extra("ovenheart_decision")["private_continuation"]
+    await send_reply(plugin, incoming, "旧备份也找到了。")
+    with pytest.raises(StopAsyncIteration):
+        await anext(replies)
+    assert provider.text_chat.await_count == 3
 
 
 async def test_native_memory_query_reply_receipt_and_stop(native_planner):

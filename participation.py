@@ -235,15 +235,18 @@ class ParticipationController:
         self.planner = ConversationPlanner(plugin)
 
     def room_key(self, event) -> str:
-        """Identify the physical group independently of native session isolation.
+        """Identify the physical chat independently of native group isolation.
 
         Args:
             event: Native platform event.
 
         Returns:
-            Non-secret coordination key, or an empty string for private events.
+            Non-secret group/private coordination key.
         """
-        if event.get_message_type() != MessageType.GROUP_MESSAGE:
+        if event.get_message_type() not in (
+            MessageType.GROUP_MESSAGE,
+            MessageType.FRIEND_MESSAGE,
+        ):
             return ""
         return (
             "room:"
@@ -253,7 +256,10 @@ class ParticipationController:
                         event.get_platform_name(),
                         event.get_platform_id(),
                         event.get_self_id(),
-                        event.get_group_id(),
+                        event.get_message_type().value,
+                        event.get_group_id()
+                        if not event.is_private_chat()
+                        else event.session_id,
                     ],
                     ensure_ascii=False,
                 ).encode()
@@ -1330,7 +1336,8 @@ class ParticipationController:
         # next action without cancelling that reply's consumed quota record.
         await session.check_current()
         scope = previous["scope"]
-        if previous.get("direct"):
+        private = event.is_private_chat()
+        if previous.get("direct") and not private:
             work = self.rooms[previous["room"]].get("work")
             if work:
                 work["direct"] = False
@@ -1370,6 +1377,7 @@ class ParticipationController:
             raise ParticipationFormatError("持续规划的回复目标不在真实上下文中。")
         if (
             plan["action"] == "reply"
+            and not private
             and session.settings["participation_frequency"] == 0
         ):
             plan.update(
@@ -1378,12 +1386,17 @@ class ParticipationController:
                 intent="",
                 target_sequence=0,
             )
-        plan = plan | {"room": previous["room"], "followup": False, "direct": False}
+        plan = plan | {
+            "room": previous["room"],
+            "followup": False,
+            "direct": private,
+            "private_continuation": private,
+        }
         decision = await self.plugin.store.call(
             "decide",
             scope,
             plan,
-            "auto",
+            "direct" if private else "auto",
             "admitted" if plan["action"] == "reply" else "observed",
             self.plugin.settings,
         )

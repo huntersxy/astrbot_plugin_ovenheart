@@ -334,12 +334,15 @@ class ParticipationFilter(filter.CustomFilter):
         ):
             return False
         if (
-            event.get_message_type() != MessageType.GROUP_MESSAGE
+            event.get_message_type()
+            not in (MessageType.GROUP_MESSAGE, MessageType.FRIEND_MESSAGE)
             or event.get_sender_id() == event.get_self_id()
         ):
             return False
         if event.is_at_or_wake_command:
             return plugin.settings["planner_mode"] == "maibot"
+        if event.is_private_chat():
+            return False
         text = event.get_message_str().strip()
         admitted = bool(
             text
@@ -378,7 +381,8 @@ class DirectWakeFilter(ParticipationFilter):
             or not plugin.ready
             or plugin.closing
             or not plugin.settings["enabled"]
-            or event.get_message_type() != MessageType.GROUP_MESSAGE
+            or event.get_message_type()
+            not in (MessageType.GROUP_MESSAGE, MessageType.FRIEND_MESSAGE)
             or event.get_sender_id() == event.get_self_id()
         ):
             return False
@@ -1095,7 +1099,8 @@ class PersonaPlugin(Star):
     async def prioritize_direct(self, event: AstrMessageEvent):
         """Preempt owned autonomous work before native follow-up/lock acquisition."""
         if (
-            event.get_message_type() != MessageType.GROUP_MESSAGE
+            event.get_message_type()
+            not in (MessageType.GROUP_MESSAGE, MessageType.FRIEND_MESSAGE)
             or not (event.is_at_or_wake_command or event.get_extra("ovenheart_mention"))
             or not await self.permitted(event)
             or event.get_extra("handlers_parsed_params")
@@ -1107,6 +1112,7 @@ class PersonaPlugin(Star):
         if (
             self.settings["planner_mode"] == "maibot"
             and self.settings["apply_enabled"]
+            and not event.is_private_chat()
             and bare_direct_mention(event)
         ):
             scope, _, _ = await self.resolve_scope(event)
@@ -1146,7 +1152,8 @@ class PersonaPlugin(Star):
             A provider request consumed by AstrBot's normal agent substage.
         """
         if (
-            event.get_message_type() != MessageType.GROUP_MESSAGE
+            event.get_message_type()
+            not in (MessageType.GROUP_MESSAGE, MessageType.FRIEND_MESSAGE)
             or event.call_llm
             or event._has_send_oper
             or event.get_result()
@@ -1181,37 +1188,7 @@ class PersonaPlugin(Star):
                 or not await self.permitted(event)
             ):
                 return
-            # Use the host collector for images, audio, files, quotes, selected
-            # model and native history; a plain request would lose attachments.
-            from astrbot.core.astr_main_agent import (
-                MainAgentBuildConfig,
-                collect_initial_request,
-            )
-
-            cfg = self.context.get_config(event.unified_msg_origin)
-            runner = cfg.get("agent_runner", {})
-            runner_type = (
-                runner.get("runner_type", "local")
-                if isinstance(runner, dict)
-                else runner
-            )
-            if (
-                runner_type != "local"
-                or not cfg.get("provider_settings", {}).get("enable", True)
-                or not await SessionServiceManager.should_process_llm_request(event)
-            ):
-                return
-            prefix = cfg.get("provider_settings", {}).get("wake_prefix", "")
-            for wake_prefix in cfg.get("wake_prefix", []):
-                if wake_prefix and prefix.startswith(wake_prefix):
-                    prefix = prefix[len(wake_prefix) :]
-            initial, _ = await collect_initial_request(
-                event,
-                self.context,
-                MainAgentBuildConfig(
-                    tool_call_timeout=120, provider_wake_prefix=prefix
-                ),
-            )
+            initial = await self.collect_planner_request(event)
             if initial is None:
                 return
             event.set_extra("ovenheart_planner_initial_request", initial)
@@ -1229,6 +1206,35 @@ class PersonaPlugin(Star):
                 plan = await self.participation.after_reply(event, plan)
         finally:
             self.participation.planner.finish_event(event)
+
+    async def collect_planner_request(self, event):
+        """Preserve native media, model, tools and current history on direct turns."""
+        from astrbot.core.astr_main_agent import (
+            MainAgentBuildConfig,
+            collect_initial_request,
+        )
+
+        cfg = self.context.get_config(event.unified_msg_origin)
+        runner = cfg.get("agent_runner", {})
+        runner_type = (
+            runner.get("runner_type", "local") if isinstance(runner, dict) else runner
+        )
+        if (
+            runner_type != "local"
+            or not cfg.get("provider_settings", {}).get("enable", True)
+            or not await SessionServiceManager.should_process_llm_request(event)
+        ):
+            return None
+        prefix = cfg.get("provider_settings", {}).get("wake_prefix", "")
+        for wake_prefix in cfg.get("wake_prefix", []):
+            if wake_prefix and prefix.startswith(wake_prefix):
+                prefix = prefix[len(wake_prefix) :]
+        request, _ = await collect_initial_request(
+            event,
+            self.context,
+            MainAgentBuildConfig(tool_call_timeout=120, provider_wake_prefix=prefix),
+        )
+        return request
 
     async def participation_request(self, event, plan):
         """Dispatch one reply through the complete native request pipeline."""
@@ -1323,7 +1329,20 @@ class PersonaPlugin(Star):
         event.set_extra("ovenheart_fallback_source", event_source(event))
         try:
             if plan.get("direct"):
-                yield event.get_extra("ovenheart_planner_initial_request")
+                request = (
+                    await self.collect_planner_request(event)
+                    if plan.get("private_continuation")
+                    else event.get_extra("ovenheart_planner_initial_request")
+                )
+                if request is None:
+                    await self.store.call(
+                        "cancel_decision",
+                        plan["scope"],
+                        plan["id"],
+                        "宿主已暂停当前私聊请求。",
+                    )
+                    return
+                yield request
             else:
                 yield event.request_llm(prompt=prompt, conversation=conversation)
         finally:
