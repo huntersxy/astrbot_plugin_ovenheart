@@ -37,6 +37,10 @@ retrieval = importlib.import_module(spec.name+'.vendor.maibot.amemorix.retrieval
 assert retrieval.DualPathRetriever
 summary = importlib.import_module(spec.name+'.memory_summary')
 assert summary.NativeSummaryImporter
+kernel = importlib.import_module(spec.name+'.vendor.maibot.amemorix.runtime.sdk_memory_kernel')
+assert kernel.SDKMemoryKernel
+native = importlib.import_module(spec.name+'.native_memory_kernel')
+assert native.NativeMemoryKernel
 """
     result = subprocess.run(
         [sys.executable, "-I", "-c", code, str(extracted)],

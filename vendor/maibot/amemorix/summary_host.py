@@ -41,8 +41,21 @@ global_config = NativeConfig()
 
 
 class NativeModelConfig:
+    def __init__(self):
+        self.callbacks = set()
+
     def get_model_config(self):
         return SimpleNamespace(models_dict={name: task for task in host.get_available_models().values() for name in task.model_list})
+
+    def register_reload_callback(self, callback):
+        self.callbacks.add(callback)
+
+    def unregister_reload_callback(self, callback):
+        self.callbacks.discard(callback)
+
+    def notify_model_config_changed(self, changed_scopes=()):
+        for callback in tuple(self.callbacks):
+            callback(changed_scopes)
 
 
 config_manager = NativeModelConfig()

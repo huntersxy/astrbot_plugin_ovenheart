@@ -70,7 +70,23 @@ class EmbeddingAPIAdapter:
                 json.dumps(fingerprint, sort_keys=True).encode()
             ).hexdigest()
         )
+        fingerprint["source"] = (
+            "observed"
+            if self.dimension == dimension and self.dimension
+            else "configured"
+        )
         return fingerprint
+
+    def get_embedding_configuration_key(self):
+        return self.fingerprint["configuration_key"]
+
+    async def _detect_dimension(self):
+        if not self.dimension:
+            await self.encode("A_memorix dimension probe")
+        return self.dimension
+
+    def get_embedding_dimension(self):
+        return self.dimension
 
     async def encode(self, texts, **kwargs):
         single = isinstance(texts, str)

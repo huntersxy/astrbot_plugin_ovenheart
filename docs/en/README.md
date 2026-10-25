@@ -176,3 +176,6 @@ The 0.67 development version also ports A_memorix's actual fact ledger and perso
 
 
 `memory_summary_enabled` defaults to on. After 12 new retained messages, an incremental summary and the original episode grouping, semantic segmentation and revision publication build shared memories; attempts are at least 600 seconds apart and batches contain at most 50 messages. `memory_summary_provider_id` falls back to the learning/current chat provider. Empty deltas are checkpointed; failures preserve existing memory, and helper calls are metered. Foreground memory queries and writes remain available while consolidation waits for its model. General correction/forgetting, recent-person links, the full SDK runtime and legacy import remain incomplete; see [consolidation](../design/memory-consolidation.md).
+
+
+The original SDK kernel and services now run in local storage-level validation. **The live chat path has not switched to this kernel, and this stage has not been deployed.** Store ownership, native authorization/model lifecycles, correction/forgetting and legacy import still require integration; see [kernel takeover](../design/native-memory-kernel.md).

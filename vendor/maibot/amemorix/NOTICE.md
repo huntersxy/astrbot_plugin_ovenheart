@@ -42,3 +42,17 @@ The latter's complete service is ported, but only its episode job path is bound
 in this stage; this is not a claim that SDKMemoryKernel is integrated.
 `summary_host.py` binds real authorized retained text and AstrBot model transport.
 Image evidence is not yet supplied by this native text boundary.
+
+The SDK stage adds the original kernel and its runtime services/dependencies,
+plus localized correction-planning templates: 110 upstream Python modules and
+6 templates are now recorded. Host imports are rewritten within this namespace;
+SDK algorithms are otherwise unchanged and checked against the pinned Git blobs.
+`sdk_host.py` binds native paths, provider transport and snapshots. The original
+`src/common/async_work.py` helper is included under `utils/async_work.py` with
+its GPL-3.0 license (see the parent MaiBot license); it retains cancellation
+cleanup semantics. Other A_memorix source remains under the retained AGPL-3.0.
+The native subclass in `native_memory_kernel.py` wraps target supersession in
+a managed transaction to fix a reproduced database lock before graph persistence.
+The original correction service is not modified. Kernel-level validation is not
+production takeover; the remaining native routing/migration work is documented
+in `docs/design/native-memory-kernel.md`.
