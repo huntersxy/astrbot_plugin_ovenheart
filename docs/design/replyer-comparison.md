@@ -29,3 +29,8 @@ scripts/maibot_replyer_probe.py从固定提交5c7637e6913c84d1c3d5e742fa9e95a7e7
 该小样本里，纠错与接梗已接近；原生第一条出现将对方遭遇说成“我”的人称带入，已在共用表达参考规则明确借句式时转换人称。它不证明正式多轮主链已有相同问题，也不证明修改后所有场景都解决。
 
 有效原始报告在本机docs/evaluation/2026-10-26-replyer-{listening,teasing,correction}-verified.json。该目录不进入Git，报告只含合成输入、可见回复及元数据，不含密钥、人格原文、推理内容。原生工坊示例未运行正式Planner/群聊历史/工具，不能把这三条等同于完整系统对照，整体目标仍未完成。
+
+
+人称约束上线后，同一输入、同一条已选表达707的一次实际工坊生成返回：“这也太憋屈了……烂摊子全甩给你，换谁都得骂两句”。运行中的application_style正文已核对包含新的人称规则，customized=false；这是一次实际结果，不代表全部情境都已解决。报告为docs/evaluation/2026-10-26-replyer-listening-after-perspective-rule.json。
+
+回放的输入校验发生在每次原版请求构造后，使用实际ContextItem文本；只有原话和完整人格都存在才允许模型请求。合成会话由原版chat_manager创建，消息由原版SessionMessage.process处理。显示时间仅在回复器模块内固定到原生样本已捕获的分钟，不能据此宣称所有框架动态上下文完全相同。正式Native Planner与原版持续规划的完整多轮对照仍待完成。
