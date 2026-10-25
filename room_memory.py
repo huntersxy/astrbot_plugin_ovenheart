@@ -233,6 +233,11 @@ class RoomState:
                 singleton INTEGER PRIMARY KEY CHECK(singleton=1), attempted REAL NOT NULL
             );
             INSERT OR IGNORE INTO ovenheart_summary_runtime VALUES (1,0);
+            CREATE TABLE IF NOT EXISTS ovenheart_legacy_imports (
+                external_id TEXT PRIMARY KEY, namespace TEXT NOT NULL,
+                parent_id INTEGER NOT NULL, paragraph_hash TEXT NOT NULL,
+                content_hash TEXT NOT NULL, stamp TEXT NOT NULL
+            );
         """)
         # These databases already belong to exactly one native room/persona.
         # Earlier development notes used a generic source; retain all evidence
@@ -353,6 +358,14 @@ class RoomState:
                             for entry in source.get("evidence", [])[:4]
                         ],
                         "time_meta": item.get("metadata", {}).get("time_meta", {}),
+                        **(
+                            {
+                                "legacy_import": source["legacy_import"],
+                                "legacy_sources": source.get("legacy_sources", [])[:4],
+                            }
+                            if source.get("legacy_import")
+                            else {}
+                        ),
                     },
                 }
             )
@@ -598,6 +611,82 @@ class RoomState:
             for row in rows
             if (result := await self.image_asset(row["asset_id"]))["success"]
         ]
+
+    async def legacy_ingest(self, unit):
+        from .vendor.maibot.amemorix.utils.hash import compute_hash, normalize_text
+
+        content_hash = compute_hash(normalize_text(unit.content))
+        previous = self.metadata._conn.execute(
+            "SELECT content_hash FROM ovenheart_legacy_imports WHERE external_id=?",
+            (unit.external_id,),
+        ).fetchone()
+        if previous:
+            return "skipped" if previous[0] == content_hash else "conflicts"
+        paragraph = self.metadata.get_paragraph(content_hash)
+        result = "skipped"
+        if paragraph is None:
+            await self.kernel.ingest_text(
+                external_id=unit.external_id,
+                source_type="chat_summary",
+                chat_id=self.path.name,
+                text=unit.content,
+                timestamp=unit.created or None,
+                entities=unit.entities,
+                relations=unit.relations,
+                metadata=unit.metadata,
+            )
+            if self.metadata.get_paragraph(content_hash) is None:
+                raise ValueError("原生SDK未接收旧记忆，未提交导入完成标记。")
+            if unit.expires is not None:
+                self.metadata.set_paragraph_expiration(
+                    [content_hash],
+                    expires_at=unit.expires,
+                    reason="LivingMemory original atom expiry",
+                )
+            result = "stored"
+        elif (
+            not paragraph.get("is_deleted")
+            and (paragraph.get("metadata", {}).get("legacy_import") or {}).get(
+                "namespace"
+            )
+            == unit.namespace
+        ):
+            previous_expiry = paragraph.get("expires_at")
+            expiry = (
+                None
+                if previous_expiry is None or unit.expires is None
+                else max(previous_expiry, unit.expires)
+            )
+            self.metadata.set_paragraph_expiration(
+                [content_hash],
+                expires_at=expiry,
+                reason="LivingMemory matching active source lifetimes",
+            )
+        # A native deletion/correction remains authoritative. This ledger has
+        # no paragraph FK and survives the SDK's recoverable deletion cleanup.
+        with self.metadata.transaction(immediate=True):
+            self.metadata._conn.execute(
+                "INSERT INTO ovenheart_legacy_imports VALUES (?,?,?,?,?,?)",
+                (
+                    unit.external_id,
+                    unit.namespace,
+                    unit.parent_id,
+                    content_hash,
+                    content_hash,
+                    unit.metadata["legacy_import"]["snapshot"],
+                ),
+            )
+        return result
+
+    async def legacy_finish(self, namespace, scopes, snapshot):
+        with self.metadata.transaction(immediate=True):
+            self.metadata._conn.executemany(
+                "INSERT OR REPLACE INTO ovenheart_legacy_imports VALUES (?,?,?,?,?,?)",
+                [
+                    (f"retired:{namespace}:{origin}", namespace, -1, "", "", snapshot)
+                    for origin in scopes
+                ],
+            )
 
     async def image_asset(self, asset_id):
         result = await self.kernel.image_memory(

@@ -91,6 +91,9 @@ class PageAPI:
                 "meme_bound": self.plugin.outgoing_media._owner is not None
             },
             busy=list(self.plugin.busy),
+            legacy_import=self.plugin.legacy_import.status.get(
+                (state.get("scope") or {}).get("id"), {}
+            ),
             learning_blocked=learning_blocked(
                 (state.get("scope") or {}).get("umo"), self.plugin.settings
             ),
@@ -355,6 +358,15 @@ class PageAPI:
             state = await self.plugin.store.read("scope_profile", scope)
             if not state:
                 raise ValueError("当前会话不存在。")
+            if operation in ("legacy_preview", "legacy_import"):
+                if payload:
+                    raise ValueError("旧记忆导入不接受自定义文件路径或来源参数。")
+                result = (
+                    await self.plugin.legacy_import.preview(scope)
+                    if operation == "legacy_preview"
+                    else await self.plugin.legacy_import.start(scope)
+                )
+                return {"status": "ok", "data": result}
             if operation == "learn":
                 if scope == SHARED_SCOPE:
                     raise ValueError(

@@ -29,6 +29,7 @@ class MemoryBridge:
         self._reply_sources = WeakKeyDictionary()
         self._hooks = []
         self._owner = None
+        self.legacy_retired = None
 
     def disconnect(self) -> None:
         """Restore only dispatch entries still owned by this bridge."""
@@ -164,6 +165,8 @@ class MemoryBridge:
             *args: Native request or response arguments.
             **kwargs: Native keyword arguments.
         """
+        if self.legacy_retired is not None and await self.legacy_retired(event):
+            return
         if event.get_extra("ovenheart_memory_source_requested", False) is not True:
             # Pre-upgrade requests can outlive the retired private adapter.
             if event.get_extra("livingmemory_reply_source_requested", False) is True:
@@ -367,6 +370,15 @@ class MemoryBridge:
         """
         if not settings["memory_enabled"]:
             return [], "本次未启用记忆联动。"
+        if (
+            event is not None
+            and self.legacy_retired is not None
+            and await self.legacy_retired(event)
+        ):
+            return (
+                [],
+                "当前会话和人格已迁入原生记忆，本桥不再重复召回旧LivingMemory；原库保留。",
+            )
         status = self.status()
         if not status["available"]:
             return [], status["message"]

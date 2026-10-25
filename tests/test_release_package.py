@@ -49,6 +49,8 @@ images = importlib.import_module(spec.name+'.image_memory')
 assert images.ImageMemory
 rhythm = importlib.import_module(spec.name+'.reply_rhythm')
 assert rhythm.ReplyRhythm
+legacy = importlib.import_module(spec.name+'.legacy_import')
+assert legacy.LivingMemoryImport
 """
     result = subprocess.run(
         [sys.executable, "-I", "-c", code, str(extracted)],

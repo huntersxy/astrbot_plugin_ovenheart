@@ -77,6 +77,7 @@ async function afterWrite(context) {
   load(!dirty).catch(error => notify(`修改已提交，但本页刷新失败：${error.message}。可稍后点击刷新。`, true));
 }
 function updateHeader() {
+  updateLegacyImportStatus();
   const scopeSelect = $("#scope");
   scopeSelect.innerHTML = data.scopes.length ? data.scopes.map(s => `<option value="${escape(s.id)}">${escape(s.label)} / ${escape(s.persona === "[%None]" ? "未设置人格" : s.persona)}</option>`).join("") : '<option value="">尚无学习会话</option>';
   scopeSelect.value = selectedScope;
@@ -422,6 +423,20 @@ function renderHistory() {
   bindHistoryRestore();
 }
 
+function updateLegacyImportStatus() {
+  const element = $("#legacy-import-status");
+  if (!element) return;
+  const status = data?.legacy_import || {};
+  const states = {preview:"预览就绪",running:"正在迁入",completed:"迁入完成",completed_with_conflicts:"已有内容存在冲突",empty:"没有匹配的旧记忆，旧来源保持可用",cancelled:"任务已停止",error:"迁入未完成"};
+  const counts = status.state === "preview" ? `旧记忆 ${status.documents || 0} 条，有效内容 ${status.units || 0} 条，排除失效原子 ${status.excluded_atoms || 0} 条；预计可写 ${status.native?.ready || 0} 条，已映射 ${status.native?.skipped || 0} 条，冲突 ${status.native?.conflicts || 0} 条。` : `已处理 ${status.processed || 0}/${status.units || 0}，写入 ${status.stored || 0}，跳过 ${status.skipped || 0}，冲突 ${status.conflicts || 0}。`;
+  element.textContent = status.state ? `${states[status.state] || status.state}：${counts}${status.message ? ` ${status.message}` : ""}` : "先预览当前会话和人格可迁入的旧记忆。原库保留，实际写入前自动备份。";
+  if (status.state === "completed" && status.legacy_hooks_bound === false) element.textContent += " 数据已迁入，旧插件钩子尚未绑定，请在运行核验中确认切换。";
+  for (const id of ["#legacy-preview", "#legacy-import"]) {
+    const button = $(id);
+    if (button) button.disabled = status.state === "running";
+  }
+}
+
 function renderSettings() {
   const s = data.settings;
   const settingsRevision = data.settings_revision;
@@ -464,6 +479,7 @@ function renderSettings() {
     </section>
     <section class="settings-group"><h2>记忆与表达</h2><p>记忆帮助理解来龙去脉；人格工坊只学习有原始聊天证据的习惯。</p>
       ${switchField("memory_enabled", "参考长期记忆", data.memory.message, s.memory_enabled)}
+      ${data.scope && data.scope.id !== data.shared_scope?.id ? '<div class="evidence"><h3>迁入旧 LivingMemory 记忆</h3><p class="muted">按当前会话、人格与旧插件访问规则迁入有效内容。保留完整原库备份；重复执行会跳过已有记录，不恢复原生侧已遗忘的内容。成功完成后，此作用域改用原生记忆。</p><div class="actions"><button type="button" id="legacy-preview">预览旧记忆</button><button type="button" id="legacy-import">迁入当前会话</button></div><p id="legacy-import-status" class="muted" role="status" aria-live="polite"></p></div>' : '<p class="muted">选择具体会话与人格后，可预览并迁入旧 LivingMemory 记忆。</p>'}
       ${switchField("native_memory_enabled", "A_memorix 通用记忆", "保存有真实来源的段落和关系，按会话和人格隔离；使用原版 BM25、图谱与双路检索，配置嵌入模型后启用双向量池。现有 LivingMemory 回忆继续保留。", s.native_memory_enabled)}
       ${switchField("image_memory_enabled", "图片记忆", "保存当前会话中真实出现的图片、作者原话和模型观察；图片描述沿用宿主的图片描述模型，暂停学习后不再入库。", s.image_memory_enabled)}
       ${switchField("emoji_enabled", "Planner表情动作", "查看本会话的表情候选，选择后随文字回复发送；真实发送结果回流后续规划。", s.emoji_enabled)}
@@ -510,6 +526,9 @@ function renderSettings() {
     Object.assign(patch, tools);
     mutate("settings", patch, selectedScope, settingsRevision);
   };
+  if ($("#legacy-preview")) $("#legacy-preview").onclick = () => mutate("legacy_preview");
+  if ($("#legacy-import")) $("#legacy-import").onclick = () => mutate("legacy_import");
+  updateLegacyImportStatus();
   if ($("#clear-messages")) $("#clear-messages").onclick = async () => { if (await confirmAction("永久清除当前会话所有原始聊天素材？学习条目及其证据摘录会保留。")) mutate("clear_messages"); };
 }
 
@@ -648,9 +667,9 @@ async function mutate(action, payload = {}, scope = selectedScope, settingsRevis
   const context = writeContext();
   return guarded(async () => {
     const result = await api("action", {action, scope, payload, ...(action === "profile" ? {effect_scope:scope} : {}), ...(settingsRevision !== undefined ? {settings_revision:settingsRevision} : {})});
-    notify(result.message || "已保存。");
+    notify(result.message || (action === "legacy_preview" ? "旧记忆预览已更新。" : action === "legacy_import" ? "已开始迁入，原库保持不变。" : "已保存。"));
     await afterWrite(context);
-    if (action === "learn") schedulePoll(1500);
+    if (action === "learn" || action === "legacy_import") schedulePoll(1500);
   });
 }
 
@@ -692,7 +711,7 @@ window.addEventListener("beforeunload", event => { if (dirty) { event.preventDef
 function schedulePoll(delay) {
   clearTimeout(pollTimer);
   if (!bridge || document.hidden) return;
-  const interval = delay ?? (data?.busy?.length ? 8000 : 30000) * Math.min(4, 2 ** pollErrors);
+  const interval = delay ?? (data?.busy?.length || data?.legacy_import?.state === "running" ? 8000 : 30000) * Math.min(4, 2 ** pollErrors);
   pollTimer = setTimeout(async () => {
     if (pending || polling || document.hidden) { schedulePoll(); return; }
     polling = true;
