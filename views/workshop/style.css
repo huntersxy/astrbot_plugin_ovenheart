@@ -129,6 +129,7 @@ input[type="checkbox"]:disabled { opacity: .5; cursor: not-allowed; }
 .tabs button[aria-current="page"], .tabs button[aria-current="page"]:not(:disabled):hover { background: var(--tint); color: var(--accent-ink); }
 .tabs [data-tab="profile"] { --icon: var(--i-user); }
 .tabs [data-tab="library"] { --icon: var(--i-book); }
+.tabs [data-tab="memory"] { --icon: var(--i-heart); }
 .tabs [data-tab="history"] { --icon: var(--i-history); }
 .tabs [data-tab="settings"] { --icon: var(--i-sliders); }
 .tabs [data-tab="prompts"] { --icon: var(--i-terminal); }
@@ -262,6 +263,15 @@ summary:hover { color: var(--accent); }
 
 /* Settings stay in reading order, with a stable save bar. */
 .settings-grid { display: grid; gap: 36px; }
+.settings-heading > h2 { margin-bottom: 8px; }
+.settings-heading > p { max-width: 72ch; margin-bottom: 20px; color: var(--muted); font-size: 13px; line-height: 1.75; }
+.settings-tabs { display: flex; gap: 24px; position: sticky; top: 0; z-index: 4; overflow-x: auto; border-bottom: 1px solid var(--line); background: var(--surface); scrollbar-width: thin; }
+.settings-tabs button { flex: 0 0 auto; min-height: 46px; padding: 10px 0; border-radius: 0; border-bottom: 2px solid transparent; background: transparent; color: var(--muted); white-space: nowrap; }
+.settings-tabs button:not(:disabled):hover { background: transparent; color: var(--ink); }
+.settings-tabs button[aria-selected="true"] { border-bottom-color: var(--accent); color: var(--accent-ink); }
+.settings-tabs button:focus-visible { outline-offset: -4px; border-radius: 4px; }
+.settings-panel { padding-top: 28px; }
+.settings-panel h3 { margin: 24px 0 8px; font-size: 15px; }
 .settings-group { min-width: 0; }
 .settings-group + .settings-group { padding-top: 32px; border-top: 1px solid var(--line); }
 .settings-group > h2 { margin-bottom: 8px; }
@@ -388,6 +398,8 @@ footer { display: flex; justify-content: space-between; gap: 20px; padding: 18px
   .number-fields, .settings-group .number-fields { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 14px; }
   .settings-group .two-col { gap: 20px; }
   .settings-grid { gap: 28px; }
+  .settings-tabs { gap: 20px; }
+  .settings-panel { padding-top: 24px; }
   .settings-group + .settings-group { padding-top: 26px; }
   .form-end button { min-height: 40px; }
   #settings-form > .form-end { padding: 14px 0; }
