@@ -837,6 +837,7 @@ async def test_native_page_validation_and_teardown(plugin):
     assert {route[0] for route in plugin.context.registered_web_apis} == {
         "/astrbot_plugin_ovenheart/state",
         "/astrbot_plugin_ovenheart/library",
+        "/astrbot_plugin_ovenheart/tools",
         "/astrbot_plugin_ovenheart/action",
         "/astrbot_plugin_ovenheart/preview",
         "/astrbot_plugin_ovenheart/preview/model",

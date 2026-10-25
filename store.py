@@ -48,6 +48,30 @@ class Store:
                 await task
                 raise
 
+    async def read(self, operation: str, *args):
+        """Panel-only consistent WAL reads never queue behind the write lock."""
+        if operation not in {"state", "library", "auxiliary_usage", "scope_profile"}:
+            raise ValueError("Unsupported Panel read")
+        if operation == "auxiliary_usage" and args:
+            raise ValueError("Usage writes must use a transaction")
+        return await asyncio.to_thread(self._read, operation, args)
+
+    def _read(self, operation, args):
+        connection = sqlite3.connect(
+            self.path.as_uri() + "?mode=ro", uri=True, timeout=2
+        )
+        connection.row_factory = sqlite3.Row
+        try:
+            connection.execute("PRAGMA query_only=ON")
+            connection.execute("BEGIN")
+            return getattr(self, operation)(connection, *args)
+        finally:
+            connection.close()
+
+    def scope_profile(self, db, scope):
+        row = db.execute("SELECT * FROM scopes WHERE id=?", (scope,)).fetchone()
+        return dict(row) | {"profile": json.loads(row["profile"])} if row else None
+
     def _transaction(self, operation: str, args: tuple):
         """Open, commit or roll back, and close one database transaction.
 
@@ -108,6 +132,7 @@ class Store:
                 reply_context TEXT NOT NULL DEFAULT '{}', UNIQUE(scope, source_id)
             );
             CREATE INDEX IF NOT EXISTS messages_pending ON messages(scope, consumed, id);
+            CREATE INDEX IF NOT EXISTS messages_pending_sender ON messages(scope, consumed, sender);
             CREATE TABLE IF NOT EXISTS traits (
                 id INTEGER PRIMARY KEY, scope TEXT NOT NULL, kind TEXT NOT NULL,
                 situation TEXT NOT NULL, content TEXT NOT NULL, confidence REAL NOT NULL,
@@ -689,7 +714,13 @@ class Store:
         return cursor.rowcount == 1
 
     def state(
-        self, db, scope=None, target_senders=None, blocked_senders=None, shared=False
+        self,
+        db,
+        scope=None,
+        target_senders=None,
+        blocked_senders=None,
+        shared=False,
+        view="full",
     ):
         """Load the bounded dashboard state or one scope's detail.
 
@@ -733,6 +764,8 @@ class Store:
         common = next(item for item in scopes if item["id"] == SHARED_SCOPE)
         all_scopes = scopes
         scopes = [item for item in scopes if item["id"] != SHARED_SCOPE]
+        if not scope and view != "full" and scopes:
+            scope = scopes[0]["id"]
         if shared:
             scopes = [item | {"profile": common["profile"]} for item in scopes]
         result = {
@@ -760,22 +793,11 @@ class Store:
             selected = selected | {"profile": common["profile"]}
         if selected:
             result["scope"] = selected
-            result["traits"] = [
-                dict(row)
-                for row in db.execute(
-                    "SELECT * FROM traits WHERE "
-                    + (
-                        "((scope=? AND kind<>'jargon') OR (scope=? AND scope<>? AND kind='jargon'))"
-                        if shared
-                        else "scope=?"
-                    )
-                    + " ORDER BY updated DESC LIMIT 1000",
-                    (trait_scope, scope, SHARED_SCOPE) if shared else (trait_scope,),
-                )
-            ]
-            for trait in result["traits"]:
-                trait["evidence"] = json.loads(trait["evidence"])
-                trait["examples"] = json.loads(trait["examples"])
+            if view not in {"full", "history"}:
+                return result
+        if selected:
+            if view == "full":
+                result["traits"] = self._state_traits(db, scope, trait_scope, shared)
             result["runs"] = [
                 dict(row) | {"review": json.loads(row["review"])}
                 for row in db.execute(
@@ -798,8 +820,8 @@ class Store:
                 )
             ]
             result["decisions"] = [
-                dict(r)
-                for r in db.execute(
+                dict(row)
+                for row in db.execute(
                     "SELECT * FROM decisions WHERE scope=? ORDER BY id DESC LIMIT 30",
                     (scope,),
                 )
@@ -812,6 +834,26 @@ class Store:
                 )
             ]
         return result
+
+    def _state_traits(self, db, scope, trait_scope, shared):
+        """Legacy full-state payload remains available to existing consumers."""
+        traits = [
+            dict(row)
+            for row in db.execute(
+                "SELECT * FROM traits WHERE "
+                + (
+                    "((scope=? AND kind<>'jargon') OR (scope=? AND scope<>? AND kind='jargon'))"
+                    if shared
+                    else "scope=?"
+                )
+                + " ORDER BY updated DESC LIMIT 1000",
+                (trait_scope, scope, SHARED_SCOPE) if shared else (trait_scope,),
+            )
+        ]
+        for trait in traits:
+            trait["evidence"] = json.loads(trait["evidence"])
+            trait["examples"] = json.loads(trait["examples"])
+        return traits
 
     def library(
         self, db, scope="all", kind="all", status="pending", offset=0, review="all"

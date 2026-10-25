@@ -33,39 +33,48 @@ function notify(message, error = false) {
   $("#notice").dataset.error = String(error);
 }
 
+const readRequests = new Map();
+const viewCache = new Map();
+const localOperations = new Set();
+let loadVersion = 0, cacheEpoch = 0, editVersion = 0, pollTimer, pollErrors = 0;
+const viewKey = () => JSON.stringify([selectedScope, tab, libraryScope, category, status, libraryOffset, reviewFilter]);
+const viewName = () => ["library", "prompts"].includes(tab) ? "summary" : tab;
+
+function deadline(promise, milliseconds, message) {
+  let timer;
+  return Promise.race([promise, new Promise((_, reject) => { timer = setTimeout(() => reject(new Error(message)), milliseconds); })]).finally(() => clearTimeout(timer));
+}
+
 async function api(endpoint, body, query = {}) {
-  const response = body === undefined ? await bridge.apiGet(endpoint, endpoint === "state" ? {scope:selectedScope} : query) : await bridge.apiPost(endpoint, body);
+  const params = endpoint === "state" ? {scope:selectedScope, ...query} : query;
+  let promise;
+  if (body === undefined) {
+    const key = JSON.stringify([cacheEpoch, endpoint, params]);
+    promise = readRequests.get(key);
+    if (!promise) {
+      promise = Promise.resolve(bridge.apiGet(endpoint, params)).finally(() => { if (readRequests.get(key) === promise) readRequests.delete(key); });
+      readRequests.set(key, promise);
+    }
+  } else promise = bridge.apiPost(endpoint, body);
+  const response = body !== undefined && !["preview", "preview/model"].includes(endpoint)
+    ? await promise // An uncertain write is never silently retried.
+    : await deadline(promise, endpoint === "preview/model" ? 100000 : 15000, "读取数据超时，当前页面仍可操作；可切换页面或稍后刷新。");
   if (response?.status === "error") throw new Error(response.message || "请求失败，请刷新页面后重试。");
   return response?.status === "ok" ? response.data : response;
 }
 
-async function load(renderContent = true) {
-  const previousSettingsRevision = data?.settings_revision;
-  const previousPromptsRevision = data?.prompts?.revision;
-  const scopeAtStart = selectedScope;
-  const viewAtStart = JSON.stringify([tab, libraryScope, category, status, libraryOffset, reviewFilter]);
-  const next = await api("state");
-  if (scopeAtStart !== selectedScope || viewAtStart !== JSON.stringify([tab, libraryScope, category, status, libraryOffset, reviewFilter])) return;
-  if (tab === "library") {
-    next.library = await api("library", undefined, {scope:libraryScope, kind:category, status, offset:libraryOffset, review:reviewFilter});
-    if (scopeAtStart !== selectedScope || viewAtStart !== JSON.stringify([tab, libraryScope, category, status, libraryOffset, reviewFilter])) return;
-    libraryOffset = next.library.offset;
-  }
-  if (tab === "prompts") {
-    next.prompts = await api("prompts");
-    if (scopeAtStart !== selectedScope || viewAtStart !== JSON.stringify([tab, libraryScope, category, status, libraryOffset, reviewFilter])) return;
-  }
-  data = next;
-  if (!selectedScope && data.scopes.length) {
-    selectedScope = data.scopes[0].id;
-    const library = data.library;
-    data = await api("state");
-    data.library = library;
-  }
+function invalidateViews() { cacheEpoch++; loadVersion++; viewCache.clear(); }
+function writeContext() { return {key:viewKey(), edit:editVersion}; }
+async function afterWrite(context) {
+  invalidateViews();
+  if (context.key === viewKey() && context.edit === editVersion) dirty = false;
+  load(!dirty).catch(error => notify(`修改已提交，但本页刷新失败：${error.message}。可稍后点击刷新。`, true));
+}
+function updateHeader() {
   const scopeSelect = $("#scope");
   scopeSelect.innerHTML = data.scopes.length ? data.scopes.map(s => `<option value="${escape(s.id)}">${escape(s.label)} / ${escape(s.persona === "[%None]" ? "未设置人格" : s.persona)}</option>`).join("") : '<option value="">尚无学习会话</option>';
   scopeSelect.value = selectedScope;
-  scopeSelect.disabled = !data.scopes.length || pending;
+  scopeSelect.disabled = !data.scopes.length;
   $("#scope-label").textContent = data.settings.session_isolation ? "会话与人格" : "学习素材来源";
   $("#session-status").textContent = data.scope ? `${data.scope.pending} 条待学素材，${data.active_count ?? data.traits.filter(t => t.status === "active").length} 条当前可用习惯已生效` : "收到有效聊天消息后，会话将自动出现在这里。";
   $("#memory-status").textContent = data.settings.memory_enabled ? data.memory.message : "记忆联动已关闭";
@@ -74,8 +83,51 @@ async function load(renderContent = true) {
   $("#learn").disabled = pending || !data.scope || !!data.busy.length || !data.settings.enabled || !data.settings.learning_enabled || !!data.learning_blocked || !data.scope.profile.learning_enabled || data.scope.pending < data.settings.min_evidence;
   $("#learn").title = data.learning_blocked ? "当前群聊在学习黑名单中；聊天与已有习惯继续生效" : "";
   $("#learn").textContent = busy ? "正在学习…" : "开始学习";
-  const promptsChanged = tab === "prompts" && data.prompts?.revision !== previousPromptsRevision;
+ }
+function rememberView() {
+  viewCache.delete(viewKey());
+  viewCache.set(viewKey(), {data, at:Date.now()});
+  while (viewCache.size > 8) viewCache.delete(viewCache.keys().next().value);
+}
+function showView() {
+  const cached = viewCache.get(viewKey());
+  if (cached) data = cached.data;
+  if (cached || data && ["profile", "settings"].includes(tab) && (!selectedScope || data.scope?.id === selectedScope)) {
+    render();
+    updateHeader();
+  } else {
+    renderNavigation();
+    $("#content").innerHTML = empty("正在读取本页", "可以继续切换页面，数据就绪后会在此显示。");
+  }
+}
+
+async function load(renderContent = true) {
+  const version = ++loadVersion, key = viewKey(), scopeAtStart = selectedScope;
+  const pageAtStart = tab, view = renderContent ? viewName() : "summary";
+  const previousSettingsRevision = data?.settings_revision;
+  const previousPromptsRevision = data?.prompts?.revision;
+  const detail = renderContent && pageAtStart === "library"
+    ? api("library", undefined, {scope:libraryScope, kind:category, status, offset:libraryOffset, review:reviewFilter})
+    : renderContent && pageAtStart === "prompts" ? api("prompts") : Promise.resolve(null);
+  const current = () => version === loadVersion && key === viewKey();
+  const [next, extra] = await Promise.all([api("state", undefined, {scope:scopeAtStart, view}), detail]).catch(error => { if (!current()) return [null, null]; throw error; });
+  if (!current() || !next) return;
+  const previous = data;
+  const preserved = view === "summary" && previous?.scope?.id === next.scope?.id
+    ? Object.fromEntries(["traits", "runs", "revisions", "applications", "decisions", "turn_traces"].filter(k => k in previous).map(k => [k, previous[k]])) : {};
+  data = {...previous, ...next, ...preserved};
+  if (!selectedScope && data.scope) selectedScope = data.scope.id;
+  if (pageAtStart === "library" && extra) { data.library = extra; libraryOffset = extra.offset; }
+  if (pageAtStart === "prompts" && extra) data.prompts = extra;
+  if (pageAtStart === "prompts" && !extra && next.prompts_revision && next.prompts_revision !== previousPromptsRevision) {
+    const prompts = await api("prompts");
+    if (version !== loadVersion || tab !== pageAtStart || selectedScope !== data.scope?.id && data.scope) return;
+    data.prompts = prompts;
+  }
+  updateHeader();
+  const promptsChanged = pageAtStart === "prompts" && data.prompts?.revision !== previousPromptsRevision;
   if (!dirty && (renderContent || (tab === "settings" && data.settings_revision !== previousSettingsRevision) || promptsChanged)) render();
+  rememberView();
 }
 
 function empty(title, description) {
@@ -91,10 +143,15 @@ function field(name, label, value, help, options = {}) {
   return `<div class="field"><label for="field-${name}">${label}</label>${options.type === "number" ? `<input id="field-${name}" name="${name}" type="number" min="${options.min}" max="${options.max}" step="${options.step || 1}" value="${escape(value)}" ${hint} required>` : options.type === "text" ? `<input id="field-${name}" name="${name}" value="${escape(value)}" ${hint} maxlength="256">` : `<textarea id="field-${name}" name="${name}" ${hint} maxlength="${options.maxlength || 1000}" ${options.large ? 'class="large"' : ""}>${escape(value)}</textarea>`}${help ? `<small id="${name}-help">${help}</small>` : ""}</div>`;
 }
 
-function render() {
+function renderNavigation() {
   for (const button of document.querySelectorAll("[data-tab]")) {
     if (button.dataset.tab === tab) button.setAttribute("aria-current", "page"); else button.removeAttribute("aria-current");
   }
+}
+
+function render() {
+  renderNavigation();
+  if (!data) return;
   if (!data.scope && tab !== "settings" && tab !== "library" && tab !== "prompts") {
     $("#content").innerHTML = empty("从一段真实的对话开始", "在已启用的 AstrBot 会话中聊几句，工坊会自动积累文字素材。也可以先打开学习设置，选择学习对象与生效方式。");
     return;
@@ -122,10 +179,12 @@ function renderProfile() {
     await mutate("profile", {identity:form.identity.value, reply_style:form.reply_style.value, behavior:form.behavior.value, learning_enabled:form.learning_enabled.checked, apply_enabled:form.apply_enabled.checked}, profileScope);
   });
   $("#preview-form").addEventListener("submit", event => guarded(async () => {
-    const result = await api("preview", {scope:selectedScope, query:$("#preview-query").value});
+    const scope = selectedScope, output = $("#preview-output");
+    const result = await api("preview", {scope, query:$("#preview-query").value});
+    if (tab !== "profile" || selectedScope !== scope || $("#preview-output") !== output) return;
     $("#preview-output").hidden = false;
     $("#preview-output").textContent = `${result.retrieval || ""}\n${(result.selected || []).map(t => `#${t.id} ${t.reason}`).join("；")}\n\n${result.guidance || "当前没有生效的补充内容。可审核学习结果，或检查全局与当前会话的应用开关。"}`.trim();
-  }, event));
+  }, event, {local:"preview", selector:"#preview-form button[type=submit]"}));
   $("#model-preview").onclick = event => guarded(async () => {
     const scope = selectedScope;
     const query = $("#preview-query").value.trim();
@@ -139,7 +198,8 @@ function renderProfile() {
       $("#model-preview-meta").textContent = `模型示例 · 用时 ${result.seconds} 秒 · ${result.selected_ids.length ? "表达参考 " + result.selected_ids.map(id => "#" + id).join("、") : "沿用人格底稿"}。${result.retrieval || ""}`;
       $("#model-preview-text").textContent = result.reply;
     } finally { button.textContent = "生成示例回复"; }
-  }, event);
+  }, event, {local:"preview-model", selector:"#model-preview"});
+  if (localOperations.has("preview-model")) { $("#model-preview").disabled = true; $("#model-preview").textContent = "示例正在生成…"; }
 }
 
 function renderLibrary() {
@@ -164,7 +224,7 @@ function renderLibrary() {
     $(selector).onchange = async event => {
       const next = event.target.value; event.target.value = current;
       if (dirty && !await confirmAction("切换筛选会放弃未保存的编辑，继续？")) return;
-      await guarded(async () => {
+      await readView(async () => {
         const previous = [libraryScope, category, status, libraryOffset, reviewFilter];
         dirty = false;
         if (selector === "#library-scope") libraryScope = next;
@@ -198,10 +258,11 @@ function renderLibrary() {
     const unchecked = entries.filter(e => traits.find(t => t.id === e.id)?.review?.approved !== true).length;
     const message = `${targetStatus === "active" ? "批准生效" : "拒绝学习"}勾选的 ${entries.length} 条？${targetStatus === "active" && unchecked ? `其中 ${unchecked} 条自检存疑或无匹配自检，本次批准将覆盖该判断。` : ""}${dirty ? "未保存的编辑不会一并保存。" : ""}可在所属会话的历史版本中恢复。`;
     if (!await confirmAction(message)) return;
+    const context = writeContext();
     await guarded(async () => {
       const result = await api("action", {action:"review_batch", payload:{entries, status:targetStatus}});
-      librarySelection.clear(); dirty = false;
-      notify(result.message); await load();
+      for (const entry of entries) if (librarySelection.get(entry.id)?.updated === entry.updated) librarySelection.delete(entry.id);
+      notify(result.message); await afterWrite(context);
     });
   };
   updateSelection();
@@ -209,7 +270,7 @@ function renderLibrary() {
     $("#content").insertAdjacentHTML("beforeend", `<div class="actions library-pages"><button id="library-prev" ${library.offset === 0 ? "disabled" : ""}>上一页</button><span class="muted">第 ${library.offset / 100 + 1} / ${Math.ceil(library.total / 100)} 页 · 每页最多 100 条</span><button id="library-next" ${library.offset + 100 >= library.total ? "disabled" : ""}>下一页</button></div>`);
     for (const [id, step] of [["#library-prev", -100], ["#library-next", 100]]) $(id).onclick = async () => {
       if (dirty && !await confirmAction("翻页会放弃未保存的编辑，继续？")) return;
-      await guarded(async () => {
+      await readView(async () => {
         const previous = libraryOffset; dirty = false; libraryOffset += step;
         try { await load(); }
         catch (error) { libraryOffset = previous; throw error; }
@@ -361,9 +422,9 @@ function renderAutonomousTools(settings) {
   refresh.onclick = async () => {
     refresh.disabled = true;
     try {
-      const next = await api("state");
+      const next = await api("tools");
       if ($("#autonomous-tool-picker") !== container) return;
-      inventory = next.tools || {items:[], message:"暂时无法读取工具列表，已选名称仍保留。"};
+      inventory = (next.items ? next : next.tools) || {items:[], message:"暂时无法读取工具列表，已选名称仍保留。"};
       renderChoices();
     } catch (error) { notify(error.message || "工具列表刷新失败，已选名称仍保留。", true); }
     finally { refresh.disabled = false; }
@@ -413,50 +474,95 @@ function renderPrompts() {
 }
 
 async function savePrompts(patch, revision) {
+  const context = writeContext();
   return guarded(async () => {
     const result = await api("prompts/save", {prompts:patch, ...(revision !== undefined ? {revision} : {})});
     notify(result.message || "提示词已保存。");
-    dirty = false;
-    await load();
+    await afterWrite(context);
   });
 }
-async function guarded(work, event) {
+async function readView(work) {
+  try { await work(); } catch (error) { notify(error.message || "本页读取失败，请刷新重试。", true); }
+}
+
+async function guarded(work, event, options = {}) {
   event?.preventDefault();
-  if (pending) return;
-  pending = true;
-  const controls = [...document.querySelectorAll("button, select, input, textarea")].filter(el => !el.disabled);
+  if (options.local ? localOperations.has(options.local) : pending) {
+    if (!options.local) notify("已有保存请求正在处理，仍可切换页面浏览。");
+    return;
+  }
+  if (options.local) localOperations.add(options.local); else { pending = true; notify("正在提交修改，可以继续浏览其他页面。"); }
+  const controls = [...document.querySelectorAll(options.selector || "#content form input, #content form textarea, #content form select, #content button")].filter(el => !el.disabled);
   controls.forEach(el => el.disabled = true);
   try { await work(); }
   catch (error) { notify(error.message || "请求失败，请检查 AstrBot 连接。", true); }
-  finally { pending = false; controls.forEach(el => { if (el.isConnected) el.disabled = false; }); if (data) await load(false).catch(() => {}); }
+  finally {
+    if (options.local) localOperations.delete(options.local); else pending = false;
+    controls.forEach(el => { if (el.isConnected) el.disabled = false; });
+    if (options.local === "preview-model" && tab === "profile") {
+      const button = $("#model-preview");
+      button.disabled = !selectedScope || selectedScope === data?.shared_scope?.id;
+      button.textContent = "生成示例回复";
+    }
+    if (data?.scopes && data?.busy && data?.settings) updateHeader();
+  }
 }
 
 async function mutate(action, payload = {}, scope = selectedScope, settingsRevision) {
+  const context = writeContext();
   return guarded(async () => {
     const result = await api("action", {action, scope, payload, ...(action === "profile" ? {effect_scope:scope} : {}), ...(settingsRevision !== undefined ? {settings_revision:settingsRevision} : {})});
     notify(result.message || "已保存。");
-    dirty = false;
-    await load();
+    await afterWrite(context);
+    if (action === "learn") schedulePoll(1500);
   });
 }
 
-$("#content").addEventListener("input", event => { if (event.target.id !== "tool-search" && event.target.closest("form") && event.target.closest("form").id !== "preview-form") dirty = true; });
-$("#content").addEventListener("change", event => { if (event.target.id !== "tool-search" && event.target.closest("form")) dirty = true; });
+function markDirty(event) {
+  if (event.target.id !== "tool-search" && event.target.closest("form") && event.target.closest("form").id !== "preview-form") { dirty = true; editVersion++; }
+}
+$("#content").addEventListener("input", markDirty);
+$("#content").addEventListener("change", markDirty);
+async function navigateView() {
+  const cached = viewCache.get(viewKey());
+  showView();
+  if (cached && Date.now() - cached.at < 30000) { loadVersion++; return; }
+  try { await load(); } catch (error) { notify(error.message || "本页数据读取失败，请点击刷新重试。", true); }
+}
 $("#scope").onchange = async event => {
   const next = event.target.value; event.target.value = selectedScope;
   if (dirty && !await confirmAction("切换会话会放弃未保存的编辑，继续？")) return;
-  selectedScope = next; selectedTrait = null; dirty = false; guarded(() => load());
+  selectedScope = next; selectedTrait = null; dirty = false; await navigateView();
 };
-$("#refresh").onclick = async () => { if (!dirty || await confirmAction("刷新会放弃未保存的编辑，继续？")) { dirty = false; guarded(() => load()); } };
-$("#learn").onclick = async () => { if (!dirty || await confirmAction("开始学习会放弃当前未保存的编辑，继续？")) mutate("learn"); };
+$("#refresh").onclick = async () => {
+  if (dirty && !await confirmAction("刷新会放弃未保存的编辑，继续？")) return;
+  dirty = false; invalidateViews();
+  try { await load(); } catch (error) { notify(error.message, true); }
+};
+$("#learn").onclick = async () => { if (!dirty || await confirmAction("开始学习会放弃当前未保存的编辑，继续？")) await mutate("learn"); };
 for (const button of document.querySelectorAll("[data-tab]")) button.onclick = async () => {
   if (dirty && !await confirmAction("离开此页会放弃未保存的编辑，继续？")) return;
-  dirty = false; tab = button.dataset.tab; if (tab === "library" || tab === "prompts") await guarded(() => load()); else render();
+  dirty = false; tab = button.dataset.tab; await navigateView();
 };
 window.addEventListener("beforeunload", event => { if (dirty) { event.preventDefault(); event.returnValue = ""; } });
 
+function schedulePoll(delay) {
+  clearTimeout(pollTimer);
+  if (!bridge || document.hidden) return;
+  const interval = delay ?? (data?.busy?.length ? 8000 : 30000) * Math.min(4, 2 ** pollErrors);
+  pollTimer = setTimeout(async () => {
+    if (pending || polling || document.hidden) { schedulePoll(); return; }
+    polling = true;
+    try {
+      await load(!data || !dirty && (tab === "history" || tab === "library"));
+      pollErrors = 0;
+    } catch (error) { pollErrors = Math.min(2, pollErrors + 1); notify(error.message || "连接已中断，请刷新。", true); }
+    finally { polling = false; schedulePoll(); }
+  }, interval);
+}
+document.addEventListener("visibilitychange", () => { if (document.hidden) clearTimeout(pollTimer); else schedulePoll(0); });
+
 async function start() {
-  // The host injects its bridge script at the end of the entry document.
   bridge = window.AstrBotPluginView || window.AstrBotPluginPage;
   if (!bridge) {
     notify("未连接 AstrBot Panel。请安装并启用插件，从 Panel 的插件页面打开「人格工坊」。", true);
@@ -465,17 +571,11 @@ async function start() {
     return;
   }
   try {
-    const context = await bridge.ready();
+    const context = await deadline(bridge.ready(), 15000, "等待 AstrBot Panel 连接超时，请刷新重试。");
     const theme = value => { document.documentElement.dataset.theme = value?.isDark ? "dark" : "light"; };
     theme(context); bridge.onContext?.(theme);
     await load();
   } catch (error) { notify(error.message || "无法连接 AstrBot，请刷新 Panel 后重试。", true); }
-  setInterval(async () => {
-    if (pending || polling || document.hidden || !data) return;
-    polling = true;
-    try { await load(!dirty && (tab === "history" || tab === "library" || !!data.busy.length)); }
-    catch (error) { notify(error.message || "连接已中断，请刷新。", true); }
-    finally { polling = false; }
-  }, 5000);
+  schedulePoll();
 }
 start();

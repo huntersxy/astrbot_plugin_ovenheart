@@ -55,6 +55,7 @@ function fixture() {
     document:{querySelector:element, querySelectorAll:() => [], addEventListener() {}},
     window:{addEventListener() {}},
     setInterval() {},
+    setTimeout, clearTimeout,
     console,
     FormData: class { getAll() { return []; } },
   });

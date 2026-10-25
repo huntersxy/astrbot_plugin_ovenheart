@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import sqlite3
 import time
 
 from astrbot.api import logger
@@ -33,6 +34,7 @@ class PageAPI:
         for route, handler, method in (
             ("state", self.state, "GET"),
             ("library", self.library, "GET"),
+            ("tools", self.tools, "GET"),
             ("action", self.action, "POST"),
             ("preview", self.preview, "POST"),
             ("preview/model", self.model_preview, "POST"),
@@ -54,13 +56,71 @@ class PageAPI:
         """
         if not self.plugin.ready:
             return {"status": "error", "message": "人格工坊正在初始化，请稍后刷新。"}
-        state = await self.plugin.store.call(
+        try:
+            return await self.state_data()
+        except sqlite3.Error:
+            return {
+                "status": "error",
+                "message": "学习数据库暂忙或读取失败，请稍后刷新；当前页面仍可继续浏览。",
+            }
+
+    async def state_data(self):
+        view = request.query.get("view", "full")
+        if view not in {"full", "profile", "settings", "summary", "history"}:
+            return {"status": "error", "message": "未知的工坊页面，请刷新后重试。"}
+        state = await self.plugin.store.read(
             "state",
             request.query.get("scope"),
             self.plugin.settings["target_senders"],
             self.plugin.settings["blocked_senders"],
             not self.plugin.settings["session_isolation"],
+            view,
         )
+        state.update(
+            settings=self.plugin.settings,
+            settings_revision=self.plugin.settings_revision,
+            prompts_revision=self.plugin.prompts_revision,
+            memory=self.plugin.memory.status(),
+            group_context=self.plugin.group_context.status(),
+            conversation=self.plugin.conversation.status(),
+            oven_multi=self.plugin.oven_multi.status(),
+            jev=self.plugin.jev.status(),
+            outgoing_media={
+                "meme_bound": self.plugin.outgoing_media._owner is not None
+            },
+            busy=list(self.plugin.busy),
+            learning_blocked=learning_blocked(
+                (state.get("scope") or {}).get("umo"), self.plugin.settings
+            ),
+            retrieval=self.plugin.retriever.status.get(
+                (state.get("scope") or {}).get("id")
+                if self.plugin.settings["session_isolation"]
+                else SHARED_SCOPE,
+                {
+                    "mode": "idle",
+                    "message": "真实回复后显示检索状态；免费预览使用文字相关性。",
+                },
+            ),
+        )
+        if view in {"full", "settings"}:
+            state["tools"] = self.tool_inventory()
+        if view in {"full", "history"}:
+            state["auxiliary_usage"] = {
+                "hour_buckets": 24,
+                "rows": await self.plugin.store.read("auxiliary_usage"),
+                "pending": len(self.plugin.auxiliary.pending),
+                "dropped": self.plugin.auxiliary.dropped,
+                "selector_backoff_skips": self.plugin.retriever.selector_backoff_skips,
+            }
+        return {"status": "ok", "data": state}
+
+    async def tools(self):
+        if not self.plugin.ready:
+            return {"status": "error", "message": "人格工坊正在初始化，请稍后刷新。"}
+        return {"status": "ok", "data": self.tool_inventory()}
+
+    def tool_inventory(self):
+        """Read local registered tools only on the settings surface or explicit refresh."""
         tools = {
             "available": False,
             "items": [],
@@ -98,41 +158,7 @@ class PageAPI:
             logger.debug(
                 "OvenHeart tool inventory unavailable (%s)", type(exc).__name__
             )
-        state.update(
-            settings=self.plugin.settings,
-            settings_revision=self.plugin.settings_revision,
-            tools=tools,
-            prompts_revision=self.plugin.prompts_revision,
-            memory=self.plugin.memory.status(),
-            group_context=self.plugin.group_context.status(),
-            conversation=self.plugin.conversation.status(),
-            oven_multi=self.plugin.oven_multi.status(),
-            jev=self.plugin.jev.status(),
-            outgoing_media={
-                "meme_bound": self.plugin.outgoing_media._owner is not None
-            },
-            busy=list(self.plugin.busy),
-            learning_blocked=learning_blocked(
-                (state.get("scope") or {}).get("umo"), self.plugin.settings
-            ),
-            auxiliary_usage={
-                "hour_buckets": 24,
-                "rows": await self.plugin.store.call("auxiliary_usage"),
-                "pending": len(self.plugin.auxiliary.pending),
-                "dropped": self.plugin.auxiliary.dropped,
-                "selector_backoff_skips": self.plugin.retriever.selector_backoff_skips,
-            },
-            retrieval=self.plugin.retriever.status.get(
-                request.query.get("scope")
-                if self.plugin.settings["session_isolation"]
-                else SHARED_SCOPE,
-                {
-                    "mode": "idle",
-                    "message": "真实回复后显示检索状态；免费预览使用文字相关性。",
-                },
-            ),
-        )
-        return {"status": "ok", "data": state}
+        return tools
 
     async def prompt_list(self):
         """Return every template with its defaults, placeholders and overrides.
@@ -197,7 +223,7 @@ class PageAPI:
         if not self.plugin.ready:
             return {"status": "error", "message": "人格工坊正在初始化，请稍后刷新。"}
         try:
-            result = await self.plugin.store.call(
+            result = await self.plugin.store.read(
                 "library",
                 request.query.get("scope", "all"),
                 request.query.get("kind", "all"),
@@ -208,6 +234,11 @@ class PageAPI:
             return {"status": "ok", "data": result}
         except (ValueError, TypeError):
             return {"status": "error", "message": "学习库筛选无效，请刷新后重试。"}
+        except sqlite3.Error:
+            return {
+                "status": "error",
+                "message": "学习库暂时无法读取，请稍后刷新或切换页面重试。",
+            }
 
     async def action(self):
         """Validate and execute settings, review, learning or restoration actions.
@@ -269,8 +300,8 @@ class PageAPI:
                 raise ValueError("人格作用范围已改变，请刷新底稿后重新编辑。")
             if not isinstance(scope, str) or len(scope) != 24:
                 raise ValueError("请先选择会话。")
-            state = await self.plugin.store.call("state", scope)
-            if not state["scope"]:
+            state = await self.plugin.store.read("scope_profile", scope)
+            if not state:
                 raise ValueError("当前会话不存在。")
             if operation == "learn":
                 if scope == SHARED_SCOPE:
@@ -475,8 +506,7 @@ class PageAPI:
             revision = self.plugin.prompts_revision
             if not settings["enabled"] or not settings["apply_enabled"]:
                 raise ModelPreviewError("人格应用已关闭，请先启用后再生成示例。")
-            source = await self.plugin.store.call("state", scope)
-            source = source["scope"]
+            source = await self.plugin.store.read("scope_profile", scope)
             if source is None or scope == SHARED_SCOPE:
                 raise ModelPreviewError(
                     "请先在顶部选择真实素材来源会话，以确定宿主人格和聊天模型。"
