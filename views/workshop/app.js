@@ -463,7 +463,8 @@ function renderSettings() {
       ${field("allowed_sessions", "允许学习与应用的会话", s.allowed_sessions.join("\n"), "每行一个完整 unified_msg_origin，可通过 AstrBot 的 /sid 获取。留空允许全部已启用会话。", {maxlength:32000})}
     </section>
     <section class="settings-group"><h2>记忆与表达</h2><p>记忆帮助理解来龙去脉；人格工坊只学习有原始聊天证据的习惯。</p>
-      ${switchField("memory_enabled", "参考 LivingMemory 长期记忆", data.memory.message, s.memory_enabled)}
+      ${switchField("memory_enabled", "参考长期记忆", data.memory.message, s.memory_enabled)}
+      ${switchField("native_memory_enabled", "A_memorix 通用记忆", "保存有真实来源的段落和关系，按会话和人格隔离；使用原版 BM25、图谱与双路检索，配置嵌入模型后启用双向量池。现有 LivingMemory 回忆继续保留。", s.native_memory_enabled)}
       ${switchField("person_memory_enabled", "人物记忆与画像", "按真实成员、会话和人格保存有原文来源的事实；冲突保留待更正，不确定信息不当作稳定了解。与 LivingMemory 回忆召回分别开关。暂停学习时停止更新。", s.person_memory_enabled)}
       <div class="number-fields">${field("person_memory_min_messages", "人物记忆最少新发言", s.person_memory_min_messages ?? 6, "条；同一成员的新素材达到门槛后后台提取", {type:"number",min:1,max:30})}${field("person_memory_interval", "人物记忆更新间隔", s.person_memory_interval ?? 600, "秒；每位成员的自动提取间隔", {type:"number",min:0,max:86400})}</div>
       ${field("person_memory_provider_id", "人物记忆提取模型 ID", s.person_memory_provider_id ?? "", "留空使用学习模型或当前会话模型。", {type:"text"})}

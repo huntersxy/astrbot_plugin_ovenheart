@@ -23,6 +23,7 @@ DEFAULTS = {
     "interval_seconds": 600,
     "provider_id": "",
     "memory_enabled": True,
+    "native_memory_enabled": True,
     "memory_top_k": 3,
     "person_memory_enabled": True,
     "person_memory_min_messages": 6,

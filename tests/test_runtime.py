@@ -155,6 +155,7 @@ async def plugin(monkeypatch, tmp_path):
             "participation_rhythm": "fixed",
             "planner_mode": "legacy",
             "person_memory_enabled": False,
+            "native_memory_enabled": False,
         },
     )
     await instance.initialize()

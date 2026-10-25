@@ -3,7 +3,7 @@ name = "astrbot-plugin-ovenheart"
 version = "0.67.0"
 description = "Evidence-based personality, language and behavior learning for AstrBot"
 requires-python = ">=3.10"
-dependencies = ["json-repair>=0.60.1,<0.61"]
+dependencies = ["json-repair>=0.60.1,<0.61", "faiss-cpu>=1.11.0", "numpy>=2.2.6", "scipy>=1.7.0", "jieba>=0.42.1"]
 
 [dependency-groups]
 dev = ["pytest>=8", "pytest-asyncio>=0.24", "ruff>=0.15", "fastapi>=0.124", "httpx>=0.28"]

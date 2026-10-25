@@ -82,6 +82,12 @@
     "default": "",
     "hint": "留空使用该会话当前模型；填写 AstrBot 已配置的提供商 ID。"
   },
+  "native_memory_enabled": {
+    "description": "A_memorix 通用记忆",
+    "type": "bool",
+    "default": true,
+    "hint": "按当前会话和人格隔离段落与关系，使用原双路检索、BM25和图谱；配置嵌入模型后使用双向量池。LivingMemory 的旧数据继续保留。"
+  },
   "person_memory_enabled": {
     "description": "人物记忆与画像",
     "type": "bool",

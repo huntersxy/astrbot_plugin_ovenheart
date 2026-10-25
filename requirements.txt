@@ -1,2 +1,6 @@
 # A_memorix profile classification parser, matching the pinned upstream range.
 json-repair>=0.60.1,<0.61
+faiss-cpu>=1.11.0
+numpy>=2.2.6
+scipy>=1.7.0
+jieba>=0.42.1

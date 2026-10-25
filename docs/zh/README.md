@@ -175,3 +175,8 @@ Debug 默认关闭。开启后在 AstrBot INFO 日志搜索 `OvenHeart debug`，
 默认启用 `person_memory_enabled`，使用移植的 A_memorix 事实账本和人物画像服务。按真实成员、会话及人格隔离，自动提取保留原文证据的事实，冲突待明确更正；Planner 与原生回复器共用同一份画像。默认累计六条新发言、每600秒尝试后台更新一次；关闭学习时停止更新，已有事实继续可读。LivingMemory 的已有回忆和数据继续保留。
 
 新增依赖 `json-repair>=0.60.1,<0.61` 随插件 requirements 安装。图谱、情景、中期与图片记忆仍在适配，不能将本阶段当作完整 MaiBot 记忆复刻。范围和验证见[人物记忆设计](../design/person-memory.md)。
+
+
+### 通用记忆（0.67 开发版）
+
+`native_memory_enabled` 接入 A_memorix 原双路检索、BM25、关系图与双向量池。Planner 可保存有真实原文支持的段落和关系，回复器共用该检索；现有 LivingMemory 数据继续保留。嵌入模型沿用 `embedding_provider_id`，未配置或请求失败时使用原稀疏/图通道。新增运行依赖见 requirements；完整SDK内核、自动摘要、情景/图片记忆及通用纠错/遗忘仍在适配。范围与验证见[通用记忆设计](../design/room-memory.md)。

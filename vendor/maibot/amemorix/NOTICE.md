@@ -15,11 +15,18 @@ Modifications by OvenHeart contributors, 2026-10-25:
 - `person_profile_service.py` uses deferred annotations and its automatic graph
   retriever constructor returns `None`. Optional graph/vector retrieval is not
   included in this stage; the native adapter uses the original fact-ledger path.
-- Package initializers avoid eager imports of unported vector/embedding modules.
+- Package initializers avoid eager imports of heavy vector/embedding modules.
 - `host.py` is the AstrBot identity/database/model interface adapter. The native
   fact-only profile path does not require a classification model call; extraction
   uses OvenHeart's metered auxiliary model path.
 
-Remaining graph/vector, episode, image, and general long-term memory runtime work
+Remaining episode, image, and complete general long-term memory runtime work
 is tracked in `docs/design/maibot-parity.md`. Their SQLite tables being present is
 not a claim that those pipelines are integrated.
+
+The next local stage adds the original dual-path retrieval, graph and vector
+stores (37 upstream modules total). Their algorithms are unchanged; logger imports
+are namespaced. `storage/__init__.py` loads heavy modules lazily, and the explicit
+embedding transport in `memory_embedding.py` calls AstrBot's configured provider.
+The complete SDK runtime, ingestion/feedback orchestration and migration remain
+in progress; see `docs/design/room-memory.md`.

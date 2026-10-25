@@ -170,3 +170,6 @@ The development default `planner_mode=maibot` runs a native AstrBot tool loop fo
 
 
 The 0.67 development version also ports A_memorix's actual fact ledger and person-profile service. Person memory is isolated by native member, session and persona; facts retain source quotations and conflicts require an explicit correction. Background extraction defaults to six new messages per person and a 600-second attempt interval. Disabling learning stops updates while existing authorized facts remain readable. Existing LivingMemory data is retained. The new runtime requirement is `json-repair>=0.60.1,<0.61`. General graph/vector, episode and image memory integration remains incomplete; see [person memory](../design/person-memory.md).
+
+
+`native_memory_enabled` additionally integrates A_memorix's original dual-path/BM25/graph retriever and separate paragraph/graph vector pools. Planner can store source-quoted notes and relations; the native replyer shares retrieval. The existing `embedding_provider_id` selects the provider; sparse/graph retrieval remains available without embeddings. Existing LivingMemory data stays in place. Full SDK orchestration, automatic summaries, episode/image memory and general correction/forgetting remain in progress; see [room memory](../design/room-memory.md).

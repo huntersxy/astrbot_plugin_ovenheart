@@ -110,6 +110,81 @@
       "source": "src/A_memorix/core/utils/memory_lifecycle_policy.py",
       "upstream_sha256": "817da99c7f2d73921bc2699eef951dd1674c3bfbc5c7ead5c3c6b25280f6862f",
       "ported_sha256": "817da99c7f2d73921bc2699eef951dd1674c3bfbc5c7ead5c3c6b25280f6862f"
+    },
+    "utils/relation_write_service.py": {
+      "source": "src/A_memorix/core/utils/relation_write_service.py",
+      "upstream_sha256": "b9e928957cbdaafd13663b9d0732751fcf43f7051938f9693e6d231046366eef",
+      "ported_sha256": "cf678b7b7d27c6a708bdd7620aa727cd134f2cc07783c0b1ef09d73e8e8f1c49"
+    },
+    "storage/graph_store.py": {
+      "source": "src/A_memorix/core/storage/graph_store.py",
+      "upstream_sha256": "86cf2c1d7df01fde6d382369912de2989e03784d91ac52dedfbe94471568365e",
+      "ported_sha256": "6a35602c30bbbfe5a8bf5099921ddcf99d8894beb9bdb2f7296df53144249c03"
+    },
+    "storage/format_migration.py": {
+      "source": "src/A_memorix/core/storage/format_migration.py",
+      "upstream_sha256": "4fb027f78d5c907614856002d590f5bbd73ec0ef8e8a1a26bb10018c77ee4a87",
+      "ported_sha256": "bc80ac13d0611573f25fe790ecdd7bf419b94fa86adc411fb67183bb6518cab2"
+    },
+    "utils/io.py": {
+      "source": "src/A_memorix/core/utils/io.py",
+      "upstream_sha256": "00f0d88e13ce22b54e8850aa35815b2cb69207dc14299e57092a23b92663be5e",
+      "ported_sha256": "00f0d88e13ce22b54e8850aa35815b2cb69207dc14299e57092a23b92663be5e"
+    },
+    "storage/vector_store.py": {
+      "source": "src/A_memorix/core/storage/vector_store.py",
+      "upstream_sha256": "1885e86a398049248e7d909501bab75ab055d5be539b0862314ac61e02fe67f4",
+      "ported_sha256": "c7c6d6d42108ed1619ca2f0ab94643c1d06ba9be7c8c40100c4837b8b0cc8e1f"
+    },
+    "utils/quantization.py": {
+      "source": "src/A_memorix/core/utils/quantization.py",
+      "upstream_sha256": "ca916950825983f75721c4e15ba205aec293afb5e471a32284865586e1bbd262",
+      "ported_sha256": "6b78a17545732dfd6469a394ff1a24701709516c140fdba180ca3bbf77de2ddb"
+    },
+    "retrieval/__init__.py": {
+      "source": "src/A_memorix/core/retrieval/__init__.py",
+      "upstream_sha256": "b6c020a6d45d3eea0d5ae8828fc456a624256a2eb0e3a9fd71ba541a9c84e8d1",
+      "ported_sha256": "b6c020a6d45d3eea0d5ae8828fc456a624256a2eb0e3a9fd71ba541a9c84e8d1"
+    },
+    "retrieval/graph_relation_recall.py": {
+      "source": "src/A_memorix/core/retrieval/graph_relation_recall.py",
+      "upstream_sha256": "f17f726136f1281b1356537c4f24c50c5c28e23f0af53f972f58b288b193fbc4",
+      "ported_sha256": "86df2bdb0c29a007e57808c941cd49a705eedbb71b25cec89e84aaecc42c3cf0"
+    },
+    "retrieval/sparse_bm25.py": {
+      "source": "src/A_memorix/core/retrieval/sparse_bm25.py",
+      "upstream_sha256": "f30e69ecdbc0f284466072428e167a4ff4bdfd3a4abf52c116a25091678c0631",
+      "ported_sha256": "1014626c31e73d392f1d0ce99ad322f6c57d1cf2a48530887a5ff51fa01fbdd1"
+    },
+    "retrieval/threshold.py": {
+      "source": "src/A_memorix/core/retrieval/threshold.py",
+      "upstream_sha256": "11ee2412c0209f460c04849402a9226ecf7f07118b14b2c88f35243d458b8917",
+      "ported_sha256": "14f8ef3dfa067943e61515daebf980c602a64dfdd65c89b491081a206c50e9da"
+    },
+    "retrieval/dual_path.py": {
+      "source": "src/A_memorix/core/retrieval/dual_path.py",
+      "upstream_sha256": "69e69d1a581dcca2b682bb8efafdc86ac0287ad3ccbaf51828361393969b1701",
+      "ported_sha256": "2a550e5cae4a3591e79b1c1246727103e83991b9d4dae0ce54e7a403f62a856d"
+    },
+    "retrieval/score_calibration.py": {
+      "source": "src/A_memorix/core/retrieval/score_calibration.py",
+      "upstream_sha256": "311cc1a7db3f81911ddbc755fef3cc4c3b7ff9e86e13ef181f3ffeb7b2de8424",
+      "ported_sha256": "311cc1a7db3f81911ddbc755fef3cc4c3b7ff9e86e13ef181f3ffeb7b2de8424"
+    },
+    "retrieval/posterior_graph.py": {
+      "source": "src/A_memorix/core/retrieval/posterior_graph.py",
+      "upstream_sha256": "0c21dde4349d13102d91fb474f505a2993494b95281e437f16e611b92b465e0e",
+      "ported_sha256": "0c21dde4349d13102d91fb474f505a2993494b95281e437f16e611b92b465e0e"
+    },
+    "retrieval/pagerank.py": {
+      "source": "src/A_memorix/core/retrieval/pagerank.py",
+      "upstream_sha256": "35c31f18df30b01e98363661caeb3e62e9f5e06a9a713750c98e5838750e9211",
+      "ported_sha256": "b6b8b6129151197aeecb9813fd7c67c04d2b9012ddb0bde12448b70d9c95d486"
+    },
+    "utils/matcher.py": {
+      "source": "src/A_memorix/core/utils/matcher.py",
+      "upstream_sha256": "67d661700e8a3b8407359bba118499ca337d3725b24fb14c845aa03174345028",
+      "ported_sha256": "c7e4b30ca08a2549c0cff28e91a2f0f8720e784ec46ea8900fb629da3231ac7f"
     }
   }
 }
