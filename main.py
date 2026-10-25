@@ -23,7 +23,7 @@ from astrbot.api.provider import ProviderRequest
 from astrbot.api.star import Context, Star, StarTools
 from astrbot.core.agent.message import TextPart
 from astrbot.core.agent.tool import ToolSet
-from astrbot.core.message.components import At, Plain, Reply
+from astrbot.core.message.components import At, Image, Plain, Reply
 from astrbot.core.message.message_event_result import ResultContentType
 from astrbot.core.platform.astrbot_message import MessageMember
 from astrbot.core.star.filter.command import CommandFilter
@@ -37,6 +37,7 @@ from .auxiliary import AuxiliaryUsage
 from .conversation import ConversationContext
 from .direct_priority import DirectPriority
 from .group_context import GroupContextBridge
+from .image_memory import ImageMemory
 from .jev import JevService
 from .jev import host_settings as read_host_settings
 from .learning import (
@@ -416,6 +417,7 @@ class PersonaPlugin(Star):
         self.person_memory = PersonMemory(self)
         self.memory_consolidation = MemoryConsolidation(self)
         self.room_memory = RoomMemory(self)
+        self.image_memory = ImageMemory(self)
         self.midterm_memory = MidTermMemory(self)
         self.retriever = HabitRetriever(
             context, self.store, self.prompts, self.auxiliary.generate
@@ -978,7 +980,10 @@ class PersonaPlugin(Star):
             return
         text = event.get_message_str().strip()
         sender = event.get_sender_id()
-        if not text or sender == event.get_self_id():
+        if (
+            not text
+            and not any(isinstance(part, Image) for part in event.get_messages())
+        ) or sender == event.get_self_id():
             return
         if sender in self.settings["blocked_senders"]:
             self.debug("capture_skipped", sender=sender, reason="blocked_sender")
@@ -1001,6 +1006,12 @@ class PersonaPlugin(Star):
         ):
             return
         scope, persona, label = await self.resolve_scope(event)
+        if not text:
+            await self.store.call(
+                "touch_scope", scope, event.unified_msg_origin, persona, label
+            )
+            await self.image_memory.observe(event, scope, persona)
+            return
         source = event_source(event)
         quoted = None
         component = next(
@@ -1079,6 +1090,7 @@ class PersonaPlugin(Star):
         self.room_memory.observe(event, scope)
         await self.person_memory.observe(event, scope, persona)
         await self.memory_consolidation.observe(event, scope, persona)
+        await self.image_memory.observe(event, scope, persona)
         await self.midterm_memory.observe_native(event, scope, persona)
         self.events[scope] = event
         self.speaker_events.pop((scope, sender), None)

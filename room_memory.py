@@ -143,6 +143,8 @@ class RoomState:
         self.kernel = None
         self.metadata = self.graph = None
         self.embedding = None
+        self.image_embedding = None
+        self.image_enabled = False
         self.embedding_key = None
         self.event_ref = lambda: None
         self.identity = None
@@ -160,7 +162,11 @@ class RoomState:
     async def initialize(self):
         from .native_memory_kernel import NativeMemoryKernel
 
-        key = self.embedding.get_embedding_configuration_key()
+        key = (
+            self.embedding.get_embedding_configuration_key(),
+            self.image_enabled,
+            self.image_embedding.key,
+        )
         if self.kernel is not None and self.embedding_key == key:
             return
         if self.kernel is not None:
@@ -175,7 +181,10 @@ class RoomState:
             config={
                 "storage": {"data_dir": str(self.path)},
                 "embedding": {"dimension": self.embedding.dimension or 1024},
-                "image_memory": {"enabled": False},
+                "image_memory": {
+                    "enabled": self.image_enabled,
+                    "preprocess_version": "gif_first_frame_v1",
+                },
                 "retrieval": {
                     "vector_pools": {"mode": "dual"},
                     "relation_vectorization": {"enabled": True},
@@ -186,6 +195,29 @@ class RoomState:
         try:
             self._backup_legacy_storage()
             await kernel.initialize()
+            if kernel.image_memory_runtime is not None:
+                from .image_memory import NativeImageAssetStore, image_job
+
+                kernel.image_memory_runtime.asset_store = NativeImageAssetStore(
+                    self.path / "images/assets",
+                    max_bytes=10 * 1024 * 1024,
+                    max_pixels=40_000_000,
+                )
+                process_jobs = kernel.image_memory_runtime.process_jobs_once
+
+                async def native_image_jobs():
+                    future = asyncio.run_coroutine_threadsafe(
+                        self.image_embedding.allowed(True), self.image_embedding.loop
+                    )
+                    if not await asyncio.wrap_future(future):
+                        return {"claimed": 0, "processed": 0, "status": "paused"}
+                    token = image_job.set(True)
+                    try:
+                        return await process_jobs()
+                    finally:
+                        image_job.reset(token)
+
+                kernel.image_memory_runtime.process_jobs_once = native_image_jobs
         except BaseException:
             kernel._runtime_writer_lock.release()
             raise
@@ -504,6 +536,44 @@ class RoomState:
         saved = await self.write(payload["summary"], evidence, [])
         self.metadata.update_paragraph_metadata(saved["id"], {"midterm": payload})
         return saved
+
+    async def image_ingest(self, image_bytes, source, message_id, index, created, text):
+        return await self.kernel.image_memory(
+            action="ingest",
+            image_bytes=image_bytes,
+            source_kind="chat",
+            external_ref=f"{self.path.name}:{source}:{index}",
+            scope_type="chat",
+            chat_id=self.path.name,
+            message_id=message_id,
+            component_path=str(index),
+            occurred_at=created,
+            user_statement=text,
+        )
+
+    async def image_description(self, occurrence_id, description, sender):
+        return await self.kernel.image_memory(
+            action="observe",
+            occurrence_id=occurrence_id,
+            text=description["description"],
+            source_kind="model_description",
+            confirm_status="inferred",
+            evidence={"is_emoji": description["is_emoji"], "native_sender": sender},
+        )
+
+    async def image_search(self, payload, source, index):
+        result = await self.kernel.image_memory(
+            action="search",
+            image_bytes=payload,
+            chat_ids=[self.path.name],
+            current_external_ref=f"{self.path.name}:{source}:{index}",
+            session_id=self.path.name,
+        )
+        return {
+            key: result[key]
+            for key in ("success", "status", "error", "hits")
+            if key in result
+        }
 
     async def change(self, action, payload, evidence):
         from .native_memory_kernel import correction_evidence
@@ -933,6 +1003,7 @@ class RoomMemory:
                     embedding=state.embedding,
                     session=state.session,
                     generate=native_generate,
+                    image_embedding=state.image_embedding,
                 ),
                 memory_host.bind(
                     None,
@@ -1226,6 +1297,17 @@ class RoomMemory:
             ):
                 state.embedding = embedding
             state.revision = revision
+            from .image_memory import NativeImageEmbedding
+
+            state.image_embedding = NativeImageEmbedding(
+                self.plugin,
+                state,
+                self.plugin.settings["image_embedding_provider_id"],
+                asyncio.get_running_loop(),
+            )
+            state.image_enabled = self.plugin.settings["image_memory_enabled"] and (
+                state.image_enabled or operation.startswith("image_")
+            )
             if event is not None:
                 state.event_ref = weakref.ref(event)
                 self.observe(event, scope)

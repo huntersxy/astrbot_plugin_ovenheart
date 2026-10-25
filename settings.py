@@ -24,6 +24,8 @@ DEFAULTS = {
     "provider_id": "",
     "memory_enabled": True,
     "native_memory_enabled": True,
+    "image_memory_enabled": True,
+    "image_embedding_provider_id": "",
     "memory_summary_enabled": True,
     "memory_feedback_enabled": True,
     "midterm_memory_enabled": True,

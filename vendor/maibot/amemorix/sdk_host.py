@@ -21,8 +21,8 @@ LLMServiceResult = host.LLMServiceResult
 
 
 @contextmanager
-def bind_native(*, data_root, embedding, session=None, generate=None):
-    token = _native.set(SimpleNamespace(data_root=Path(data_root), embedding=embedding, session=session, generate=generate))
+def bind_native(*, data_root, embedding, session=None, generate=None, image_embedding=None):
+    token = _native.set(SimpleNamespace(data_root=Path(data_root), embedding=embedding, session=session, generate=generate, image_embedding=image_embedding))
     try:
         yield
     finally:
@@ -59,6 +59,17 @@ class LLMServiceClient:
     async def generate_response(self, prompt, **options):
         result = await generate(LLMServiceRequest(self.task_name, self.request_type, prompt, options.get("temperature"), options.get("max_tokens")))
         return result.completion
+
+
+class EmbeddingServiceClient:
+    def __init__(self, **_):
+        pass
+
+    async def embed_image(self, image_bytes, **options):
+        adapter = _native.get().image_embedding
+        if adapter is None:
+            raise RuntimeError("当前原生会话没有图片嵌入配置。")
+        return await adapter.embed_image(image_bytes, **options)
 
 
 def load_prompt(name, locale="zh-CN", **values):

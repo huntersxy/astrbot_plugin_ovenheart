@@ -88,6 +88,14 @@
     "default": true,
     "hint": "按当前会话和人格隔离段落与关系，使用原双路检索、BM25和图谱；配置嵌入模型后使用双向量池。LivingMemory 的旧数据继续保留。"
   },
+  "image_memory_enabled": {
+    "type": "bool", "description": "图片记忆", "default": true,
+    "hint": "保存当前会话中有真实来源的图片与描述，支持同图召回及配置后的相似图召回。暂停学习后不再入库。"
+  },
+  "image_embedding_provider_id": {
+    "type": "string", "description": "图片嵌入模型 ID", "default": "",
+    "hint": "使用 AstrBot 原生 DashScope 多模态嵌入提供商，例如 qwen VL embedding；留空仍支持同图记忆，不用文字向量伪装图片相似度。"
+  },
   "person_memory_enabled": {
     "description": "人物记忆与画像",
     "type": "bool",

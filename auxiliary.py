@@ -32,7 +32,7 @@ class AuxiliaryUsage:
         )
         return await Context.tool_loop_agent(context, **kwargs)
 
-    async def measure(self, stage, invoke, kwargs):
+    async def measure(self, stage, invoke, kwargs, *, provider_id=None):
         started = time.monotonic()
         response = None
         status = "error"
@@ -85,7 +85,9 @@ class AuxiliaryUsage:
                 {
                     "bucket": int(time.time() // 3600) * 3600,
                     "stage": stage,
-                    "provider": str(kwargs.get("chat_provider_id") or ""),
+                    "provider": str(
+                        provider_id or kwargs.get("chat_provider_id") or ""
+                    ),
                     "model": str(model or ""),
                     "calls": 1,
                     "successes": int(status == "success"),

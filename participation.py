@@ -627,6 +627,7 @@ class ParticipationController:
                             "self": False,
                             "text": event.get_message_str()[:1200],
                             "reply_to": reply_to,
+                            "media": plugin.conversation.record(event)["media"],
                             "time": event.created_at,
                         },
                     ],
