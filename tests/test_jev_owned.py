@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock
 import pytest
 from aiohttp import web
 
+from astrbot_plugin_ovenheart.jev import participation_state
 from astrbot_plugin_ovenheart.jev_transport import SystemOne, probability
 from tests.test_participation import requests
 from tests.test_runtime import api_call, event, sources
@@ -66,6 +67,94 @@ async def test_target_survives_escaped_input_within_state_budget(participant):
     await participant.jev.participation(event("budget"), "scope", target, [target])
     state = participant.jev.client.evaluate.await_args.args[1]
     assert len(state) <= 1500 and json.loads(state)["TARGET"]["text"]
+
+
+def test_context_preserves_distinct_authors_self_quote_and_subsequent_answer():
+    rows = [
+        {
+            "sequence": 1,
+            "source": "bot-source",
+            "sender_id": "111111",
+            "self": True,
+            "text": "I sent a cat sticker.",
+        },
+        {
+            "sequence": 2,
+            "sender_id": "222222",
+            "text": "Cute sticker!",
+            "reply_to": {
+                "source": "bot-source",
+                "sender_id": "111111",
+                "text": "I sent a cat sticker.",
+            },
+        },
+        {"sequence": 3, "sender_id": "333333", "text": "It was a cat."},
+    ]
+    data = json.loads(participation_state(rows[1], rows, 1500))
+    assert data["TARGET"]["quoted_speaker"] == "bot"
+    assert data["PRIOR_MESSAGES"][0]["speaker"] == "bot"
+    assert data["FOLLOWING_MESSAGES"][0]["speaker"] != data["TARGET"]["speaker"]
+    assert "111111" not in json.dumps(data)
+
+
+def test_noisy_context_keeps_relevant_bot_and_same_member_before_chatter():
+    rows = [
+        {
+            "sequence": 1,
+            "source": "self",
+            "sender_id": "bot",
+            "self": True,
+            "text": "I posted a meme.",
+        }
+    ]
+    rows += [
+        {
+            "sequence": i,
+            "sender_id": f"member-{i}",
+            "text": "unrelated conversation " * 35,
+        }
+        for i in range(2, 22)
+    ]
+    target = {
+        "sequence": 22,
+        "sender_id": "alice",
+        "text": "That meme was great!",
+        "reply_to": {"source": "self", "sender_id": "bot", "text": "I posted a meme."},
+    }
+    data = json.loads(participation_state(target, rows + [target], 1500))
+    assert any(m["speaker"] == "bot" for m in data["PRIOR_MESSAGES"])
+    assert data["TARGET"]["text"] == target["text"]
+
+
+async def test_learning_shares_evidence_and_english_rules_once(plugin):
+    enable(plugin)
+    original = "I prefer short answers when asking for help."
+    traits = [
+        {
+            "kind": "behavior",
+            "situation": "help requests",
+            "content": content,
+            "confidence": 0.8,
+            "evidence": [{"id": 1, "sender": "12345678", "text": original}],
+        }
+        for content in ["answer briefly", "avoid repetition"]
+    ]
+    plugin.jev.client.evaluate = AsyncMock(return_value={"status": "error"})
+    await plugin.jev.learning(
+        traits,
+        {
+            "conversation_context": [
+                {"sender": "12345678", "text": original, "for_evidence_ids": [1]}
+            ]
+        },
+        time.monotonic() + 5,
+    )
+    _, state, questions = plugin.jev.client.evaluate.await_args.args
+    data = json.loads(state)
+    assert state.count(original) == 1 and len(data["EVIDENCE"]) == 1
+    assert data["candidates"][0]["evidence"] == data["candidates"][1]["evidence"]
+    assert len(questions) == 2 and data["REVIEW_RULES"].isascii()
+    assert data["related_context"] == []
 
 
 async def test_learning_only_lowers_confidence_and_preserves_review(plugin):

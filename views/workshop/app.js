@@ -271,6 +271,7 @@ function renderSettings() {
     </section>
     <section class="settings-group"><h2>Jev 辅助判断</h2><p>接口地址、模型名和 API Key 在 AstrBot 原生插件配置的「Jev / TypeSafe 连接」填写。烤箱之心独占主动回复；意图与情绪由 Oven Multi 的独立开关管理。</p>
       <p class="muted">${data.jev?.configured ? "已配置原生连接。" : "尚未填写 API Key；保持原有参与与学习流程。"}</p>
+      <p class="muted">本次加载以来：请求 ${Number(data.jev?.transport?.requests || 0)} 次 · 缓存 ${Number(data.jev?.transport?.cache_hits || 0)} 次 · 并发合并 ${Number(data.jev?.transport?.coalesced || 0)} 次 · 输入 ${Number(data.jev?.transport?.input_tokens || 0)} / 输出 ${Number(data.jev?.transport?.output_tokens || 0)} token。仅统计 Jev 已报告用量。</p>
       ${switchField("jev_enabled", "启用 Jev", "失败或未配置时沿用原流程，固定发送模板为英文，聊天原文保留原语言。", s.jev_enabled)}
       ${switchField("jev_participation_enabled", "主动参与判断", "只核验规划选中的真实目标，可阻止不宜接话的自主回复；不阻止明确 @ 与名字唤醒。", s.jev_participation_enabled)}
       ${switchField("jev_learning_enabled", "学习置信度核验", "按原始证据独立核验，只能降低候选置信度；保留现有自检与人工审核。", s.jev_learning_enabled)}

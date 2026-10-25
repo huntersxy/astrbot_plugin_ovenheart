@@ -51,7 +51,11 @@ for directory, extensions in (
         for p in (root / directory).rglob("*")
         if p.is_file() and p.suffix in extensions
     )
-files.extend(root / path for path in ("docs/zh/README.md", "docs/en/README.md", "docs/design/reply-context.md"))
+files.extend(root / path for path in (
+    "docs/zh/README.md", "docs/en/README.md", "docs/design/reply-context.md",
+    "docs/evaluation/jev-review-2026-10-25.md", "docs/evaluation/jev-cases.json",
+    "docs/evaluation/jev-benchmark-2026-10-25.json",
+))
 files.extend(
     root / "docs/assets" / name
     for name in ("profile.jpg", "library-triage-v0.56-desktop.jpg")

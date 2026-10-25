@@ -1,0 +1,269 @@
+{
+  "synthetic_only": true,
+  "cases": 6,
+  "network_calls": 12,
+  "summary": {
+    "before": {
+      "input_tokens": 3305,
+      "output_tokens": 182,
+      "median_seconds": 0.249,
+      "passed": 8,
+      "judgments": 9
+    },
+    "after": {
+      "input_tokens": 3093,
+      "output_tokens": 182,
+      "median_seconds": 0.248,
+      "passed": 9,
+      "judgments": 9
+    }
+  },
+  "results": [
+    {
+      "case": "meme_followup",
+      "variant": "before",
+      "model": "jev-1.14.0",
+      "usage": {
+        "input_tokens": 449,
+        "output_tokens": 21
+      },
+      "seconds": 0.81,
+      "measurements": {
+        "should_reply": 0.73
+      },
+      "expected": {
+        "should_reply": true
+      },
+      "passed": {
+        "should_reply": true
+      }
+    },
+    {
+      "case": "meme_followup",
+      "variant": "after",
+      "model": "jev-1.14.0",
+      "usage": {
+        "input_tokens": 471,
+        "output_tokens": 21
+      },
+      "seconds": 0.248,
+      "measurements": {
+        "should_reply": 0.78
+      },
+      "expected": {
+        "should_reply": true
+      },
+      "passed": {
+        "should_reply": true
+      }
+    },
+    {
+      "case": "other_recipient",
+      "variant": "before",
+      "model": "jev-1.14.0",
+      "usage": {
+        "input_tokens": 452,
+        "output_tokens": 21
+      },
+      "seconds": 0.249,
+      "measurements": {
+        "should_reply": 0.04
+      },
+      "expected": {
+        "should_reply": false
+      },
+      "passed": {
+        "should_reply": true
+      }
+    },
+    {
+      "case": "other_recipient",
+      "variant": "after",
+      "model": "jev-1.14.0",
+      "usage": {
+        "input_tokens": 466,
+        "output_tokens": 21
+      },
+      "seconds": 0.243,
+      "measurements": {
+        "should_reply": 0.05
+      },
+      "expected": {
+        "should_reply": false
+      },
+      "passed": {
+        "should_reply": true
+      }
+    },
+    {
+      "case": "already_answered",
+      "variant": "before",
+      "model": "jev-1.14.0",
+      "usage": {
+        "input_tokens": 421,
+        "output_tokens": 21
+      },
+      "seconds": 0.234,
+      "measurements": {
+        "should_reply": 0.98
+      },
+      "expected": {
+        "should_reply": false
+      },
+      "passed": {
+        "should_reply": false
+      }
+    },
+    {
+      "case": "already_answered",
+      "variant": "after",
+      "model": "jev-1.14.0",
+      "usage": {
+        "input_tokens": 502,
+        "output_tokens": 21
+      },
+      "seconds": 0.26,
+      "measurements": {
+        "should_reply": 0.5
+      },
+      "expected": {
+        "should_reply": false
+      },
+      "passed": {
+        "should_reply": true
+      }
+    },
+    {
+      "case": "chinese_meme_context",
+      "variant": "before",
+      "model": "jev-1.14.0",
+      "usage": {
+        "input_tokens": 488,
+        "output_tokens": 21
+      },
+      "seconds": 0.25,
+      "measurements": {
+        "should_reply": 0.88
+      },
+      "expected": {
+        "should_reply": true
+      },
+      "passed": {
+        "should_reply": true
+      }
+    },
+    {
+      "case": "chinese_meme_context",
+      "variant": "after",
+      "model": "jev-1.14.0",
+      "usage": {
+        "input_tokens": 515,
+        "output_tokens": 21
+      },
+      "seconds": 0.249,
+      "measurements": {
+        "should_reply": 0.73
+      },
+      "expected": {
+        "should_reply": true
+      },
+      "passed": {
+        "should_reply": true
+      }
+    },
+    {
+      "case": "shared_learning_evidence",
+      "variant": "before",
+      "model": "jev-1.14.0",
+      "usage": {
+        "input_tokens": 865,
+        "output_tokens": 58
+      },
+      "seconds": 0.249,
+      "measurements": {
+        "candidate_1": 0.97,
+        "candidate_2": 0.93,
+        "candidate_3": 0.01
+      },
+      "expected": {
+        "candidate_1": true,
+        "candidate_2": true,
+        "candidate_3": false
+      },
+      "passed": {
+        "candidate_1": true,
+        "candidate_2": true,
+        "candidate_3": true
+      }
+    },
+    {
+      "case": "shared_learning_evidence",
+      "variant": "after",
+      "model": "jev-1.14.0",
+      "usage": {
+        "input_tokens": 600,
+        "output_tokens": 58
+      },
+      "seconds": 0.255,
+      "measurements": {
+        "candidate_1": 0.98,
+        "candidate_2": 0.94,
+        "candidate_3": 0.01
+      },
+      "expected": {
+        "candidate_1": true,
+        "candidate_2": true,
+        "candidate_3": false
+      },
+      "passed": {
+        "candidate_1": true,
+        "candidate_2": true,
+        "candidate_3": true
+      }
+    },
+    {
+      "case": "quoted_speaker_is_not_author_preference",
+      "variant": "before",
+      "model": "jev-1.14.0",
+      "usage": {
+        "input_tokens": 630,
+        "output_tokens": 40
+      },
+      "seconds": 0.251,
+      "measurements": {
+        "candidate_1": 0.02,
+        "candidate_2": 0.01
+      },
+      "expected": {
+        "candidate_1": false,
+        "candidate_2": false
+      },
+      "passed": {
+        "candidate_1": true,
+        "candidate_2": true
+      }
+    },
+    {
+      "case": "quoted_speaker_is_not_author_preference",
+      "variant": "after",
+      "model": "jev-1.14.0",
+      "usage": {
+        "input_tokens": 539,
+        "output_tokens": 40
+      },
+      "seconds": 0.243,
+      "measurements": {
+        "candidate_1": 0.09,
+        "candidate_2": 0.01
+      },
+      "expected": {
+        "candidate_1": false,
+        "candidate_2": false
+      },
+      "passed": {
+        "candidate_1": true,
+        "candidate_2": true
+      }
+    }
+  ]
+}
