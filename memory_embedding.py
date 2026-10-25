@@ -35,6 +35,8 @@ class EmbeddingAPIAdapter:
                             for k in (
                                 "api_base",
                                 "api_base_url",
+                                "embedding_api_base",
+                                "embedding_api_base_url",
                                 "type",
                                 "dimensions",
                                 "embedding_dimensions",

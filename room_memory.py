@@ -164,8 +164,10 @@ class RoomState:
 
         key = (
             self.embedding.get_embedding_configuration_key(),
+            id(self.embedding.provider),
             self.image_enabled,
             self.image_embedding.key,
+            id(self.image_embedding.provider) if self.image_enabled else None,
         )
         if self.kernel is not None and self.embedding_key == key:
             return
@@ -1354,6 +1356,11 @@ class RoomMemory:
         revision = self.plugin.settings_revision
         if self.closing or self.plugin.closing:
             raise ValueError("记忆运行时正在关闭。")
+        embedding = EmbeddingAPIAdapter(
+            self.plugin.context,
+            self.plugin.settings["embedding_provider_id"],
+            asyncio.get_running_loop(),
+        )
         state = self.rooms.get(scope)
         if (
             state is not None
@@ -1361,6 +1368,9 @@ class RoomMemory:
             in ("search", "write", "change", "person_context", "midterm_records")
             and state.operation == "consolidate"
             and state.revision == revision
+            and state.embedding.provider is embedding.provider
+            and state.embedding.get_embedding_configuration_key()
+            == embedding.get_embedding_configuration_key()
         ):
             # Foreground memory tools must finish before the planner replies.
             # Lend the worker at the importer's model boundary, retaining the
@@ -1410,13 +1420,9 @@ class RoomMemory:
                 or revision != self.plugin.settings_revision
             ):
                 raise ValueError("记忆配置已改变，取消排队中的操作。")
-            embedding = EmbeddingAPIAdapter(
-                self.plugin.context,
-                self.plugin.settings["embedding_provider_id"],
-                asyncio.get_running_loop(),
-            )
             if (
                 state.embedding is None
+                or state.embedding.provider is not embedding.provider
                 or state.embedding.get_embedding_configuration_key()
                 != embedding.get_embedding_configuration_key()
             ):

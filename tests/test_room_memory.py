@@ -111,6 +111,46 @@ async def test_scope_isolation_and_missing_source_rejection(memories):
     assert not await memories.room_memory.search(other, scope, persona, "Neko 猫咪")
 
 
+async def test_host_provider_reload_rebinds_client_without_losing_memories(memories):
+    class ReloadableEmbedding(SyntheticEmbedding):
+        closed = False
+        calls = 0
+        provider_config = {
+            "type": "openai_embedding",
+            "embedding_api_base": "https://first.invalid/v1",
+        }
+
+        async def get_embeddings(self, texts):
+            assert not self.closed, "closed provider was reused"
+            self.calls += 1
+            return await super().get_embeddings(texts)
+
+    providers = [ReloadableEmbedding()]
+    memories.settings["embedding_provider_id"] = "semantic"
+    memories.context.get_provider_by_id = lambda name: providers[0]
+    incoming, scope, persona, messages = await material(memories)
+    saved = await memories.room_memory.remember(
+        incoming, scope, persona, note(), messages
+    )
+    state = memories.room_memory.rooms[scope]
+    original = state.kernel
+    fingerprint = state.embedding.get_embedding_configuration_key()
+    providers[0].closed = True
+    providers[0] = ReloadableEmbedding()
+    result = await memories.room_memory.search(incoming, scope, persona, "GATTO")
+    assert any(row["id"] == saved["id"] for row in result)
+    assert state.kernel is not original
+    assert state.embedding.provider is providers[0]
+    assert state.embedding.get_embedding_configuration_key() == fingerprint
+    assert providers[0].calls > 0
+    providers[0].provider_config = providers[0].provider_config | {
+        "embedding_api_base": "https://second.invalid/v1"
+    }
+    await memories.room_memory.search(incoming, scope, persona, "Neko")
+    assert state.embedding.get_embedding_configuration_key() != fingerprint
+    assert state.metadata.get_paragraph(saved["id"])
+
+
 async def test_embedding_failure_preserves_metadata_and_sparse_retrieval(memories):
     class BrokenEmbedding(SyntheticEmbedding):
         async def get_embeddings(self, texts):
