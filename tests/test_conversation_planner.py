@@ -7,10 +7,13 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from astrbot.core.agent.tool import FunctionTool, ToolSet
+from astrbot.core.message.components import At, Image, Plain, Reply
 from astrbot.core.provider.entities import LLMResponse
 from astrbot.core.provider.provider import Provider
 from astrbot.core.star.context import Context
 
+from astrbot_plugin_ovenheart.main import ParticipationFilter
 from tests.test_runtime import event
 
 pytest_plugins = ["tests.test_participation"]
@@ -290,3 +293,289 @@ async def test_revocation_after_send_keeps_the_consumed_quota(native_planner):
     state = await plugin.store.call("state", (await plugin.resolve_scope(incoming))[0])
     assert state["decisions"][0]["outcome"] == "admitted"
     assert provider.text_chat.await_count == 1
+
+
+@pytest.mark.parametrize("mode", ["off", "observe", "auto"])
+@pytest.mark.parametrize("route", ["at", "name"])
+async def test_direct_wake_queries_replies_and_returns_receipt_without_autonomous_gate(
+    native_planner, mode, route
+):
+    plugin, provider = native_planner
+    plugin.settings.update(
+        participation_mode=mode,
+        participation_frequency=0,
+        participation_min_messages=30,
+        participation_debounce=10,
+        participation_hourly_limit=1,
+    )
+    provider.text_chat.side_effect = [
+        action("search_memory", query="上次说的文件"),
+        action("reply", msg_id="1", reply_reference="结合查到的背景回答当前请求。"),
+        action("stop"),
+    ]
+    plugin.memory.recall = AsyncMock(return_value=([], "没有历史"))
+    incoming = event("direct-planner", text="帮我找上次说的文件")
+    if route == "name":
+        plugin.settings.update(mentioned_bot_reply=True, mention_names=["小夏"])
+        incoming.message_str = "小夏，帮我找上次说的文件"
+        incoming.message_obj.message_str = incoming.message_str
+    else:
+        incoming.is_at_or_wake_command = True
+    assert ParticipationFilter().filter(incoming, {})
+    await plugin.prioritize_direct(incoming)
+    replies = plugin.participate(incoming)
+    request = await asyncio.wait_for(anext(replies), 2)
+    plan = incoming.get_extra("ovenheart_decision")
+    assert plan["direct"] and plan["target"]["source"] == "direct-planner"
+    assert request.prompt == incoming.message_str
+    assert request.conversation.cid == "native-conv"
+    # Explicit requests retain the host's authorized tools even when the
+    # autonomous allowlist is empty. The actual SDK request hook still guards it.
+    request.func_tool = ToolSet(
+        [FunctionTool(name="native_task", description="宿主任务", parameters={})]
+    )
+    await plugin.apply_participation(incoming, request)
+    assert request.func_tool.get_tool("native_task")
+    assert not incoming.is_stopped()
+    await send_reply(plugin, incoming, "找到了，上次放在下载目录。")
+    with pytest.raises(StopAsyncIteration):
+        await anext(replies)
+    assert provider.text_chat.await_count == 3
+    serialized = str(provider.text_chat.await_args.kwargs["contexts"])
+    assert "找到了，上次放在下载目录。" in serialized
+    assert "native_send_hook" in serialized
+    state = await plugin.store.call("state", plan["scope"])
+    direct_decision = next(d for d in state["decisions"] if d["id"] == plan["id"])
+    assert (
+        direct_decision["mode"] == "direct" and direct_decision["outcome"] == "admitted"
+    )
+    assert not await plugin.store.call(
+        "participation_gate", plan["scope"], plugin.settings, plan["room"]
+    )
+    assert incoming.call_llm and not plugin.participation.planner.sessions
+
+
+async def test_direct_first_reply_ignores_exhausted_quota_but_continuation_does_not(
+    native_planner,
+):
+    plugin, provider = native_planner
+    plugin.settings.update(participation_frequency=0, participation_hourly_limit=1)
+    assert not [r async for r in plugin.participate(event("old-topic", sender="bob"))]
+    plugin.settings["participation_frequency"] = 1
+    incoming = event("direct-quota", text="先处理我这个问题")
+    incoming.is_at_or_wake_command = True
+    scope, _, _ = await plugin.resolve_scope(incoming)
+    await plugin.store.call(
+        "decide",
+        scope,
+        {
+            "action": "reply",
+            "confidence": 1.0,
+            "reason": "已占用自主额度",
+            "room": plugin.participation.room_key(incoming),
+        },
+        "auto",
+        "admitted",
+        plugin.settings,
+    )
+    provider.text_chat.side_effect = [
+        action("reply", msg_id="2", reply_reference="先完成明确请求。"),
+        action("reply", msg_id="1", reply_reference="再主动回答旧话题。"),
+    ]
+    replies = plugin.participate(incoming)
+    request = await anext(replies)
+    await plugin.apply_participation(incoming, request)
+    assert not incoming.is_stopped()
+    await send_reply(plugin, incoming, "你这个问题先这样解决")
+    with pytest.raises(StopAsyncIteration):
+        await anext(replies)
+    state = await plugin.store.call("state", scope)
+    assert state["decisions"][0]["outcome"] == "cancelled"
+    assert "上限" in state["decisions"][0]["reason"]
+    assert provider.text_chat.await_count == 2
+
+
+async def test_direct_must_answer_current_target_before_old_topics(native_planner):
+    plugin, provider = native_planner
+    plugin.settings["participation_frequency"] = 0
+    assert not [
+        r async for r in plugin.participate(event("previous-topic", sender="bob"))
+    ]
+    provider.text_chat.side_effect = [
+        action("reply", msg_id="1", reply_reference="先回答别人的旧话题。"),
+        action("reply", msg_id="2", reply_reference="处理这条明确请求。"),
+        action("stop"),
+    ]
+    incoming = event("direct-target", text="帮我看看")
+    incoming.is_at_or_wake_command = True
+    replies = plugin.participate(incoming)
+    await anext(replies)
+    assert provider.text_chat.await_count == 2
+    assert "trigger.msg_id" in str(provider.text_chat.await_args.kwargs["contexts"])
+    assert (
+        incoming.get_extra("ovenheart_decision")["target"]["source"] == "direct-target"
+    )
+    await send_reply(plugin, incoming, "你把具体情况说一下")
+    with pytest.raises(StopAsyncIteration):
+        await anext(replies)
+
+
+async def test_direct_collector_preserves_own_and_quoted_media_and_model(
+    native_planner, tmp_path
+):
+    plugin, provider = native_planner
+    from PIL import Image as PILImage
+
+    path = tmp_path / "input.png"
+    PILImage.new("RGB", (4, 4)).save(path)
+    incoming = event("direct-media", text="看看图里的问题")
+    incoming.is_at_or_wake_command = True
+    incoming.set_extra("selected_model", "chosen-model")
+    image = Image.fromFileSystem(str(path))
+    incoming.message_obj.message = [
+        At(qq="bot"),
+        Plain(incoming.message_str),
+        image,
+        Reply(id="quoted", sender_id="bob", chain=[Plain("之前的图"), image]),
+    ]
+    original = list(incoming.get_messages())
+    provider.text_chat.side_effect = [
+        action("reply", msg_id="1", reply_reference="根据原始图片回答。"),
+        action("stop"),
+    ]
+    replies = plugin.participate(incoming)
+    request = await anext(replies)
+    assert request.image_urls == [str(path)]
+    assert request.model == "chosen-model"
+    assert incoming.get_messages() == original
+    await send_reply(plugin, incoming, "图里的位置我看到了")
+    with pytest.raises(StopAsyncIteration):
+        await anext(replies)
+
+
+async def test_direct_stop_does_not_fall_through_to_another_native_reply(
+    native_planner,
+):
+    plugin, provider = native_planner
+    provider.text_chat.return_value = action("stop")
+    incoming = event("direct-stop", text="不用回复，只提醒一下")
+    incoming.is_at_or_wake_command = True
+    assert not [r async for r in plugin.participate(incoming)]
+    assert incoming.call_llm and incoming.get_result() is None
+    assert provider.text_chat.await_count == 1
+    assert not plugin.participation.planner.sessions
+
+
+async def test_direct_planner_error_releases_session_and_keeps_native_fallback(
+    native_planner,
+):
+    plugin, provider = native_planner
+    provider.text_chat.side_effect = RuntimeError("provider unavailable")
+    incoming = event("direct-failure", text="帮我完成这个任务")
+    incoming.is_at_or_wake_command = True
+    assert not [r async for r in plugin.participate(incoming)]
+    assert not incoming.call_llm and not incoming.is_stopped()
+    assert incoming.get_extra("provider_request").prompt == "帮我完成这个任务"
+    assert not plugin.participation.planner.sessions
+
+
+@pytest.mark.parametrize("structured", [False, True])
+async def test_direct_first_reply_survives_ordinary_chatter_and_sees_it_after_sending(
+    native_planner, structured
+):
+    plugin, provider = native_planner
+    if structured:
+        plugin.settings["context_mode"] = "structured"
+    else:
+        plugin.settings["context_mode"] = "native"
+    provider.text_chat.side_effect = [
+        action("reply", msg_id="1", reply_reference="先完成明确任务。"),
+        action("reply", msg_id="2", reply_reference="再接住期间到来的另一条问题。"),
+        action("stop"),
+    ]
+    incoming = event("direct-before-chat", text="帮我查这个")
+    incoming.is_at_or_wake_command = True
+    replies = plugin.participate(incoming)
+    first = await anext(replies)
+    # A delayed passive capture of this exact event must not cancel its own SDK
+    # session; another member's chatter must not erase the explicit request.
+    session = next(iter(plugin.participation.planner.sessions.values()))
+    plugin.participation.notice(incoming)
+    assert next(iter(plugin.participation.planner.sessions.values())) is session
+    newer = event("chat-during-direct", text="顺便问一下文件怎么打开", sender="bob")
+    assert not [r async for r in plugin.participate(newer)]
+    await plugin.apply_participation(incoming, first)
+    assert not incoming.is_stopped()
+    await send_reply(plugin, incoming, "你这个已经查到了")
+    second = await anext(replies)
+    assert not incoming.get_extra("ovenheart_decision")["direct"]
+    assert (
+        incoming.get_extra("ovenheart_decision")["target"]["source"]
+        == "chat-during-direct"
+    )
+    await plugin.apply_participation(incoming, second)
+    await send_reply(plugin, incoming, "bob，文件用编辑器打开")
+    with pytest.raises(StopAsyncIteration):
+        await anext(replies)
+    serialized = str(provider.text_chat.await_args.kwargs["contexts"])
+    assert "顺便问一下文件怎么打开" in serialized and "你这个已经查到了" in serialized
+
+
+@pytest.mark.parametrize("capture_first", [False, True])
+async def test_bare_at_does_not_interrupt_its_own_pending_direct_planner(
+    native_planner,
+    capture_first,
+):
+    plugin, provider = native_planner
+    plugin.context.conversation_manager.get_curr_conversation_id.return_value = (
+        "native-conv"
+    )
+    provider.text_chat.side_effect = [
+        action("reply", msg_id="1", reply_reference="继续完成请求。"),
+        action("stop"),
+    ]
+    original = event("direct-pending", text="帮我看看这个问题")
+    original.is_at_or_wake_command = True
+    replies = plugin.participate(original)
+    await anext(replies)
+    session = next(iter(plugin.participation.planner.sessions.values()))
+    reminder = event("direct-reminder", text="")
+    reminder.message_obj.message = [At(qq="bot"), Plain("  ")]
+    reminder.is_at_or_wake_command = True
+    if capture_first:
+        await plugin.capture(reminder)
+    await plugin.prioritize_direct(reminder)
+    if not capture_first:
+        await plugin.capture(reminder)
+    assert reminder.is_stopped() and reminder.call_llm
+    assert reminder.get_extra("ovenheart_merged_direct")["source"] == "direct-pending"
+    assert next(iter(plugin.participation.planner.sessions.values())) is session
+    assert not [r async for r in plugin.participate(reminder)]
+    assert not original.is_stopped()
+    await send_reply(plugin, original, "已经看到了，马上说")
+    with pytest.raises(StopAsyncIteration):
+        await anext(replies)
+    assert provider.text_chat.await_count == 2
+
+
+async def test_zero_frequency_allows_requested_reply_but_blocks_extra_reply(
+    native_planner,
+):
+    plugin, provider = native_planner
+    plugin.settings["participation_frequency"] = 0
+    assert not [r async for r in plugin.participate(event("old-zero", sender="bob"))]
+    incoming = event("direct-zero", text="先回答我这个")
+    incoming.is_at_or_wake_command = True
+    provider.text_chat.side_effect = [
+        action("reply", msg_id="2", reply_reference="回应明确请求。"),
+        action("reply", msg_id="1", reply_reference="再主动回答别人。"),
+    ]
+    replies = plugin.participate(incoming)
+    await anext(replies)
+    await send_reply(plugin, incoming, "你的问题是这样")
+    with pytest.raises(StopAsyncIteration):
+        await anext(replies)
+    state = await plugin.store.call("state", (await plugin.resolve_scope(incoming))[0])
+    assert state["decisions"][0]["outcome"] == "observed"
+    assert "频率已设为零" in state["decisions"][0]["reason"]
+    assert not plugin.participation.planner.sessions

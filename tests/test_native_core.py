@@ -44,3 +44,4 @@ async def test_native_core_never_learns_a_stripped_builtin_command(tmp_path):
     assert report["checks"]["native_group_context_ordering"]
     assert report["checks"]["native_structured_context"]
     assert report["checks"]["native_continuous_planner"]
+    assert report["checks"]["native_direct_planner"]

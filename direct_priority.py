@@ -18,6 +18,7 @@ class DirectPriority:
         key = id(event)
         previous = self.entries.get(key)
         if previous and previous["event"]() is event and previous["task"]() is task:
+            previous["direct"] = direct
             return
         entry = {
             "event": weakref.ref(event),

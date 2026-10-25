@@ -770,6 +770,83 @@ async def main(args):
                 report["native_continuous_planner"]["decisions"] = (
                     await plugin.store.call("state", planner_scope)
                 )["decisions"]
+                await configure(
+                    {
+                        "participation_mode": "off",
+                        "participation_frequency": 0,
+                        "learning_enabled": False,
+                        "memory_summary_enabled": False,
+                    }
+                )
+                direct_inputs, direct_outputs = [], []
+
+                async def direct_completion(**kwargs):
+                    tools = kwargs.get("func_tool")
+                    if tools and tools.get_tool("reply"):
+                        index = len(direct_inputs)
+                        direct_inputs.append(str(kwargs))
+                        names = ("search_memory", "reply", "stop")
+                        arguments = (
+                            {"query": "文件位置"},
+                            {
+                                "msg_id": "1",
+                                "reply_reference": "先处理被直接叫到的文件问题。",
+                                "reply_style": "简短表达",
+                            },
+                            {},
+                        )
+                        return LLMResponse(
+                            role="assistant",
+                            tools_call_name=[names[index]],
+                            tools_call_ids=[f"direct-plan-{index}"],
+                            tools_call_args=[arguments[index]],
+                        )
+                    direct_outputs.append(str(kwargs))
+                    return LLMResponse(
+                        role="assistant", completion_text="文件在下载目录，你看看。"
+                    )
+
+                direct_event = incoming(
+                    "direct-planner-native", "帮我找一下文件", group="direct-probe"
+                )
+                direct_event.message_obj.message.insert(0, At(qq="bot"))
+                direct_event.set_extra("selected_provider", "native-chat")
+                with patch.object(provider, "text_chat", direct_completion):
+                    await submit([direct_event])
+                direct_cid = (
+                    await plugin.context.conversation_manager.get_curr_conversation_id(
+                        direct_event.unified_msg_origin
+                    )
+                )
+                direct_saved = (
+                    await plugin.context.conversation_manager.get_conversation(
+                        direct_event.unified_msg_origin, direct_cid
+                    )
+                )
+                direct_history = json.dumps(
+                    json.loads(direct_saved.history or "[]"), ensure_ascii=False
+                )
+                report["native_direct_planner"] = {
+                    "planner_calls": len(direct_inputs),
+                    "reply_calls": len(direct_outputs),
+                    "replies": [
+                        d["text"]
+                        for d in deliveries
+                        if d["source"] == "direct-planner-native"
+                    ],
+                    "trigger_explicit": bool(direct_inputs)
+                    and '"route": "direct"' in direct_inputs[0],
+                    "receipt_returned": len(direct_inputs) == 3
+                    and "文件在下载目录，你看看。" in direct_inputs[2]
+                    and "native_send_hook" in direct_inputs[2],
+                    "reference_applied": bool(direct_outputs)
+                    and "先处理被直接叫到的文件问题。" in direct_outputs[0],
+                    "history_saved": "文件在下载目录，你看看。" in direct_history,
+                    "temporary_not_saved": "reply_reference" not in direct_history
+                    and "先处理被直接叫到的文件问题。" not in direct_history,
+                    "stopped": not plugin.participation.planner.sessions,
+                    "no_errors": not direct_event.trace._summary["has_errors"],
+                }
             if not args.smoke:
                 await core.persona_mgr.update_persona(
                     "default",
@@ -994,6 +1071,24 @@ async def main(args):
                 ],
             }
             if args.smoke:
+                direct_planner = report["native_direct_planner"]
+                report["checks"]["native_direct_planner"] = (
+                    direct_planner["planner_calls"] == 3
+                    and direct_planner["reply_calls"] == 1
+                    and direct_planner["replies"] == ["文件在下载目录，你看看。"]
+                    and all(
+                        direct_planner[key]
+                        for key in (
+                            "trigger_explicit",
+                            "receipt_returned",
+                            "reference_applied",
+                            "history_saved",
+                            "temporary_not_saved",
+                            "stopped",
+                            "no_errors",
+                        )
+                    )
+                )
                 continuous = report["native_continuous_planner"]
                 report["checks"]["native_continuous_planner"] = (
                     continuous["planner_calls"] == 7

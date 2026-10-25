@@ -1227,7 +1227,7 @@ class Store:
             (scope, room),
         ).fetchone()
         reservation = db.execute(
-            "SELECT MAX(created),COUNT(*) FROM decisions WHERE (scope=? OR (room<>'' AND room=?)) AND outcome='admitted' AND created>?",
+            "SELECT MAX(created),COUNT(*) FROM decisions WHERE (scope=? OR (room<>'' AND room=?)) AND outcome='admitted' AND mode<>'direct' AND created>?",
             (scope, room, now - 3600),
         ).fetchone()
         # Admission rows reserve both limits atomically. Cancelling a stale
@@ -1263,14 +1263,22 @@ class Store:
             profile = db.execute(
                 "SELECT profile FROM scopes WHERE id=?", (scope,)
             ).fetchone()
-            reason = self.participation_gate(
-                db, scope, settings, plan.get("room", ""), plan.get("followup", False)
+            reason = (
+                ""
+                if plan.get("direct")
+                else self.participation_gate(
+                    db,
+                    scope,
+                    settings,
+                    plan.get("room", ""),
+                    plan.get("followup", False),
+                )
             )
             if plan.get("followup") and not settings["participation_followup"]:
                 reason = "连续接话已关闭，取消排队中的回复。"
             if (
                 not settings["enabled"]
-                or settings["participation_mode"] != "auto"
+                or (not plan.get("direct") and settings["participation_mode"] != "auto")
                 or not settings["apply_enabled"]
                 or not profile
                 or not json.loads(profile[0])["apply_enabled"]

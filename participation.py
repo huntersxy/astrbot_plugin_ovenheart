@@ -286,17 +286,22 @@ class ParticipationController:
         if previous and previous["arrival"] > event.created_at:
             return previous
         if direct:
-            self.planner.interrupt_direct(key)
+            self.planner.interrupt_direct(key, event)
         if previous and previous["source"] == source:
-            if direct:
+            if direct and (previous.get("work") or {}).get("source") != source:
                 previous.pop("work", None)
             return previous
         work = previous.get("work") if previous else None
         if (
             previous
             and work
-            and work.get("batch_id")
-            and self.plugin.settings["planner_mode"] == "legacy"
+            and (
+                work.get("direct")
+                or (
+                    work.get("batch_id")
+                    and self.plugin.settings["planner_mode"] == "legacy"
+                )
+            )
             and not direct
             and previous.get("umo") == event.unified_msg_origin
             and not previous["changed"].is_set()
@@ -334,6 +339,8 @@ class ParticipationController:
         if plan.get("context_epoch") and window.get("epoch") != plan["context_epoch"]:
             return False
         work = room.get("work") or {}
+        if plan.get("direct") and work.get("source") == plan["room_source"]:
+            return not room["changed"].is_set() and time.time() - work["created"] <= 300
         if plan.get("batch_id") and work.get("batch_id") == plan["batch_id"]:
             return not room["changed"].is_set() and time.time() - work["created"] <= 300
         return window["sequence"] == plan["sequence"]
@@ -460,7 +467,7 @@ class ParticipationController:
         except asyncio.TimeoutError:
             return False
 
-    async def consider(self, event) -> dict | None:
+    async def consider(self, event, *, direct=False) -> dict | None:
         """Plan for the latest live event, superseding obsolete in-flight events.
 
         Args:
@@ -471,7 +478,9 @@ class ParticipationController:
         """
         plugin = self.plugin
         settings = plugin.settings.copy()
-        if settings["participation_mode"] == "off" or not await plugin.permitted(event):
+        if (
+            not direct and settings["participation_mode"] == "off"
+        ) or not await plugin.permitted(event):
             return None
         room = self.notice(event)
         if room is None:
@@ -493,7 +502,11 @@ class ParticipationController:
         runner_type = (
             runner.get("runner_type", "local") if isinstance(runner, dict) else runner
         )
-        if settings["participation_mode"] == "auto" and runner_type != "local":
+        if runner_type != "local" and (
+            direct or settings["participation_mode"] == "auto"
+        ):
+            if direct:
+                return None
             await plugin.store.call(
                 "decide",
                 scope,
@@ -513,7 +526,7 @@ class ParticipationController:
         if (
             not settings["apply_enabled"]
             or not state["scope"]["profile"]["apply_enabled"]
-            or plugin.pending_direct(scope)
+            or (not direct and plugin.pending_direct(scope))
         ):
             return None
         structured = plugin.conversation.active(event)
@@ -617,6 +630,8 @@ class ParticipationController:
             )
         # Permission/persona awaits may finish out of arrival order. Retain late
         # context, but only the newest room event may supersede the active wait.
+        if not direct and plugin.direct_priority.occupied(event):
+            return None
         room = self.rooms.get(room_key)
         if room is None or room["source"] != source or room["changed"].is_set():
             return None
@@ -629,13 +644,14 @@ class ParticipationController:
         attempt = None
         admitted = False
         try:
-            try:
-                await asyncio.wait_for(
-                    changed.wait(), timeout=settings["participation_debounce"]
-                )
-                return None
-            except asyncio.TimeoutError:
-                pass
+            if not direct:
+                try:
+                    await asyncio.wait_for(
+                        changed.wait(), timeout=settings["participation_debounce"]
+                    )
+                    return None
+                except asyncio.TimeoutError:
+                    pass
             # Include older arrivals that completed admission during the debounce.
             sequence = window["sequence"]
             pending = [
@@ -647,7 +663,8 @@ class ParticipationController:
             # One early decision per own reply, only for the same addressee.
             # Consuming an observe/wait result cannot reopen that early slot.
             followup = bool(
-                settings["participation_rhythm"] == "fixed"
+                not direct
+                and settings["participation_rhythm"] == "fixed"
                 and settings["participation_followup"]
                 and own
                 and own["sequence"] == window["consumed"]
@@ -676,10 +693,10 @@ class ParticipationController:
                     "新输入打断旧回复，等待消息稳定后续接。",
                 )
             dynamic = settings["participation_rhythm"] == "maibot"
-            if dynamic and settings["participation_frequency"] == 0:
+            if not direct and dynamic and settings["participation_frequency"] == 0:
                 window["consumed"] = sequence
                 return None
-            if dynamic and not resumed:
+            if not direct and dynamic and not resumed:
                 rhythm = self.rhythm.evaluate(
                     room_key,
                     pending,
@@ -703,7 +720,8 @@ class ParticipationController:
                 if rhythm is None or not rhythm.should_trigger:
                     return None
             if (
-                not dynamic
+                not direct
+                and not dynamic
                 and not followup
                 and not resumed
                 and (
@@ -716,8 +734,12 @@ class ParticipationController:
                 )
             ):
                 return None
-            gate = await plugin.store.call(
-                "participation_gate", scope, settings, room_key, followup
+            gate = (
+                ""
+                if direct
+                else await plugin.store.call(
+                    "participation_gate", scope, settings, room_key, followup
+                )
             )
             if gate:
                 if resumed and room.get("work") is previous:
@@ -754,6 +776,7 @@ class ParticipationController:
             attempt = {
                 "scope": scope,
                 "source": source,
+                "direct": direct,
                 "id": None,
                 "created": time.time(),
                 "interrupted": False,
@@ -841,7 +864,12 @@ class ParticipationController:
                         reason="连续接话只回应刚继续发言的成员，本轮继续旁观。",
                     )
                     target = None
-                plan = plan | {"room": room_key, "target": target, "followup": followup}
+                plan = plan | {
+                    "room": room_key,
+                    "target": target,
+                    "followup": followup,
+                    "direct": direct,
+                }
                 if resumed:
                     plan["reason"] = "新输入续接：" + plan["reason"][:235]
                 if followup:
@@ -849,7 +877,7 @@ class ParticipationController:
                 if (
                     changed.is_set()
                     or (not batch and window["sequence"] != sequence)
-                    or plugin.pending_direct(scope)
+                    or (not direct and plugin.pending_direct(scope))
                     or not await plugin.permitted(event)
                 ):
                     return None
@@ -867,7 +895,9 @@ class ParticipationController:
                     or latest["scope"]["profile"] != state["scope"]["profile"]
                 ):
                     return None
-                if settings["participation_mode"] == "observe":
+                if direct:
+                    event.set_extra("ovenheart_planner_handled", True)
+                if not direct and settings["participation_mode"] == "observe":
                     await plugin.store.call(
                         "decide", scope, plan, "observe", "observed", plugin.settings
                     )
@@ -886,7 +916,12 @@ class ParticipationController:
                         continue
                 outcome = "admitted" if plan["action"] == "reply" else "observed"
                 decision = await plugin.store.call(
-                    "decide", scope, plan, "auto", outcome, plugin.settings
+                    "decide",
+                    scope,
+                    plan,
+                    "direct" if direct else "auto",
+                    outcome,
+                    plugin.settings,
                 )
                 window["consumed"] = sequence
                 if decision["outcome"] == "admitted":
@@ -1295,6 +1330,11 @@ class ParticipationController:
         # next action without cancelling that reply's consumed quota record.
         await session.check_current()
         scope = previous["scope"]
+        if previous.get("direct"):
+            work = self.rooms[previous["room"]].get("work")
+            if work:
+                work["direct"] = False
+            self.plugin.direct_priority.watch(event, direct=False)
         window = self.windows[scope]
         messages = (
             self.plugin.conversation.snapshot(
@@ -1328,7 +1368,17 @@ class ParticipationController:
         )
         if plan["action"] == "reply" and target is None:
             raise ParticipationFormatError("持续规划的回复目标不在真实上下文中。")
-        plan = plan | {"room": previous["room"], "followup": False}
+        if (
+            plan["action"] == "reply"
+            and session.settings["participation_frequency"] == 0
+        ):
+            plan.update(
+                action="observe",
+                reason="自主参与频率已设为零，结束追加回复。",
+                intent="",
+                target_sequence=0,
+            )
+        plan = plan | {"room": previous["room"], "followup": False, "direct": False}
         decision = await self.plugin.store.call(
             "decide",
             scope,

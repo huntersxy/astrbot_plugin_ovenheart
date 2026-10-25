@@ -538,7 +538,7 @@ class ConversationContext:
                 plan
                 and (
                     window["sequence"] == plan["sequence"]
-                    or (plan.get("batch_id") and acknowledge)
+                    or ((plan.get("batch_id") or plan.get("direct")) and acknowledge)
                 )
             )
             room = self.plugin.participation.rooms.get(

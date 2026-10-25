@@ -339,8 +339,7 @@ class ParticipationFilter(filter.CustomFilter):
         ):
             return False
         if event.is_at_or_wake_command:
-            # Direct wakes already traverse the native agent and our request hooks.
-            return False
+            return plugin.settings["planner_mode"] == "maibot"
         text = event.get_message_str().strip()
         admitted = bool(
             text
@@ -929,6 +928,20 @@ class PersonaPlugin(Star):
         if not await self.permitted(event, cfg):
             self.debug("capture_skipped", reason="host_permissions_or_plugin_disabled")
             return
+        if event.get_extra("ovenheart_merged_direct"):
+            return
+        if (
+            self.settings["planner_mode"] == "maibot"
+            and self.settings["apply_enabled"]
+            and bare_direct_mention(event)
+        ):
+            direct_scope, _, _ = await self.resolve_scope(event)
+            cid = await self.context.conversation_manager.get_curr_conversation_id(
+                event.unified_msg_origin
+            )
+            if await self.merge_empty_direct(event, direct_scope, cid):
+                event.call_llm = True
+                return
         if self.conversation.active(event):
             context_scope, _, _ = await self.resolve_scope(event)
             await self.conversation.observe(event, context_scope)
@@ -1085,10 +1098,23 @@ class PersonaPlugin(Star):
             or not (event.is_at_or_wake_command or event.get_extra("ovenheart_mention"))
             or not await self.permitted(event)
             or event.get_extra("handlers_parsed_params")
+            or event.get_extra("ovenheart_merged_direct")
         ):
             return
         if event.get_extra("ovenheart_mention") and not await self.check_mention(event):
             return
+        if (
+            self.settings["planner_mode"] == "maibot"
+            and self.settings["apply_enabled"]
+            and bare_direct_mention(event)
+        ):
+            scope, _, _ = await self.resolve_scope(event)
+            cid = await self.context.conversation_manager.get_curr_conversation_id(
+                event.unified_msg_origin
+            )
+            if await self.merge_empty_direct(event, scope, cid):
+                event.call_llm = True
+                return
         self.participation.notice(event)
         for previous in self.direct_priority.preempt(event):
             self.track(self.cancel_for_direct(previous))
@@ -1120,7 +1146,6 @@ class PersonaPlugin(Star):
         """
         if (
             event.get_message_type() != MessageType.GROUP_MESSAGE
-            or event.is_at_or_wake_command
             or event.call_llm
             or event._has_send_oper
             or event.get_result()
@@ -1133,6 +1158,9 @@ class PersonaPlugin(Star):
                 for f in handler.event_filters
             ):
                 return
+        direct = bool(
+            event.is_at_or_wake_command or event.get_extra("ovenheart_mention")
+        )
         if event.get_extra("ovenheart_mention"):
             if not await self.check_mention(event):
                 return
@@ -1144,16 +1172,56 @@ class PersonaPlugin(Star):
                 name=event.get_extra("ovenheart_mention"),
                 origin=event.unified_msg_origin,
             )
-            # Let ProcessStage invoke its normal direct-wake Agent path once.
-            # Do not set call_llm: the native stage uses it to suppress a second
-            # invocation after a plugin has already yielded a ProviderRequest.
             event.is_at_or_wake_command = True
-            return
-        if self.direct_priority.occupied(event):
-            return
-        self.direct_priority.watch(event, direct=False)
-        plan = await self.participation.consider(event)
+        if direct:
+            if (
+                self.settings["planner_mode"] != "maibot"
+                or not self.settings["apply_enabled"]
+                or not await self.permitted(event)
+            ):
+                return
+            # Use the host collector for images, audio, files, quotes, selected
+            # model and native history; a plain request would lose attachments.
+            from astrbot.core.astr_main_agent import (
+                MainAgentBuildConfig,
+                collect_initial_request,
+            )
+
+            cfg = self.context.get_config(event.unified_msg_origin)
+            runner = cfg.get("agent_runner", {})
+            runner_type = (
+                runner.get("runner_type", "local")
+                if isinstance(runner, dict)
+                else runner
+            )
+            if (
+                runner_type != "local"
+                or not cfg.get("provider_settings", {}).get("enable", True)
+                or not await SessionServiceManager.should_process_llm_request(event)
+            ):
+                return
+            prefix = cfg.get("provider_settings", {}).get("wake_prefix", "")
+            for wake_prefix in cfg.get("wake_prefix", []):
+                if wake_prefix and prefix.startswith(wake_prefix):
+                    prefix = prefix[len(wake_prefix) :]
+            initial, _ = await collect_initial_request(
+                event,
+                self.context,
+                MainAgentBuildConfig(
+                    tool_call_timeout=120, provider_wake_prefix=prefix
+                ),
+            )
+            if initial is None:
+                return
+            event.set_extra("ovenheart_planner_initial_request", initial)
+            direct_scope, _, _ = await self.resolve_scope(event, initial)
+            self.register_direct_request(event, direct_scope, initial)
+        self.direct_priority.watch(event, direct=direct)
         try:
+            plan = await self.participation.consider(event, direct=direct)
+            if direct and event.get_extra("ovenheart_planner_handled"):
+                # stop/wait completion must not fall through to a second agent.
+                event.call_llm = True
             while plan:
                 async for request in self.participation_request(event, plan):
                     yield request
@@ -1214,7 +1282,10 @@ class PersonaPlugin(Star):
                         and not request_event().is_stopped()
                         and self.settings["enabled"]
                         and self.settings["apply_enabled"]
-                        and self.settings["participation_mode"] == "auto"
+                        and (
+                            plan.get("direct")
+                            or self.settings["participation_mode"] == "auto"
+                        )
                         and request_event().get_extra(
                             "ovenheart_reply_scope", plan["scope"]
                         )
@@ -1250,7 +1321,10 @@ class PersonaPlugin(Star):
         original_sender = event.message_obj.sender
         event.set_extra("ovenheart_fallback_source", event_source(event))
         try:
-            yield event.request_llm(prompt=prompt, conversation=conversation)
+            if plan.get("direct"):
+                yield event.get_extra("ovenheart_planner_initial_request")
+            else:
+                yield event.request_llm(prompt=prompt, conversation=conversation)
         finally:
             # The result decorator temporarily retargets native quote/@ fields.
             # The next planner action still belongs to the original arrival.
@@ -1378,17 +1452,34 @@ class PersonaPlugin(Star):
         if state["scope"] and not state["scope"]["profile"]["apply_enabled"]:
             return
         bare_at = bare_direct_mention(event)
+        if bare_at and await self.merge_empty_direct(
+            event, scope, getattr(getattr(req, "conversation", None), "cid", None)
+        ):
+            return
+        if bare_at and req.prompt == NATIVE_EMPTY_MENTION_PROMPT:
+            req.prompt = prompts.EMPTY_MENTION_CONTINUATION
+        if not await self.conversation.prepare(event, scope, req):
+            event.stop_event()
+            return
+        self.register_direct_request(event, scope, req)
+
+    async def merge_empty_direct(self, event, scope, conversation_id):
+        """Keep a bare reminder attached to the same member's live native task."""
         key = (scope, str(event.get_sender_id()))
         previous = self.direct_pending.get(key)
-        if bare_at and previous and previous["source"] != event_source(event):
+        if previous and previous["source"] != event_source(event):
+            state = await self.store.call(
+                "guidance", scope, not self.settings["session_isolation"]
+            )
+            if state["scope"] and not state["scope"]["profile"]["apply_enabled"]:
+                return False
             original, work = previous["event"](), previous["task"]()
             if (
                 0 <= event.created_at - previous["created"] <= 120
                 and 0 <= time.time() - previous["created"] <= 120
                 and previous["revision"] == self.settings_revision
                 and previous["prompts_revision"] == self.prompts_revision
-                and previous.get("conversation_id")
-                == getattr(getattr(req, "conversation", None), "cid", None)
+                and previous.get("conversation_id") == conversation_id
                 and original is not None
                 and work is not None
                 and not work.done()
@@ -1410,13 +1501,8 @@ class PersonaPlugin(Star):
                     event_source(event),
                     previous["source"],
                 )
-                return
-        if bare_at and req.prompt == NATIVE_EMPTY_MENTION_PROMPT:
-            req.prompt = prompts.EMPTY_MENTION_CONTINUATION
-        if not await self.conversation.prepare(event, scope, req):
-            event.stop_event()
-            return
-        self.register_direct_request(event, scope, req)
+                return True
+        return False
 
     def direct_reply_context(self, event: AstrMessageEvent, scope: str) -> dict:
         """Freeze native direct-turn context shared by selection and generation.
@@ -1520,8 +1606,10 @@ class PersonaPlugin(Star):
         plan = event.get_extra("ovenheart_decision")
         if (
             not await self.permitted(event)
-            or self.pending_direct(plan["scope"])
-            or self.settings["participation_mode"] != "auto"
+            or (not plan.get("direct") and self.pending_direct(plan["scope"]))
+            or (
+                not plan.get("direct") and self.settings["participation_mode"] != "auto"
+            )
             or not self.settings["apply_enabled"]
             or (plan.get("followup") and not self.settings["participation_followup"])
             or (
@@ -1720,7 +1808,7 @@ class PersonaPlugin(Star):
             self.debug(
                 "reply_addressee",
                 scope=target.get("scope") or (plan or {}).get("scope"),
-                path="autonomous" if plan else "direct",
+                path="autonomous" if plan and not plan.get("direct") else "direct",
                 target_sequence=target.get("sequence"),
                 target_sender_id=target.get("sender_id"),
                 target_sender=target.get("sender"),
@@ -2076,7 +2164,11 @@ class PersonaPlugin(Star):
         if not await self.check_participation(event, req):
             return
         allowed = set(self.settings["autonomous_tools"])
-        if self.settings["autonomous_tool_policy"] == "denylist":
+        if plan.get("direct"):
+            allowed = (
+                {tool.name for tool in req.func_tool.tools} if req.func_tool else set()
+            )
+        elif self.settings["autonomous_tool_policy"] == "denylist":
             blocked = set(self.settings["autonomous_tool_denylist"])
             allowed = (
                 {tool.name for tool in req.func_tool.tools if tool.name not in blocked}
@@ -2099,11 +2191,11 @@ class PersonaPlugin(Star):
                 not event.is_stopped()
                 and current["enabled"]
                 and current["apply_enabled"]
-                and current["participation_mode"] == "auto"
+                and (plan.get("direct") or current["participation_mode"] == "auto")
                 and (not plan.get("followup") or current["participation_followup"])
                 and self.participation.current(plan)
             )
-            permitted = (
+            permitted = plan.get("direct") or (
                 name in current["autonomous_tools"]
                 if current["autonomous_tool_policy"] == "allowlist"
                 else name not in current["autonomous_tool_denylist"]
@@ -2676,7 +2768,11 @@ class PersonaPlugin(Star):
                 "ovenheart_context_messages", direct.get("messages", [])
             )
             details = metrics | {
-                "route": "autonomous" if plan else direct.get("route", "native"),
+                "route": "direct"
+                if plan.get("direct")
+                else "autonomous"
+                if plan
+                else direct.get("route", "native"),
                 "rhythm": event.get_extra("ovenheart_rhythm", {}),
                 "target_sender": str(
                     target.get("sender") or event.get_sender_name() or ""
@@ -2806,6 +2902,7 @@ class PersonaPlugin(Star):
         await self.record_turn_trace(event, status="send_hook")
         if (
             self.settings["participation_mode"] == "off"
+            and not event.get_extra("ovenheart_decision")
             and self.conversation.active(event)
             and await self.permitted(event)
         ):
@@ -2882,7 +2979,10 @@ class PersonaPlugin(Star):
                     )
                     self.learning_context[scope] = window
                     self.debug("learning_self_context", scope=scope, text=text)
-        if self.settings["participation_mode"] != "off" and await self.permitted(event):
+        if (
+            self.settings["participation_mode"] != "off"
+            or event.get_extra("ovenheart_decision")
+        ) and await self.permitted(event):
             scope, _, _ = await self.resolve_scope(event)
             room_key = self.participation.room_key(event)
             await self.store.call("note_reply", scope, room_key)
