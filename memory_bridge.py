@@ -30,6 +30,7 @@ class MemoryBridge:
         self._hooks = []
         self._owner = None
         self.legacy_retired = None
+        self.binding_diagnostics = []
 
     def disconnect(self) -> None:
         """Restore only dispatch entries still owned by this bridge."""
@@ -67,6 +68,7 @@ class MemoryBridge:
             return True
         self.disconnect()
         selected = []
+        self.binding_diagnostics = []
         for event_type, name in (
             (EventType.OnLLMRequestEvent, "handle_memory_recall"),
             (EventType.OnLLMResponseEvent, "handle_memory_reflection"),
@@ -87,6 +89,22 @@ class MemoryBridge:
                 )
             ]
             if len(matches) != 1:
+                self.binding_diagnostics = [
+                    {
+                        "name": entry.handler_name,
+                        "enabled": entry.enabled,
+                        "callable": type(entry.handler).__name__,
+                        "module": getattr(entry.handler, "__module__", ""),
+                        "bound_to_current": getattr(entry.handler, "__self__", None)
+                        is plugin,
+                        "partial_current": isinstance(entry.handler, partial)
+                        and bool(entry.handler.args)
+                        and entry.handler.args[0] is plugin,
+                    }
+                    for entry in star_handlers_registry
+                    if entry.handler_name
+                    in ("handle_memory_recall", "handle_memory_reflection")
+                ]
                 return False
             selected.append(matches[0])
         self._owner = plugin
@@ -285,6 +303,7 @@ class MemoryBridge:
         return {
             "available": bool(ready),
             "reply_source_binding": bool(ready and binding),
+            "binding_diagnostics": self.binding_diagnostics if not binding else [],
             "message": (
                 "已连接 LivingMemory；回复来源适配由烤箱之心维护，无需修改版。"
                 if binding
