@@ -8,6 +8,7 @@ import json
 import threading
 import time
 from collections import OrderedDict
+from contextlib import asynccontextmanager
 
 import jsonschema
 from astrbot.api import logger
@@ -79,14 +80,13 @@ def native_provenance(evidence, previous=()):
 
 
 class RoomState:
-    """Keep upstream async primitives on one loop, with database work off-host."""
+    """Keep upstream stores together; the native runtime owns their worker loop."""
 
     def __init__(self, path, lock):
         from .vendor.maibot.amemorix.retrieval import SparseBM25Index
         from .vendor.maibot.amemorix.storage import GraphStore, MetadataStore
 
         self.path = path
-        self.loop = asyncio.new_event_loop()
         self.lock = lock
         self.metadata = MetadataStore(path / "metadata")
         self.metadata.connect()
@@ -110,6 +110,12 @@ class RoomState:
         self.fingerprint = None
         self.embedding = None
         self.operation = None
+        self.revision = None
+        self.foreground = set()
+        self.active_foreground = set()
+        self.foreground_lock = asyncio.Lock()
+        self.foreground_ready = asyncio.Event()
+        self.model_waiting = False
 
     def _retriever(self):
         from .vendor.maibot.amemorix.retrieval import (
@@ -304,7 +310,7 @@ class RoomState:
         metadata = native_provenance(evidence, previous_metadata.get("evidence", []))
         paragraph = self.metadata.add_paragraph(
             content,
-            source="chat_summary:astrbot",
+            source="chat_summary:" + self.path.name,
             metadata=metadata,
             time_meta={
                 "event_time_start": min(e["created"] for e in evidence),
@@ -417,6 +423,7 @@ class RoomState:
                     self.embedding,
                     {
                         "native_preflight": preflight,
+                        "native_state": self,
                         "graph_vector_store": self.graph_vectors,
                         "relation_write_service": RelationWriteService(
                             self.metadata, self.graph, None, None
@@ -466,7 +473,6 @@ class RoomState:
     def close(self):
         self.sparse.unload()
         self.metadata.close()
-        self.loop.close()
 
 
 class RoomMemory:
@@ -475,6 +481,42 @@ class RoomMemory:
         self.rooms = OrderedDict()
         self.locks = {}
         self.directory = plugin.store.path.parent / "amemorix" / "rooms"
+        self.loop = None
+        self.thread = None
+        self.closing = False
+
+    async def execute(self, state, operation, args):
+        """Run upstream async work off-host and acknowledge cancellation cleanup."""
+        if self.loop is None:
+            self.loop = asyncio.new_event_loop()
+            self.thread = threading.Thread(
+                target=self.loop.run_forever, name="ovenheart-memory", daemon=True
+            )
+            self.thread.start()
+        host = asyncio.get_running_loop()
+        result, started = host.create_future(), host.create_future()
+
+        def finish(task):
+            if task.cancelled():
+                result.cancel()
+            elif task.exception() is not None:
+                result.set_exception(task.exception())
+            else:
+                result.set_result(task.result())
+
+        def start():
+            task = self.loop.create_task(getattr(state, operation)(*args))
+            task.add_done_callback(lambda done: host.call_soon_threadsafe(finish, done))
+            host.call_soon_threadsafe(started.set_result, task)
+
+        self.loop.call_soon_threadsafe(start)
+        try:
+            return await asyncio.shield(result)
+        except asyncio.CancelledError:
+            task = await asyncio.shield(started)
+            self.loop.call_soon_threadsafe(task.cancel)
+            await asyncio.gather(result, return_exceptions=True)
+            raise
 
     async def permitted(self, event, scope, persona, learning=False):
         s = self.plugin.settings
@@ -504,19 +546,77 @@ class RoomMemory:
             return False
         return True
 
+    @asynccontextmanager
+    async def model_window(self, scope):
+        """Lend the serialized importer while its native model is on the wire."""
+        state = self.rooms[scope]
+        state.model_waiting = True
+        state.foreground_ready.set()
+        try:
+            yield
+        finally:
+            state.model_waiting = False
+            state.foreground_ready.clear()
+            if state.active_foreground:
+                await asyncio.gather(
+                    *tuple(state.active_foreground), return_exceptions=True
+                )
+
+    async def execute_foreground(self, state, operation, args, revision):
+        async with state.foreground_lock:
+            while state.operation == "consolidate" and not state.model_waiting:
+                await state.foreground_ready.wait()
+            if (
+                self.closing
+                or self.plugin.closing
+                or revision != self.plugin.settings_revision
+            ):
+                raise ValueError("记忆配置已改变或正在关闭，取消排队中的操作。")
+            task = asyncio.current_task()
+            state.active_foreground.add(task)
+            try:
+                return await self.execute(state, operation, args)
+            finally:
+                state.active_foreground.discard(task)
+
     async def call(self, scope, operation, *args):
         from .memory_embedding import EmbeddingAPIAdapter
 
         revision = self.plugin.settings_revision
+        if self.closing or self.plugin.closing:
+            raise ValueError("记忆运行时正在关闭。")
+        state = self.rooms.get(scope)
+        if (
+            state is not None
+            and operation in ("search", "write")
+            and state.operation == "consolidate"
+            and state.revision == revision
+        ):
+            # Foreground memory tools must finish before the planner replies.
+            # Lend the worker at the importer's model boundary, retaining the
+            # same authoritative stores and serializing foreground writes.
+            task = asyncio.create_task(
+                self.execute_foreground(state, operation, args, revision)
+            )
+            state.foreground.add(task)
+            try:
+                return await task
+            finally:
+                state.foreground.discard(task)
         lock = self.locks.setdefault(scope, asyncio.Lock())
         async with lock:
-            if self.plugin.closing:
+            if self.closing or self.plugin.closing:
                 raise ValueError("记忆运行时正在关闭。")
             state = self.rooms.get(scope)
             if state is None:
                 if len(self.rooms) >= 64:
                     candidate = next(
-                        (k for k, v in self.rooms.items() if not v.lock.locked()), None
+                        (
+                            k
+                            for k, v in self.rooms.items()
+                            if not v.lock.locked() and not v.foreground
+                        ),
+                        None,
                     )
                     if candidate is None:
                         raise RuntimeError("记忆工作队列繁忙。")
@@ -532,38 +632,29 @@ class RoomMemory:
                     raise
                 self.rooms[scope] = state
             self.rooms.move_to_end(scope)
-            if self.plugin.closing or revision != self.plugin.settings_revision:
+            if state.foreground:
+                await asyncio.gather(*tuple(state.foreground), return_exceptions=True)
+            if (
+                self.closing
+                or self.plugin.closing
+                or revision != self.plugin.settings_revision
+            ):
                 raise ValueError("记忆配置已改变，取消排队中的操作。")
             embedding = EmbeddingAPIAdapter(
                 self.plugin.context,
                 self.plugin.settings["embedding_provider_id"],
                 asyncio.get_running_loop(),
             )
-            cancelled = threading.Event()
-
-            def execute():
-                if cancelled.is_set():
-                    raise asyncio.CancelledError
-                state.embedding = embedding
-                state.operation = state.loop.create_task(
-                    getattr(state, operation)(*args)
-                )
-                try:
-                    if cancelled.is_set():
-                        state.operation.cancel()
-                    return state.loop.run_until_complete(state.operation)
-                finally:
-                    state.operation = None
-
-            task = asyncio.create_task(asyncio.to_thread(execute))
+            state.embedding = embedding
+            state.revision = revision
+            state.operation = operation
+            if operation == "consolidate":
+                state.foreground_ready.clear()
             try:
-                return await asyncio.shield(task)
-            except asyncio.CancelledError:
-                cancelled.set()
-                if state.operation is not None:
-                    state.loop.call_soon_threadsafe(state.operation.cancel)
-                await asyncio.gather(task, return_exceptions=True)
-                raise
+                return await self.execute(state, operation, args)
+            finally:
+                state.operation = None
+                state.foreground_ready.set()
 
     async def search(self, event, scope, persona, query):
         revision = self.plugin.settings_revision
@@ -640,10 +731,20 @@ class RoomMemory:
         )
 
     async def close(self):
+        self.closing = True
         for scope, lock in tuple(self.locks.items()):
             async with lock:
                 state = self.rooms.pop(scope, None)
                 if state is not None:
+                    if state.foreground:
+                        await asyncio.gather(
+                            *tuple(state.foreground), return_exceptions=True
+                        )
                     await asyncio.to_thread(state.close)
         self.rooms.clear()
         self.locks.clear()
+        if self.loop is not None:
+            self.loop.call_soon_threadsafe(self.loop.stop)
+            await asyncio.to_thread(self.thread.join)
+            self.loop.close()
+            self.loop = self.thread = None

@@ -128,11 +128,12 @@ class MemoryConsolidation:
                         "\nAstrBot原文来源校验：额外输出 evidence 数组，每项为 {source_id, quote}，source_id 取本轮消息方括号中的原生ID，quote 必须是该消息原文。非空摘要必须有证据；空增量 evidence=[]。本轮只提供文字素材，facts=[]。输出结构：\n"
                         + json.dumps(SUMMARY_SCHEMA, ensure_ascii=False)
                     )
-                response = await self.plugin.auxiliary.generate(
-                    "memory_summary" if is_summary else "memory_episode",
-                    chat_provider_id=provider_id,
-                    prompt=prompt,
-                )
+                async with self.plugin.room_memory.model_window(scope):
+                    response = await self.plugin.auxiliary.generate(
+                        "memory_summary" if is_summary else "memory_episode",
+                        chat_provider_id=provider_id,
+                        prompt=prompt,
+                    )
                 if (
                     revision != self.plugin.settings_revision
                     or not await self.permitted(event, scope, persona)

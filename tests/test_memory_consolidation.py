@@ -133,6 +133,306 @@ async def test_incremental_review_empty_delta_and_no_repeated_model_call(consoli
     assert p.context.llm_generate.call_count == 3
 
 
+async def test_existing_memory_is_readable_while_summary_model_is_waiting(consolidator):
+    p = consolidator
+    p.context.llm_generate.side_effect = [summary(), episode()]
+    incoming, scope, persona = await capture(p)
+    assert await p.room_memory.search(incoming, scope, persona, "书店")
+    started, release = asyncio.Event(), asyncio.Event()
+
+    async def delayed(**kwargs):
+        started.set()
+        await release.wait()
+        return summary(text="", entities=[], evidence=[])
+
+    p.context.llm_generate.side_effect = delayed
+    new_source = event("s2", text="嗯嗯，知道啦")
+    await p.capture(new_source)
+    await asyncio.wait_for(started.wait(), 5)
+    try:
+        found = await asyncio.wait_for(
+            p.room_memory.search(new_source, scope, persona, "书店"), 1.5
+        )
+        assert found and "书店" in found[0]["content"]
+        assert not release.is_set()
+    finally:
+        release.set()
+        await drain(p)
+
+
+async def test_cancelled_concurrent_read_does_not_cancel_the_background_model(
+    consolidator,
+):
+    p = consolidator
+    query_started, query_cancelled = asyncio.Event(), asyncio.Event()
+
+    class DelayedQueryEmbedding(SyntheticEmbedding):
+        async def get_embeddings(self, texts):
+            if "SLOW_QUERY" in texts:
+                query_started.set()
+                try:
+                    await asyncio.Event().wait()
+                finally:
+                    query_cancelled.set()
+            return await super().get_embeddings(texts)
+
+    p.settings["embedding_provider_id"] = "semantic"
+    p.context.get_provider_by_id = lambda key: (
+        DelayedQueryEmbedding() if key == "semantic" else None
+    )
+    p.context.llm_generate.side_effect = [summary(), episode()]
+    _, scope, persona = await capture(p)
+    started, release = asyncio.Event(), asyncio.Event()
+
+    async def delayed(**kwargs):
+        started.set()
+        await release.wait()
+        return summary(text="", entities=[], evidence=[])
+
+    p.context.llm_generate.side_effect = delayed
+    incoming = event("s2", text="嗯嗯，知道啦")
+    await p.capture(incoming)
+    await asyncio.wait_for(started.wait(), 5)
+    read = asyncio.create_task(
+        p.room_memory.search(incoming, scope, persona, "SLOW_QUERY")
+    )
+    try:
+        await asyncio.wait_for(query_started.wait(), 5)
+        read.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await read
+        await asyncio.wait_for(query_cancelled.wait(), 5)
+        assert not p.memory_consolidation.busy[scope].done()
+        assert await asyncio.wait_for(
+            p.room_memory.search(incoming, scope, persona, "书店"), 1.5
+        )
+    finally:
+        read.cancel()
+        await asyncio.gather(read, return_exceptions=True)
+        release.set()
+        await drain(p)
+
+
+async def test_foreground_write_and_read_keep_both_sets_of_graph_data(
+    consolidator,
+):
+    p = consolidator
+    p.context.llm_generate.side_effect = [summary(), episode()]
+    _, scope, persona = await capture(p)
+    started, release = asyncio.Event(), asyncio.Event()
+
+    async def delayed(**kwargs):
+        started.set()
+        await release.wait()
+        return summary(text="", entities=[], evidence=[])
+
+    p.context.llm_generate.side_effect = delayed
+    incoming = event("s2", text="我想去图书馆读书")
+    await p.capture(incoming)
+    await asyncio.wait_for(started.wait(), 5)
+    p.participation.sources[scope, "s2"] = incoming
+    writer = asyncio.create_task(
+        p.room_memory.remember(
+            incoming,
+            scope,
+            persona,
+            {
+                "content": "群友想去图书馆读书。",
+                "evidence": [{"msg_id": "1", "quote": "去图书馆读书"}],
+                "relations": [
+                    {"subject": "群友", "predicate": "想去", "object": "图书馆"}
+                ],
+            },
+            [{"sequence": 1, "source": "s2", "sender_id": incoming.get_sender_id()}],
+        )
+    )
+    try:
+        assert await asyncio.wait_for(
+            p.room_memory.search(incoming, scope, persona, "书店"), 1.5
+        )
+        assert (await asyncio.wait_for(writer, 1.5))["stored"]
+        assert not release.is_set()
+    finally:
+        release.set()
+        await drain(p)
+    assert (await writer)["stored"]
+    state = p.room_memory.rooms[scope]
+    assert state.metadata.count_paragraphs() == 2
+    assert state.graph.num_nodes == 3
+    assert any(
+        "图书馆" in m["content"]
+        for m in await p.room_memory.search(incoming, scope, persona, "图书馆")
+    )
+
+
+async def test_configuration_change_cancels_old_summary_and_unblocks_new_runtime(
+    consolidator,
+):
+    p = consolidator
+    p.context.llm_generate.side_effect = [summary(), episode()]
+    _, scope, persona = await capture(p)
+    started, cancelled = asyncio.Event(), asyncio.Event()
+
+    async def delayed(**kwargs):
+        started.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            cancelled.set()
+
+    p.context.llm_generate.side_effect = delayed
+    incoming = event("s2", text="嗯嗯，知道啦")
+    await p.capture(incoming)
+    await asyncio.wait_for(started.wait(), 5)
+    await p.update_settings({"memory_summary_enabled": False})
+    await asyncio.wait_for(cancelled.wait(), 5)
+    assert await asyncio.wait_for(
+        p.room_memory.search(incoming, scope, persona, "书店"), 1.5
+    )
+    await drain(p)
+    assert p.room_memory.rooms[scope].metadata.count_paragraphs() == 1
+
+
+async def test_summary_uses_recovered_vector_pools_after_foreground_writes(
+    consolidator,
+):
+    p = consolidator
+
+    class RecoveringEmbedding(SyntheticEmbedding):
+        async def get_embeddings(self, texts):
+            if "TRANSIENT" in texts:
+                raise RuntimeError("temporary embedding transport failure")
+            return await super().get_embeddings(texts)
+
+    embedding = RecoveringEmbedding()
+    p.settings["embedding_provider_id"] = "semantic"
+    p.context.get_provider_by_id = lambda key: embedding if key == "semantic" else None
+    p.context.llm_generate.side_effect = [
+        summary(quote="Neko喜欢猫咪", text="Neko喜欢猫咪。", entities=["Neko", "猫咪"]),
+        episode(),
+    ]
+    _, scope, persona = await capture(p, text="Neko喜欢猫咪")
+    started, release = asyncio.Event(), asyncio.Event()
+
+    async def delayed(**kwargs):
+        if "AstrBot原文来源校验" in kwargs["prompt"]:
+            started.set()
+            await release.wait()
+            return summary(
+                source="s2",
+                quote="Neko周末去看小猫",
+                text="Neko周末想去看小猫。",
+                entities=["Neko", "小猫"],
+            )
+        return episode()
+
+    p.context.llm_generate.side_effect = delayed
+    incoming = event("s2", text="Neko周末去看小猫")
+    await p.capture(incoming)
+    await asyncio.wait_for(started.wait(), 5)
+    state = p.room_memory.rooms[scope]
+    previous_pool = state.paragraph_vectors
+    try:
+        await p.room_memory.search(incoming, scope, persona, "TRANSIENT")
+        assert state.paragraph_vectors is None
+        p.participation.sources[scope, "s2"] = incoming
+        saved = await asyncio.wait_for(
+            p.room_memory.remember(
+                incoming,
+                scope,
+                persona,
+                {
+                    "content": "Neko说过周末去看小猫。",
+                    "evidence": [{"msg_id": "1", "quote": "Neko周末去看小猫"}],
+                    "relations": [],
+                },
+                [
+                    {
+                        "sequence": 1,
+                        "source": "s2",
+                        "sender_id": incoming.get_sender_id(),
+                    }
+                ],
+            ),
+            2,
+        )
+        assert saved["stored"] and state.paragraph_vectors is not previous_pool
+    finally:
+        release.set()
+        await drain(p)
+    assert state.metadata.count_paragraphs() == state.paragraph_vectors.num_vectors == 3
+    await p.room_memory.close()
+    p.room_memory = RoomMemory(p)
+    await p.room_memory.search(incoming, scope, persona, "GATTO")
+    assert p.room_memory.rooms[scope].paragraph_vectors.num_vectors == 3
+
+
+async def test_foreground_write_invalidates_inflight_episode_and_rebuilds_current_source(
+    consolidator,
+):
+    p = consolidator
+    p.settings.update(memory_summary_enabled=False, memory_summary_min_messages=50)
+    incoming, scope, persona = await capture(p)
+    p.participation.sources[scope, "s1"] = incoming
+    await p.room_memory.remember(
+        incoming,
+        scope,
+        persona,
+        {
+            "content": "周六一起去书店。",
+            "evidence": [{"msg_id": "1", "quote": "大家周六一起去书店"}],
+            "relations": [],
+        },
+        [{"sequence": 1, "source": "s1", "sender_id": incoming.get_sender_id()}],
+    )
+    p.settings["memory_summary_enabled"] = True
+    started, release = asyncio.Event(), asyncio.Event()
+
+    async def delayed(**kwargs):
+        started.set()
+        await release.wait()
+        return episode()
+
+    p.context.llm_generate.side_effect = delayed
+    await p.memory_consolidation.observe(incoming, scope, persona)
+    await asyncio.wait_for(started.wait(), 5)
+    later = event("s2", text="周日再去图书馆")
+    await p.capture(later)
+    p.participation.sources[scope, "s2"] = later
+    try:
+        await asyncio.wait_for(
+            p.room_memory.remember(
+                later,
+                scope,
+                persona,
+                {
+                    "content": "周日再去图书馆。",
+                    "evidence": [{"msg_id": "1", "quote": "周日再去图书馆"}],
+                    "relations": [],
+                },
+                [{"sequence": 1, "source": "s2", "sender_id": later.get_sender_id()}],
+            ),
+            1.5,
+        )
+    finally:
+        release.set()
+        await drain(p)
+    state = p.room_memory.rooms[scope]
+    assert not state.metadata.get_episodes_by_source("chat_summary:" + scope)
+    assert state.metadata.get_episode_source_rebuild_summary()["counts"]["pending"] == 1
+    payload = json.loads(episode().completion_text)
+    payload["episodes"][0].update(
+        summary="周六去书店，周日去图书馆。", paragraph_indices=[1, 2]
+    )
+    p.context.llm_generate.side_effect = [
+        SimpleNamespace(completion_text=json.dumps(payload, ensure_ascii=False))
+    ]
+    await p.memory_consolidation.observe(later, scope, persona)
+    await drain(p)
+    found = state.metadata.get_episodes_by_source("chat_summary:" + scope)
+    assert len(found) == 1 and found[0]["paragraph_count"] == 2
+
+
 @pytest.mark.parametrize(
     "bad",
     [

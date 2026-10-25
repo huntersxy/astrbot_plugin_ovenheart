@@ -181,7 +181,7 @@ async def main(args):
                 group,
             )
 
-        async def submit(events):
+        async def submit(events, *, wait_background=True):
             """Wait for native trace completion, including stopped passive events.
 
             Args:
@@ -194,7 +194,7 @@ async def main(args):
                 if time.monotonic() >= deadline:
                     raise TimeoutError("Native pipeline did not finish")
                 await asyncio.sleep(0.02)
-            if plugin.tasks:
+            if wait_background and plugin.tasks:
                 await asyncio.gather(*tuple(plugin.tasks), return_exceptions=True)
             for event in events:
                 report["events"].append(
@@ -562,15 +562,30 @@ async def main(args):
                         for e in m["metadata"]["evidence"]
                     ),
                 }
-                await configure(
-                    {"memory_summary_enabled": False, "participation_mode": "auto"}
-                )
-                planner_old = incoming("planner-old", "我是学生，先问文件在哪儿", "bob")
-                planner_new = incoming("planner-new", "我还想问另一个问题", "alice")
-                planner_new.set_extra("selected_provider", "native-chat")
+                await configure({"participation_mode": "auto"})
                 planner_calls, reply_calls, planner_inputs = [], [], []
+                summary_waiting, summary_release = asyncio.Event(), asyncio.Event()
 
                 async def planner_completion(**kwargs):
+                    if "episode segmentation engine" in (kwargs.get("prompt") or ""):
+                        return LLMResponse(
+                            role="assistant", completion_text='{"episodes": []}'
+                        )
+                    if "AstrBot原文来源校验" in (kwargs.get("prompt") or ""):
+                        summary_waiting.set()
+                        await summary_release.wait()
+                        return LLMResponse(
+                            role="assistant",
+                            completion_text=json.dumps(
+                                {
+                                    "summary": "",
+                                    "entities": [],
+                                    "relations": [],
+                                    "facts": [],
+                                    "evidence": [],
+                                }
+                            ),
+                        )
                     tools = kwargs.get("func_tool")
                     if tools and tools.get_tool("reply"):
                         index = len(planner_calls)
@@ -679,8 +694,36 @@ async def main(args):
                         ),
                     )
 
-                with patch.object(provider, "text_chat", planner_completion):
-                    await submit([planner_old, planner_new])
+                report["native_planner_debug"] = []
+                with (
+                    patch.object(provider, "text_chat", planner_completion),
+                    patch.object(
+                        plugin,
+                        "debug",
+                        side_effect=lambda name, **details: report[
+                            "native_planner_debug"
+                        ].append({"name": name, **details}),
+                    ),
+                ):
+                    await plugin.capture(
+                        incoming("native-summary-wait", "嗯嗯，知道了", "bob")
+                    )
+                    await asyncio.wait_for(summary_waiting.wait(), 10)
+                    planner_old = incoming(
+                        "planner-old", "我是学生，先问文件在哪儿", "bob"
+                    )
+                    planner_new = incoming("planner-new", "我还想问另一个问题", "alice")
+                    planner_new.set_extra("selected_provider", "native-chat")
+                    try:
+                        await submit([planner_old, planner_new], wait_background=False)
+                        report["native_auto_memories"]["reply_during_summary_wait"] = (
+                            not summary_release.is_set() and len(reply_calls) == 2
+                        )
+                    finally:
+                        summary_release.set()
+                        await asyncio.gather(
+                            *tuple(plugin.memory_consolidation.busy.values())
+                        )
                 actual = [d["text"] for d in deliveries if d["source"] == "planner-new"]
                 cid = (
                     await plugin.context.conversation_manager.get_curr_conversation_id(
@@ -717,7 +760,9 @@ async def main(args):
                     and "群聊话题：文件位置" in planner_inputs[2]
                     and "群聊话题：文件位置" in reply_calls[0],
                     "room_memory_temporary": "群聊话题：文件位置" not in saved_history,
-                    "episode_shared": "群聊经历：周六整理文件" in planner_inputs[0]
+                    "episode_shared": bool(planner_inputs)
+                    and bool(reply_calls)
+                    and "群聊经历：周六整理文件" in planner_inputs[0]
                     and "群聊经历：周六整理文件" in reply_calls[0],
                     "episode_temporary": "群聊经历：周六整理文件" not in saved_history,
                 }
@@ -972,6 +1017,7 @@ async def main(args):
                     and report["native_auto_memories"]["episode_available"]
                     and report["native_auto_memories"]["no_visible_send"]
                     and report["native_auto_memories"]["source_retained"]
+                    and report["native_auto_memories"]["reply_during_summary_wait"]
                 )
                 report["checks"]["native_structured_context"] = report[
                     "native_structured_context"

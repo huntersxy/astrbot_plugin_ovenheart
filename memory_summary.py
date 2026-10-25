@@ -19,6 +19,11 @@ class NativeSummaryImporter(SummaryImporter):
     async def _execute_import(
         self, summary, entities, relations, stream_id, time_meta=None, metadata=None
     ):
+        # Foreground recovery may have reopened the derived vector pools while
+        # the summary model was waiting. Commit to the current owning stores.
+        state = self.plugin_config["native_state"]
+        self.vector_store = state.paragraph_vectors
+        self.plugin_config["graph_vector_store"] = state.graph_vectors
         previous = (
             self.metadata_store.get_paragraph(compute_hash(normalize_text(summary)))
             or {}

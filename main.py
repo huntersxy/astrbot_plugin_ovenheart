@@ -710,6 +710,8 @@ class PersonaPlugin(Star):
             self.settings = merged
             self.host_settings = read_host_settings(self.config)
             self.settings_revision = uuid4().hex
+            for task in tuple(self.memory_consolidation.busy.values()):
+                task.cancel()
             self.debug("settings_updated", fields=sorted(patch))
             self.learning_context.clear()
             self.direct_pending.clear()
