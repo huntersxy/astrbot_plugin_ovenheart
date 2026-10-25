@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import time
 
 from astrbot.api import logger
+from astrbot.core.agent.message import Message, TextPart
 
 
 class AuxiliaryUsage:
@@ -18,12 +20,25 @@ class AuxiliaryUsage:
         self.on_record = None
 
     async def generate(self, stage, **kwargs):
+        return await self.measure(stage, self.context.llm_generate, kwargs)
+
+    async def tool_loop(self, stage, **kwargs):
+        """Meter each native transport call without changing the shared provider."""
+        from astrbot.core.star.context import Context
+
+        context = copy.copy(self.context)
+        context.provider_manager = MeteredProviderManager(
+            self.context.provider_manager, self, stage, kwargs["chat_provider_id"]
+        )
+        return await Context.tool_loop_agent(context, **kwargs)
+
+    async def measure(self, stage, invoke, kwargs):
         started = time.monotonic()
         response = None
         status = "error"
         try:
-            response = await self.context.llm_generate(**kwargs)
-            status = "success"
+            response = await invoke(**kwargs)
+            status = "error" if getattr(response, "role", "") == "err" else "success"
             return response
         except asyncio.CancelledError:
             status = "cancelled"
@@ -36,6 +51,36 @@ class AuxiliaryUsage:
                 if isinstance(raw, dict)
                 else getattr(raw, "model", "")
             )
+            system_chars = len(kwargs.get("system_prompt") or "")
+            prompt_chars = len(kwargs.get("prompt") or "")
+            for message in kwargs.get("contexts") or []:
+                content = (
+                    message.content
+                    if isinstance(message, Message)
+                    else message.get("content")
+                ) or ""
+                role = (
+                    message.role
+                    if isinstance(message, Message)
+                    else message.get("role")
+                )
+                length = (
+                    len(content)
+                    if isinstance(content, str)
+                    else sum(
+                        len(
+                            part.text
+                            if isinstance(part, TextPart)
+                            else part.get("text") or ""
+                        )
+                        for part in content
+                        if isinstance(part, (TextPart, dict))
+                    )
+                )
+                if role == "system":
+                    system_chars += length
+                else:
+                    prompt_chars += length
             self.pending.append(
                 {
                     "bucket": int(time.time() // 3600) * 3600,
@@ -50,8 +95,8 @@ class AuxiliaryUsage:
                     "input_cached": int(getattr(usage, "input_cached", 0) or 0),
                     "input_other": int(getattr(usage, "input_other", 0) or 0),
                     "output": int(getattr(usage, "output", 0) or 0),
-                    "system_chars": len(kwargs.get("system_prompt") or ""),
-                    "prompt_chars": len(kwargs.get("prompt") or ""),
+                    "system_chars": system_chars,
+                    "prompt_chars": prompt_chars,
                     "seconds": round(time.monotonic() - started, 3),
                 }
             )
@@ -86,3 +131,37 @@ class AuxiliaryUsage:
         retry = rows + self.pending
         self.dropped += max(0, len(retry) - 512)
         self.pending = retry[-512:]
+
+
+class MeteredProviderManager:
+    """A single loop's native Context delegates everything except its transport."""
+
+    def __init__(self, manager, usage, stage, provider_id):
+        self.manager = manager
+        self.usage = usage
+        self.stage = stage
+        self.provider_id = provider_id
+
+    def __getattr__(self, name):
+        return getattr(self.manager, name)
+
+    async def get_provider_by_id(self, identifier):
+        provider = await self.manager.get_provider_by_id(identifier)
+        if provider is None:
+            return None
+        # The wrapper is scoped to this Context. Calls still execute on the
+        # original client; no global provider method/config/lifecycle is patched.
+        wrapped = copy.copy(provider)
+
+        # chat_provider_id belongs to metering, not the provider transport.
+        async def invoke(**kwargs):
+            kwargs.pop("chat_provider_id", None)
+            return await provider.text_chat(**kwargs)
+
+        async def measured(**kwargs):
+            return await self.usage.measure(
+                self.stage, invoke, kwargs | {"chat_provider_id": self.provider_id}
+            )
+
+        wrapped.text_chat = measured
+        return wrapped

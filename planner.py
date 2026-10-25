@@ -402,7 +402,8 @@ class PlannerSession:
             tools.append(tool)
         await self.check_current()
         try:
-            response = await self.plugin.context.tool_loop_agent(
+            response = await self.plugin.auxiliary.tool_loop(
+                "planner",
                 event=self.event,
                 chat_provider_id=provider,
                 system_prompt=PLANNER_SYSTEM,

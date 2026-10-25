@@ -2,7 +2,6 @@
 
 import asyncio
 import json
-from functools import partial
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
@@ -11,7 +10,7 @@ from astrbot.api.event import AstrMessageEvent
 from astrbot.api.platform import MessageType, PlatformMetadata
 from astrbot.core.agent.tool import FunctionTool, ToolSet
 from astrbot.core.message.components import At, Image, Plain, Reply
-from astrbot.core.provider.entities import LLMResponse
+from astrbot.core.provider.entities import LLMResponse, TokenUsage
 from astrbot.core.provider.provider import Provider
 from astrbot.core.star.context import Context
 
@@ -43,10 +42,12 @@ def native_planner(participant):
     provider.provider_config = {}
     provider.text_chat = AsyncMock()
     native = Context.__new__(Context)
+    native.__dict__.update(participant.context.__dict__)
     native.provider_manager = SimpleNamespace(
         get_provider_by_id=AsyncMock(return_value=provider)
     )
-    participant.context.tool_loop_agent = partial(Context.tool_loop_agent, native)
+    participant.context = native
+    participant.auxiliary.context = native
     participant.memory.planning_context = AsyncMock(return_value=([], "没有历史背景"))
     return participant, provider
 
@@ -128,6 +129,49 @@ async def test_private_continuation_retains_native_tools_despite_group_zero_freq
     with pytest.raises(StopAsyncIteration):
         await anext(replies)
     assert provider.text_chat.await_count == 3
+
+
+async def test_each_native_planner_transport_is_metered_without_patching_provider(
+    native_planner,
+):
+    plugin, provider = native_planner
+    transport = provider.text_chat
+    responses = [
+        action("search_memory", query="上次的文件"),
+        action("reply", msg_id="1", reply_reference="根据查询回答。"),
+        action("stop"),
+    ]
+    for response in responses:
+        response.usage = TokenUsage(input_cached=10, input_other=3, output=2)
+        response.raw_completion = {"model": "actual-planner-model"}
+    transport.side_effect = responses
+    plugin.memory.recall = AsyncMock(return_value=([], "没有历史"))
+    incoming = event("usage", text="帮我找文件")
+    incoming.is_at_or_wake_command = True
+    replies = plugin.participate(incoming)
+    await anext(replies)
+    await send_reply(plugin, incoming, "文件找到了。")
+    with pytest.raises(StopAsyncIteration):
+        await anext(replies)
+    await plugin.auxiliary.flush()
+    row = next(
+        row
+        for row in await plugin.store.call("auxiliary_usage")
+        if row["stage"] == "planner"
+    )
+    assert (
+        row["calls"],
+        row["reported"],
+        row["input_cached"],
+        row["input_other"],
+        row["output"],
+    ) == (3, 3, 30, 9, 6)
+    assert row["model"] == "actual-planner-model"
+    assert row["system_chars"] and row["prompt_chars"]
+    assert provider.text_chat is transport
+    assert all(
+        "chat_provider_id" not in call.kwargs for call in transport.await_args_list
+    )
 
 
 async def test_native_memory_query_reply_receipt_and_stop(native_planner):
