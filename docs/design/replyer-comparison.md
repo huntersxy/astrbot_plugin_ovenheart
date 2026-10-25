@@ -12,3 +12,20 @@ scripts/maibot_replyer_probe.py从固定提交5c7637e6913c84d1c3d5e742fa9e95a7e7
 
 
 生产迁入验收：目标作用域fe652f23dfaf91f8af330597的原生SQLite中，1782条旧来源映射、两个完成切换标记均存在，持久化队列清空；完整快照20261025-200001-5c6ce425.sqlite3为95535104字节。原生钩子仍绑定正常。该证据只覆盖此群/人格，不扩展为其它作用域已经迁入。
+
+
+## 2026-10-26 已验证的回复器阶段
+
+最初的内部ContentContextMessage被原版按设计过滤；该批参考结果作废，文件名带filtered-input或preclock，不用于结论。回放改为在独立实例中通过原版chat_manager建立合成会话，构造SessionMessage并执行其真实process，再通过SessionBackedMessage进入回复器。每次模型请求前检查实际ContextItem文本中存在本轮原话及完整宿主人格，任何一项缺失就停止，不调用模型。
+
+固定原生样本的已捕获时间分钟，仅在隔离参考进程内替换时钟环境，源算法和生产时钟不变。三组有效报告均为query_in_request=true、persona_in_request=true、clock_frozen_to_native_minute=true；使用同一配置提供商workbuddy/cn:deepseek-v4.1-flash。参考侧model字段native-reference是本次隔离配置别名，configured_model记录实际请求的模型ID，不把该别名当成提供商上报型号。
+
+| 场景 | 原生工坊示例 | 原版真实回复器 |
+| --- | --- | --- |
+| 只想吐槽，不要建议 | 这不就是把我当插座使嘛，插完这个插那个，还不给电费 | 这确实挺烦的……一群人干活，凭什么活都往你这儿堆 |
+| 被熟人调侃翻车 | 嘴硬什么呀，我这叫用身体验证了坑的深度，多有奉献精神 | 我才没嘴硬，就是坑有点滑而已 |
+| 明确纠正8G为16G | 我看错了，是16G没错 | 是16G，我刚刚看错了 |
+
+该小样本里，纠错与接梗已接近；原生第一条出现将对方遭遇说成“我”的人称带入，已在共用表达参考规则明确借句式时转换人称。它不证明正式多轮主链已有相同问题，也不证明修改后所有场景都解决。
+
+有效原始报告在本机docs/evaluation/2026-10-26-replyer-{listening,teasing,correction}-verified.json。该目录不进入Git，报告只含合成输入、可见回复及元数据，不含密钥、人格原文、推理内容。原生工坊示例未运行正式Planner/群聊历史/工具，不能把这三条等同于完整系统对照，整体目标仍未完成。

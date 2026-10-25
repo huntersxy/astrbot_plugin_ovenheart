@@ -76,15 +76,24 @@ async def run(args, packet):
     os.chdir(instance)
     sys.path.insert(0, str(source))
 
+    from src.chat.message_receive.chat_manager import chat_manager
+    from src.chat.message_receive.message import SessionMessage
+    from src.chat.replyer import maisaka_generator_base
     from src.chat.replyer.maisaka_expression_selector import maisaka_expression_selector
     from src.chat.replyer.maisaka_generator import MaisakaReplyGenerator
+    from src.common.data_models.mai_message_data_model import (
+        GroupInfo,
+        MessageInfo,
+        UserInfo,
+    )
     from src.common.data_models.message_component_data_model import (
         MessageSequence,
         TextComponent,
     )
     from src.config.config import global_config, model_config
     from src.config.model_configs import APIProvider, ModelInfo, TaskConfig
-    from src.maisaka.context.messages import ContentContextMessage
+    from src.llm_models.payload_content.context_item import get_item_text
+    from src.maisaka.context.messages import SessionBackedMessage
 
     provider = packet["provider"]
     if provider["type"] not in ("openai_chat_completion", "openai_responses"):
@@ -102,6 +111,23 @@ async def run(args, packet):
     if not isinstance(persona, str):
         raise ValueError("Persona input is invalid")
     body = provider.get("custom_extra_body") or {}
+    clock_match = re.search(
+        r"Current datetime: (\d{4}-\d{2}-\d{2} \d{2}:\d{2})",
+        packet.get("ovenheart", {}).get("time_context") or "",
+    )
+    replay_time = (
+        datetime.strptime(clock_match[1], "%Y-%m-%d %H:%M")
+        if clock_match
+        else datetime.now()
+    )
+    if clock_match:
+
+        class ReplayClock(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return replay_time if tz is None else replay_time.astimezone(tz)
+
+        maisaka_generator_base.datetime = ReplayClock
     api = APIProvider(
         name="native-reference",
         base_url=provider["api_base"],
@@ -138,7 +164,39 @@ async def run(args, packet):
         def _build_personality_prompt(self):
             return persona
 
-    replyer = NativeIdentityReplyer()
+        def _build_request_messages(self, **kwargs):
+            messages = super()._build_request_messages(**kwargs)
+            normalized = " ".join(query.split())
+            self.input_verified = any(
+                normalized in " ".join(get_item_text(item).split()) for item in messages
+            )
+            self.persona_verified = any(
+                persona in get_item_text(item) for item in messages
+            )
+            if not self.input_verified or not self.persona_verified:
+                raise ValueError(
+                    "Reference input or persona was filtered before the model request"
+                )
+            return messages
+
+    session = await chat_manager.get_or_create_session(
+        platform="ovenheart-reference",
+        user_id="synthetic-human",
+        group_id="synthetic-room",
+    )
+    message = SessionMessage(
+        "synthetic-reference-input", replay_time, platform="ovenheart-reference"
+    )
+    message.session_id = session.session_id
+    message.message_info = MessageInfo(
+        user_info=UserInfo("synthetic-human", "合成群友"),
+        group_info=GroupInfo("synthetic-room", "隔离对照群"),
+    )
+    message.raw_message = MessageSequence([TextComponent(text=query)])
+    await message.process(
+        enable_heavy_media_analysis=False, enable_voice_transcription=False
+    )
+    replyer = NativeIdentityReplyer(chat_stream=session)
     traits = packet.get("traits", [])
     expressions = [
         {"situation": trait["situation"], "style": trait["content"]}
@@ -155,15 +213,17 @@ async def run(args, packet):
     ]
     habits = maisaka_expression_selector._build_expression_habits_block(expressions)
     history = [
-        ContentContextMessage(
-            raw_message=MessageSequence([TextComponent(text=query)]),
-            visible_text=query,
-            timestamp=datetime.now(),
+        SessionBackedMessage.from_session_message(
+            message,
+            raw_message=message.raw_message,
+            visible_text=message.processed_plain_text,
         )
     ]
     success, result = await asyncio.wait_for(
         replyer.generate_reply_with_context(
             chat_history=history,
+            reply_message=message,
+            stream_id=session.session_id,
             expression_habits=habits,
             selected_expression_ids=[trait["id"] for trait in traits],
             reply_tool_args={
@@ -203,6 +263,9 @@ async def run(args, packet):
         "request_chars": len(result.completion.request_prompt),
         "persona_literal_in_prompt_dump": persona in result.completion.request_prompt,
         "query_literal_in_prompt_dump": query in result.completion.request_prompt,
+        "query_in_request": replyer.input_verified,
+        "persona_in_request": replyer.persona_verified,
+        "clock_frozen_to_native_minute": bool(clock_match),
         "selected_expression_ids": result.selected_expression_ids,
         "traits": [
             {
@@ -228,6 +291,7 @@ async def run(args, packet):
             "No Planner, action tools, learning, memory or IM delivery is exercised.",
             "Native persona is returned verbatim by the identity adapter.",
             "Native selector choices are fixed for this replyer-only comparison.",
+            "Only the isolated source clock is fixed to the native example's captured minute.",
             "Reference expression.style maps native content; separate native evidence examples are not copied into that field.",
             "Reference output cap defaults to 4096 when native config has no explicit cap.",
         ],
