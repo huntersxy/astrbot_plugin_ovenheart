@@ -366,6 +366,7 @@ async def main(args):
                         "participation_mode": "observe",
                         "planner_provider_id": "controlled-smoke",
                         "planner_mode": "legacy",
+                        "person_memory_enabled": False,
                     }
                 )
                 controlled = AsyncMock(
@@ -482,9 +483,12 @@ async def main(args):
                         "participation_debounce": 1,
                         "memory_enabled": False,
                         "jev_enabled": False,
+                        "person_memory_enabled": True,
+                        "person_memory_min_messages": 30,
+                        "learning_enabled": True,
                     }
                 )
-                planner_old = incoming("planner-old", "先问文件在哪儿", "bob")
+                planner_old = incoming("planner-old", "我是学生，先问文件在哪儿", "bob")
                 planner_new = incoming("planner-new", "我还想问另一个问题", "alice")
                 planner_new.set_extra("selected_provider", "native-chat")
                 planner_calls, reply_calls, planner_inputs = [], [], []
@@ -495,14 +499,51 @@ async def main(args):
                         index = len(planner_calls)
                         planner_calls.append(index)
                         planner_inputs.append(str(kwargs))
-                        if index < 2:
-                            source = "planner-old" if index == 0 else "planner-new"
+                        if index < 4:
+                            source = "planner-new" if index == 3 else "planner-old"
                             target = next(
                                 m
                                 for window in plugin.participation.windows.values()
                                 for m in window["messages"]
                                 if m.get("message_id") == source
                             )
+                            if index == 0:
+                                return LLMResponse(
+                                    role="assistant",
+                                    tools_call_name=["remember_person_fact"],
+                                    tools_call_ids=["remember-student"],
+                                    tools_call_args=[
+                                        {
+                                            "msg_id": str(target["sequence"]),
+                                            "facts": [
+                                                {
+                                                    "key": "occupation",
+                                                    "value": "职业：学生",
+                                                    "section": "identity_settings",
+                                                    "stability": "stable",
+                                                    "cardinality": "single",
+                                                    "polarity": "positive",
+                                                    "corrects": [],
+                                                    "evidence": [
+                                                        {
+                                                            "source_id": "planner-old",
+                                                            "quote": "我是学生",
+                                                        }
+                                                    ],
+                                                }
+                                            ],
+                                        }
+                                    ],
+                                )
+                            if index == 1:
+                                return LLMResponse(
+                                    role="assistant",
+                                    tools_call_name=["query_person_profile"],
+                                    tools_call_ids=["query-student"],
+                                    tools_call_args=[
+                                        {"msg_id": str(target["sequence"])}
+                                    ],
+                                )
                             return LLMResponse(
                                 role="assistant",
                                 tools_call_name=["reply"],
@@ -548,9 +589,9 @@ async def main(args):
                     "planner_calls": len(planner_calls),
                     "reply_calls": len(reply_calls),
                     "replies": actual,
-                    "receipt_returned": len(planner_inputs) == 3
-                    and "先看看下载目录。" in planner_inputs[1]
-                    and "另一个问题也说来听听。" in planner_inputs[2],
+                    "receipt_returned": len(planner_inputs) == 5
+                    and "先看看下载目录。" in planner_inputs[3]
+                    and "另一个问题也说来听听。" in planner_inputs[4],
                     "history_saved": "先看看下载目录。" in saved_history
                     and "另一个问题也说来听听。" in saved_history,
                     "stopped": not plugin.participation.planner.sessions,
@@ -560,6 +601,10 @@ async def main(args):
                     "source_restored": planner_new.message_obj.message_id
                     == "planner-new"
                     and planner_new.get_sender_id() == "alice",
+                    "person_memory_shared": len(planner_inputs) == 5
+                    and "职业：学生" in planner_inputs[2]
+                    and "职业：学生" in reply_calls[0],
+                    "person_memory_temporary": "职业：学生" not in saved_history,
                 }
                 planner_scope = (await plugin.resolve_scope(planner_new))[0]
                 report["native_continuous_planner"]["decisions"] = (
@@ -791,7 +836,7 @@ async def main(args):
             if args.smoke:
                 continuous = report["native_continuous_planner"]
                 report["checks"]["native_continuous_planner"] = (
-                    continuous["planner_calls"] == 3
+                    continuous["planner_calls"] == 5
                     and continuous["reply_calls"] == 2
                     and continuous["replies"]
                     == ["先看看下载目录。", "另一个问题也说来听听。"]
@@ -800,6 +845,8 @@ async def main(args):
                     and continuous["stopped"]
                     and continuous["no_errors"]
                     and continuous["source_restored"]
+                    and continuous["person_memory_shared"]
+                    and continuous["person_memory_temporary"]
                 )
                 report["checks"]["native_structured_context"] = report[
                     "native_structured_context"

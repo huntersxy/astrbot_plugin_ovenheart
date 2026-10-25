@@ -82,6 +82,30 @@
     "default": "",
     "hint": "留空使用该会话当前模型；填写 AstrBot 已配置的提供商 ID。"
   },
+  "person_memory_enabled": {
+    "description": "人物记忆与画像",
+    "type": "bool",
+    "default": true,
+    "hint": "使用移植的 A_memorix 事实账本维护有来源的人物画像，按真实会话和人格隔离；独立于 LivingMemory 回忆召回。暂停学习时停止自动更新。"
+  },
+  "person_memory_min_messages": {
+    "description": "人物记忆最少新发言",
+    "type": "int",
+    "default": 6,
+    "slider": {"min": 1, "max": 30, "step": 1}
+  },
+  "person_memory_interval": {
+    "description": "人物记忆更新间隔秒数",
+    "type": "int",
+    "default": 600,
+    "slider": {"min": 0, "max": 86400, "step": 60}
+  },
+  "person_memory_provider_id": {
+    "description": "人物记忆提取模型 ID",
+    "type": "string",
+    "default": "",
+    "hint": "留空使用学习模型或当前会话模型。更新在后台运行，不阻塞回复。"
+  },
   "target_senders": {
     "description": "只向这些用户学习",
     "type": "list",

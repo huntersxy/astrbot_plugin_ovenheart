@@ -16,11 +16,13 @@ from astrbot.core.agent.tool import FunctionTool, ToolSet
 
 from .learning import build_guidance
 from .participation import offered_messages, parse_plan, planner_message
+from .person_memory import FACTS_SCHEMA
 from .settings import SHARED_SCOPE
 
 PLANNER_SYSTEM = """你正在以当前人格参加真实群聊。你负责持续规划，正文由 reply 工具的回复器生成。
 根据真实消息、身份、习惯和已获准访问的记忆判断自己为什么要说话，而非每句都答。
-通过工具行动：reply 提交具体回复策略；search_memory 查询缺失的背景；wait 等待后续；stop 结束参与。
+通过工具行动：reply 提交具体回复策略；search_memory 查询缺失的背景；query_person_profile 查看真实对象的画像和事实来源；remember_person_fact 记录或更正此人自己的明确陈述；wait 等待后续；stop 结束参与。
+人物事实只能引用目标作者自己的原文；不把引用、转述、玩笑和推测变成稳定了解。明确更正时先查当前事实，并引用对应 claim_id；新事实写入不会自动发群消息。
 reply_reference 必须交代本轮必要的聊天状态、对象、已知事实或关系、具体回应方向，不是要发送的正文。不要只写“自然接话”。
 reply 的结果会提供实际回复和发送钩子状态。收到结果后继续判断：是否还有不同的内容值得说、需要等人补充，或者应结束。
 不要重复回答已经回复过的消息，不要把连续发送当作积极参与；没有新内容时使用 wait 或 stop。
@@ -72,6 +74,21 @@ ACTION_SCHEMAS = {
         "required": ["query"],
         "additionalProperties": False,
     },
+    "query_person_profile": {
+        "type": "object",
+        "properties": {"msg_id": {"type": "string", "pattern": "^[0-9]+$"}},
+        "required": ["msg_id"],
+        "additionalProperties": False,
+    },
+    "remember_person_fact": {
+        "type": "object",
+        "properties": {
+            "msg_id": {"type": "string", "pattern": "^[0-9]+$"},
+            "facts": FACTS_SCHEMA["properties"]["facts"],
+        },
+        "required": ["msg_id", "facts"],
+        "additionalProperties": False,
+    },
 }
 
 
@@ -115,6 +132,31 @@ class PlannerSession:
 
     async def invoke(self, name, arguments):
         await self.check_current()
+        if name in ("query_person_profile", "remember_person_fact"):
+            target = next(
+                (
+                    m
+                    for m in self.messages
+                    if not m.get("self") and str(m["sequence"]) == arguments["msg_id"]
+                ),
+                None,
+            )
+            if target is None:
+                return "错误：人物目标必须来自本轮真实人类发言。"
+            if name == "query_person_profile":
+                result = await self.plugin.person_memory.query(
+                    self.event, self.scope, self.persona, target["sender_id"]
+                )
+            else:
+                result = await self.plugin.person_memory.remember(
+                    self.event,
+                    self.scope,
+                    self.persona,
+                    target,
+                    {"facts": arguments["facts"]},
+                )
+            await self.check_current()
+            return json.dumps(result, ensure_ascii=False)
         if name == "search_memory":
             sources = [
                 {
@@ -243,6 +285,9 @@ class PlannerSession:
         memories, memory_status = await self.plugin.memory.planning_context(
             self.event, self.persona, self.messages, self.settings
         )
+        people = await self.plugin.person_memory.context(
+            self.event, self.scope, self.persona, self.messages
+        )
         provider = (
             self.settings["planner_provider_id"]
             or self.settings["provider_id"]
@@ -252,6 +297,11 @@ class PlannerSession:
         )
         tools = []
         for name, schema in ACTION_SCHEMAS.items():
+            if (
+                name in ("query_person_profile", "remember_person_fact")
+                and not self.settings["person_memory_enabled"]
+            ):
+                continue
             tool = PlannerTool(
                 name=name,
                 description={
@@ -259,6 +309,8 @@ class PlannerSession:
                     "wait": "等待消息或超时，然后继续判断；不向群里发等待说明。",
                     "stop": "结束本轮参与并休息，不自动继续规划。",
                     "search_memory": "按当前会话和人格权限查询历史背景，结果返回后再判断。",
+                    "query_person_profile": "查询目标消息真实作者的持续画像、事实 ID 和原文证据；不按昵称猜身份。",
+                    "remember_person_fact": "记录目标作者自己的明确陈述或有来源的更正；evidence.source_id 使用消息的 message_id/source，quote 必须为原文子串。",
                 }[name],
                 parameters=schema,
             )
@@ -283,6 +335,7 @@ class PlannerSession:
                         ),
                         "recent_messages": [planner_message(m) for m in self.messages],
                         "memory_context": memories,
+                        "person_profiles": people,
                         "memory_status": memory_status,
                     },
                     ensure_ascii=False,

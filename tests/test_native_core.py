@@ -26,7 +26,7 @@ async def test_native_core_never_learns_a_stripped_builtin_command(tmp_path):
         ],
         cwd=ROOT,
         capture_output=True,
-        timeout=45,
+        timeout=60,
         creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
     )
     assert result.returncode == 0, result.stderr.decode("utf-8", errors="replace")

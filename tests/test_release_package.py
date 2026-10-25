@@ -31,6 +31,8 @@ main = importlib.import_module(spec.name+'.main')
 assert main.PersonaPlugin
 planner = importlib.import_module(spec.name+'.planner')
 assert planner.ConversationPlanner
+people = importlib.import_module(spec.name+'.person_memory')
+assert people.PersonMemory
 """
     result = subprocess.run(
         [sys.executable, "-I", "-c", code, str(extracted)],

@@ -79,6 +79,15 @@ class Store:
         row = db.execute("SELECT * FROM scopes WHERE id=?", (scope,)).fetchone()
         return dict(row) | {"profile": json.loads(row["profile"])} if row else None
 
+    def person_memory_inputs(self, db, scope, sender):
+        return [
+            dict(row)
+            for row in db.execute(
+                "SELECT id,source_id,sender,text,created FROM messages WHERE scope=? AND sender=? ORDER BY id",
+                (scope, sender),
+            )
+        ]
+
     def _transaction(self, operation: str, args: tuple):
         """Open, commit or roll back, and close one database transaction.
 

@@ -1,1 +1,2 @@
-# No dependencies beyond the AstrBot host runtime.
+# A_memorix profile classification parser, matching the pinned upstream range.
+json-repair>=0.60.1,<0.61

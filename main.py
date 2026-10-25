@@ -56,6 +56,7 @@ from .outgoing_media import OutgoingMediaBridge
 from .oven_multi import JEV_RULE, OvenMultiBridge
 from .oven_multi import reading as jev_reading
 from .participation import ParticipationController, bound_reply_messages, event_source
+from .person_memory import PersonMemory
 from .reply_payload import dumps as dump_reply_payload
 from .reply_payload import message_view, payload_view, reply_messages
 from .retrieval import HabitRetriever
@@ -406,6 +407,7 @@ class PersonaPlugin(Star):
         self.memory = MemoryBridge(context, self.owns_group_reply)
         self.group_context = GroupContextBridge(self)
         self.auxiliary = AuxiliaryUsage(context, self.store)
+        self.person_memory = PersonMemory(self)
         self.retriever = HabitRetriever(
             context, self.store, self.prompts, self.auxiliary.generate
         )
@@ -1049,6 +1051,7 @@ class PersonaPlugin(Star):
             )
         if context_only:
             return
+        await self.person_memory.observe(event, scope, persona)
         self.events[scope] = event
         self.speaker_events.pop((scope, sender), None)
         self.speaker_events[scope, sender] = event
@@ -2273,6 +2276,19 @@ class PersonaPlugin(Star):
         plan = event.get_extra("ovenheart_decision")
         if plan and plan["scope"] != scope:
             plan = None
+        people = await self.person_memory.context(
+            event, scope, persona, (plan or {}).get("messages", [])
+        )
+        if people:
+            req.extra_user_content_parts.append(
+                TextPart(
+                    text=(
+                        "[OvenHeart person profiles]\n以下是按真实成员及当前会话、人格隔离的画像，仅供内部参考。"
+                        "人物不同不得串用，当前明确更正优先于旧事实，不背诵档案。\n"
+                        + json.dumps(people, ensure_ascii=False)
+                    )
+                ).mark_as_temp()
+            )
         if not plan and not await self.conversation.prepare(event, scope, req):
             event.stop_event()
             return
@@ -2968,6 +2984,15 @@ class PersonaPlugin(Star):
             await asyncio.sleep(15)
             try:
                 await self.auxiliary.flush()
+                if (
+                    self.settings["person_memory_enabled"]
+                    and not self.person_memory.busy
+                ):
+                    for source in tuple(self.speaker_events.values()):
+                        person_scope, persona, _ = await self.resolve_scope(source)
+                        await self.person_memory.observe(source, person_scope, persona)
+                        if self.person_memory.busy:
+                            break
                 await self.store.call("prune", self.settings["retention_days"])
                 now = time.time()
                 self.learning_context = {
@@ -4104,6 +4129,7 @@ class PersonaPlugin(Star):
         await asyncio.gather(*tasks, return_exceptions=True)
         await self.auxiliary.flush()
         await self.jev.client.close()
+        await self.person_memory.close()
         self.events.clear()
         self.speaker_events.clear()
         self.learning_context.clear()
