@@ -197,7 +197,16 @@ async def test_jev_silence_batches_requests_and_never_calls_chat_planner(partici
     from tests.test_jev_owned import enable
 
     enable(participant)
-    participant.settings["participation_silence_seconds"] = 0.08
+    participant.settings["participation_silence_seconds"] = 8
+    entered, expire = asyncio.Event(), asyncio.Event()
+
+    async def quiet(changed, duration):
+        assert duration == 8
+        entered.set()
+        await expire.wait()
+        return False
+
+    participant.participation.quiet_period = AsyncMock(side_effect=quiet)
     calls = []
 
     async def judge(cfg, state, questions):
@@ -218,9 +227,12 @@ async def test_jev_silence_batches_requests_and_never_calls_chat_planner(partici
     incoming = event("jev-owner")
     task = asyncio.create_task(requests(participant, incoming))
     try:
-        await wait_calls(participant.jev.client.evaluate, 1)
+        await asyncio.wait_for(entered.wait(), 1)
         for i in range(5):
             assert not await requests(participant, event(f"jev-extra-{i}"))
+        assert len(calls) == 1
+        participant.participation.quiet_period.assert_awaited_once()
+        expire.set()
         assert len(await asyncio.wait_for(task, 1)) == 1
         assert len(calls) == 2
         participant.context.llm_generate.assert_not_awaited()
@@ -229,6 +241,7 @@ async def test_jev_silence_batches_requests_and_never_calls_chat_planner(partici
             == "jev-extra-4"
         )
     finally:
+        expire.set()
         task.cancel()
         await asyncio.gather(task, return_exceptions=True)
 

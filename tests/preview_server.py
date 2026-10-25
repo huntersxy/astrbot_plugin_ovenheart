@@ -478,6 +478,9 @@ async def api(endpoint: str, request: Request):
     handlers = {
         "state": "state",
         "library": "library",
+        "tools": "tools",
+        "history": "history",
+        "history/detail": "history_detail",
         "action": "action",
         "preview": "preview",
         "preview/model": "model_preview",

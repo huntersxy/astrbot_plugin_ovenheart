@@ -35,6 +35,8 @@ class PageAPI:
             ("state", self.state, "GET"),
             ("library", self.library, "GET"),
             ("tools", self.tools, "GET"),
+            ("history", self.history, "GET"),
+            ("history/detail", self.history_detail, "GET"),
             ("action", self.action, "POST"),
             ("preview", self.preview, "POST"),
             ("preview/model", self.model_preview, "POST"),
@@ -118,6 +120,56 @@ class PageAPI:
         if not self.plugin.ready:
             return {"status": "error", "message": "人格工坊正在初始化，请稍后刷新。"}
         return {"status": "ok", "data": self.tool_inventory()}
+
+    async def history(self):
+        return await self._history_read(False)
+
+    async def history_detail(self):
+        return await self._history_read(True)
+
+    async def _history_read(self, detail):
+        if not self.plugin.ready:
+            return {"status": "error", "message": "人格工坊正在初始化，请稍后刷新。"}
+        try:
+            scope, section = (
+                request.query.get("scope"),
+                request.query.get("section", "learning"),
+            )
+            shared = not self.plugin.settings["session_isolation"]
+            numbers = {}
+            for key in ["id"] if detail else ["offset", "anchor"]:
+                try:
+                    numbers[key] = int(request.query.get(key, "0"))
+                except (ValueError, TypeError):
+                    raise ValueError("记录编号或页码无效，请重新选择。") from None
+            if detail:
+                result = await self.plugin.store.read(
+                    "history_detail",
+                    scope,
+                    section,
+                    numbers["id"],
+                    shared,
+                )
+            else:
+                result = await self.plugin.store.read(
+                    "panel_history",
+                    scope,
+                    section,
+                    request.query.get("status", "all"),
+                    numbers["offset"],
+                    numbers["anchor"],
+                    shared,
+                )
+            return {"status": "ok", "data": result}
+        except (ValueError, TypeError) as exc:
+            return {
+                "status": "error",
+                "message": str(exc)
+                if isinstance(exc, ValueError)
+                else "记录参数无效，请重新选择。",
+            }
+        except sqlite3.Error:
+            return {"status": "error", "message": "记录暂时无法读取，请稍后刷新。"}
 
     def tool_inventory(self):
         """Read local registered tools only on the settings surface or explicit refresh."""

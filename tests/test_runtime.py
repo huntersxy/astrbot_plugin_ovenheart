@@ -838,6 +838,8 @@ async def test_native_page_validation_and_teardown(plugin):
         "/astrbot_plugin_ovenheart/state",
         "/astrbot_plugin_ovenheart/library",
         "/astrbot_plugin_ovenheart/tools",
+        "/astrbot_plugin_ovenheart/history",
+        "/astrbot_plugin_ovenheart/history/detail",
         "/astrbot_plugin_ovenheart/action",
         "/astrbot_plugin_ovenheart/preview",
         "/astrbot_plugin_ovenheart/preview/model",

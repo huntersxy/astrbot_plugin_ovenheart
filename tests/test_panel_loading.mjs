@@ -31,6 +31,27 @@ test('initial page selects its scope in one lightweight state request',async()=>
   assert.equal(f.run('selectedScope'),'a'.repeat(24));
 });
 
+test('history pagination keeps its anchor and status changes start from the latest page',async()=>{
+ const f=fixture();
+ f.run(`tab='history';data.history={section:'learning',items:[{id:22,started:1,status:'error',message:'失败批次'}],offset:0,total:23,anchor:22};historyAnchor=22;renderHistory();globalThis.calls=[];bridge.apiGet=async(endpoint,query)=>{calls.push({endpoint,query});return endpoint==='history'?{...data.history,offset:Number(query.offset),anchor:22}:data;};`);
+ await f.element('#history-next').onclick();
+ let query=JSON.parse(f.run('JSON.stringify(calls.find(c=>c.endpoint==="history").query)'));
+ assert.equal(query.offset,10);assert.equal(query.anchor,22);
+ f.run('calls=[];');
+ await f.element('#history-status').onchange({target:{value:'error'}});
+ query=JSON.parse(f.run('JSON.stringify(calls.find(c=>c.endpoint==="history").query)'));
+ assert.equal(query.offset,0);assert.equal(query.anchor,0);assert.equal(query.status,'error');
+});
+
+for(const view of [{offset:10,open:null},{offset:0,open:22}])test(`history polling keeps the current reading position (${JSON.stringify(view)})`,async()=>{
+ const f=fixture();
+ f.run(`tab='history';historyOffset=${view.offset};historyOpenId=${view.open};globalThis.calls=[];bridge.apiGet=async(endpoint,query)=>(calls.push({endpoint,query}),data);schedulePoll();`);
+ const timer=[...f.timers.values()][0];await timer.fn();
+ const calls=JSON.parse(f.run('JSON.stringify(calls)'));
+ assert.equal(calls.length,1);assert.equal(calls[0].endpoint,'state');assert.equal(calls[0].query.view,'summary');
+ assert.equal(f.run('historyOffset'),view.offset);assert.equal(f.run('historyOpenId'),view.open);
+});
+
 test('library detail starts in parallel and duplicate reads are coalesced',async()=>{
   const f=fixture();
   f.run(`tab='library';globalThis.calls=[];bridge.apiGet=(endpoint)=>{calls.push(endpoint);return new Promise(resolve=>{if(endpoint==='state')globalThis.stateDone=()=>resolve(data);else globalThis.libraryDone=()=>resolve({traits:[],total:0,offset:0});});};`);
@@ -43,7 +64,7 @@ test('library detail starts in parallel and duplicate reads are coalesced',async
 
 test('slow reads never disable navigation and stale response cannot replace the new page',async()=>{
   const f=fixture();
-  f.run(`bridge.apiGet=(endpoint,query)=>new Promise(resolve=>{if(query.view==='history')globalThis.historyDone=()=>resolve({...data,runs:[{started:1,status:'error',message:'STALE'}]});else resolve(data);});`);
+  f.run(`bridge.apiGet=(endpoint,query)=>new Promise(resolve=>{if(endpoint==='history')globalThis.historyDone=()=>resolve({section:'learning',items:[{id:1,started:1,status:'error',message:'STALE'}],total:1,offset:0});else resolve(data);});`);
   const slow=f.nav.find(n=>n.dataset.tab==='history').onclick();
   assert.equal(f.run('tab'),'history');
   assert.ok(f.nav.every(n=>!n.disabled));
@@ -139,11 +160,11 @@ test('save in another view does not abandon a pending navigation',async()=>{
  const saving=f.run('mutate("profile",{})');
  const navigation=f.nav.find(n=>n.dataset.tab==='history').onclick();
  f.run('savedDone({message:"已保存"});');await saving;
- assert.equal(f.run('finishes.length'),2);
+ assert.equal(f.run('finishes.length'),4);
  f.run('finishes.forEach(resolve=>resolve(data));');await navigation;
  await new Promise(resolve=>setImmediate(resolve));
  assert.equal(f.run('tab'),'history');
- assert.ok(f.element('#content').innerHTML.includes('修改前的版本'));
+ assert.ok(f.element('#content').innerHTML.includes('历史版本'));
 });
 
 test('settings renders before the slow tool inventory and keeps edits during lazy load',async()=>{

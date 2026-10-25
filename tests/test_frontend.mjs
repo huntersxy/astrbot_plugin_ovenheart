@@ -69,6 +69,41 @@ function fixture() {
   return {context, element, confirmations};
 }
 
+test('library selection keeps list scroll and resets only the new detail pane', async () => {
+  const {context,element}=fixture();
+  const rows=[{dataset:{trait:'1'}},{dataset:{trait:'2'}}];
+  context.document.querySelectorAll=selector=>selector==='[data-trait]' ? rows : [];
+  runInContext(`data.traits.push({...data.traits[0],id:2,situation:'第二条'});dirty=false;renderLibrary();`,context);
+  element('#library-list').scrollTop=4100;
+  element('#library-detail').scrollTop=800;
+  await rows[1].onclick();
+  assert.equal(element('#library-list').scrollTop,4100);
+  assert.equal(element('#library-detail').scrollTop,0);
+  assert.equal(runInContext('selectedTrait',context),2);
+  element('#library-detail').scrollTop=300;
+  runInContext('renderLibrary()',context);
+  assert.equal(element('#library-list').scrollTop,4100);
+  assert.equal(element('#library-detail').scrollTop,300);
+});
+
+test('mobile library back and reopening the selected entry preserve unsaved edits', async () => {
+  const {context,element}=fixture();
+  const row={dataset:{trait:'1'}};
+  context.window.innerWidth=390;
+  context.document.querySelectorAll=selector=>selector==='[data-trait]' ? [row] : [];
+  runInContext('renderLibrary();dirty=true;',context);
+  element('#field-content').value='尚未保存的编辑';
+  element('#library-list').scrollTop=2500;
+  await row.onclick();
+  assert.equal(element('#library-workspace').dataset.detail,'true');
+  element('#library-back').onclick();
+  assert.equal(element('#library-workspace').dataset.detail,'false');
+  await row.onclick();
+  assert.equal(element('#field-content').value,'尚未保存的编辑');
+  assert.equal(element('#library-list').scrollTop,2500);
+  assert.equal(runInContext('dirty',context),true);
+});
+
 for (const [selector, variable, oldValue, nextValue] of [['#kind-filter','category','all','expression'],['#status-filter','status','pending','active']]) {
   test(`cancel ${variable} filter change preserves unsaved editor and selection`, async () => {
     const {context, element, confirmations} = fixture();
@@ -96,7 +131,7 @@ for (const [selector, variable, oldValue, nextValue] of [['#kind-filter','catego
 
 test('participation history escapes model text and labels observation honestly', () => {
   const {context,element}=fixture();
-  runInContext(`data={settings:{participation_mode:'observe'},runs:[],revisions:[],applications:[],decisions:[{created:1,action:'reply',confidence:.9,mode:'observe',outcome:'observed',reason:'<img src=x onerror=alert(1)>',intent:'先倾听'}]}; renderHistory();`,context);
+  runInContext(`historySection="participation";data={settings:{participation_mode:'observe'},runs:[],revisions:[],applications:[],decisions:[{created:1,action:'reply',confidence:.9,mode:'observe',outcome:'observed',reason:'<img src=x onerror=alert(1)>',intent:'先倾听'}]}; renderHistory();`,context);
   const html=element('#content').innerHTML;
   assert.ok(html.includes('&lt;img src=x onerror=alert(1)&gt;'));
   assert.ok(!html.includes('<img src=x'));
@@ -140,7 +175,7 @@ test('learning self-check reasons are visible and escaped in history and the lib
   assert.ok(!html.includes('<img src=x'));
   runInContext(`data.settings={participation_mode:'off'};data.revisions=[];data.applications=[];data.decisions=[];renderHistory();`,context);
   html=element('#content').innerHTML;
-  assert.ok(html.includes('查看自检提示与候选'));
+  assert.ok(html.includes('自检提示与候选'));
   assert.ok(html.includes('未通过的更新不改旧条目'));
   assert.ok(html.includes('&lt;img src=x onerror=alert(1)&gt;'));
   assert.ok(!html.includes('<img src=x'));

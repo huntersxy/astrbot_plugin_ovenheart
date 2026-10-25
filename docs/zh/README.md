@@ -4,7 +4,7 @@
 
 [返回首页](../../README.md) · [English](../en/README.md) · [更新记录](../../CHANGELOG.md)
 
-本指南适用于 0.63.1。需要 AstrBot `>=4.29.1,<5`。宿主 Python 要求以对应 AstrBot 版本为准。
+本指南适用于 0.64.0。需要 AstrBot `>=4.29.1,<5`。宿主 Python 要求以对应 AstrBot 版本为准。
 
 插件市场归类为「AI 增强」，展示名为「烤箱之心」，当前支持 QQ / OneBot v11（`aiocqhttp`），其他平台未适配。
 

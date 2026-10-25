@@ -50,7 +50,14 @@ class Store:
 
     async def read(self, operation: str, *args):
         """Panel-only consistent WAL reads never queue behind the write lock."""
-        if operation not in {"state", "library", "auxiliary_usage", "scope_profile"}:
+        if operation not in {
+            "state",
+            "library",
+            "auxiliary_usage",
+            "scope_profile",
+            "panel_history",
+            "history_detail",
+        }:
             raise ValueError("Unsupported Panel read")
         if operation == "auxiliary_usage" and args:
             raise ValueError("Usage writes must use a transaction")
@@ -149,6 +156,8 @@ class Store:
                 id INTEGER PRIMARY KEY, scope TEXT NOT NULL, action TEXT NOT NULL,
                 snapshot TEXT NOT NULL, created REAL NOT NULL
             );
+            CREATE INDEX IF NOT EXISTS revisions_panel ON revisions(scope,id,action,created);
+            CREATE INDEX IF NOT EXISTS runs_scope_id ON runs(scope,id);
             CREATE TABLE IF NOT EXISTS trait_aliases (
                 scope TEXT NOT NULL, fingerprint TEXT NOT NULL, trait_id INTEGER NOT NULL,
                 PRIMARY KEY(scope, fingerprint)
@@ -854,6 +863,146 @@ class Store:
             trait["evidence"] = json.loads(trait["evidence"])
             trait["examples"] = json.loads(trait["examples"])
         return traits
+
+    @staticmethod
+    def _history_spec(section):
+        specs = {
+            "learning": (
+                "runs",
+                "status",
+                {"success", "running", "error"},
+                "id,scope,status,started,finished,count,substr(message,1,240) message,json_extract(review,'$.passed') passed,json_extract(review,'$.flagged') flagged",
+            ),
+            "participation": (
+                "decisions",
+                "outcome",
+                {"admitted", "waiting", "observed", "limited", "cancelled", "error"},
+                "id,scope,action,confidence,mode,outcome,created,substr(reason,1,240) reason",
+            ),
+            "replies": (
+                "turn_traces",
+                "status",
+                {"prepared", "send_hook", "cancelled", "empty_response"},
+                "id,scope,status,created,updated,json_extract(details,'$.route') route,json_extract(details,'$.target_sender') target_sender",
+            ),
+            "applications": (
+                "applications",
+                "mode",
+                set(),
+                "id,scope,mode,created,json_array_length(trait_ids) trait_count",
+            ),
+            "versions": ("revisions", "action", set(), "id,scope,action,created"),
+        }
+        if section not in specs:
+            raise ValueError("记录分类无效，请重新选择。")
+        return specs[section]
+
+    @staticmethod
+    def _history_scopes(db, scope, section, shared):
+        if (
+            not isinstance(scope, str)
+            or len(scope) != 24
+            or not db.execute("SELECT 1 FROM scopes WHERE id=?", (scope,)).fetchone()
+        ):
+            raise ValueError("请先选择有效的来源会话。")
+        return list(
+            dict.fromkeys(
+                [scope, SHARED_SCOPE] if shared and section == "versions" else [scope]
+            )
+        )
+
+    def panel_history(
+        self,
+        db,
+        scope,
+        section="learning",
+        status="all",
+        offset=0,
+        anchor=0,
+        shared=False,
+    ):
+        """Read one bounded category; an ID anchor keeps older pages stable."""
+        table, column, choices, fields = self._history_spec(section)
+        if status != "all" and status not in choices:
+            raise ValueError("记录状态筛选无效。")
+        if (
+            type(offset) is not int
+            or not 0 <= offset < 2**63
+            or type(anchor) is not int
+            or not 0 <= anchor < 2**63
+        ):
+            raise ValueError("记录页码无效。")
+        scopes = self._history_scopes(db, scope, section, shared)
+        where = "scope IN (" + ",".join("?" for _ in scopes) + ")"
+        counts = {}
+        for kind in (
+            "learning",
+            "participation",
+            "replies",
+            "applications",
+            "versions",
+        ):
+            other = self._history_spec(kind)[0]
+            owners = self._history_scopes(db, scope, kind, shared)
+            counts[kind] = db.execute(
+                "SELECT COUNT(*) FROM "
+                + other
+                + " WHERE scope IN ("
+                + ",".join("?" for _ in owners)
+                + ")",
+                owners,
+            ).fetchone()[0]
+        if not anchor:
+            anchor = db.execute(
+                f"SELECT COALESCE(MAX(id),0) FROM {table} WHERE {where}", scopes
+            ).fetchone()[0]
+        values = [*scopes, anchor]
+        where += " AND id<=?"
+        if status != "all":
+            where += f" AND {column}=?"
+            values.append(status)
+        total = db.execute(
+            f"SELECT COUNT(*) FROM {table} WHERE {where}", values
+        ).fetchone()[0]
+        offset = min(offset // 10, max(0, (total - 1) // 10)) * 10
+        items = [
+            dict(r)
+            for r in db.execute(
+                f"SELECT {fields} FROM {table} WHERE {where} ORDER BY id DESC LIMIT 10 OFFSET ?",
+                (*values, offset),
+            )
+        ]
+        return {
+            "scope": scope,
+            "section": section,
+            "status": status,
+            "items": items,
+            "total": total,
+            "offset": offset,
+            "limit": 10,
+            "anchor": anchor,
+            "counts": counts,
+        }
+
+    def history_detail(self, db, scope, section, identifier, shared=False):
+        table, _, _, _ = self._history_spec(section)
+        owners = self._history_scopes(db, scope, section, shared)
+        if type(identifier) is not int or not 0 < identifier < 2**63:
+            raise ValueError("记录编号无效。")
+        fields = "id,scope,action,created" if section == "versions" else "*"
+        row = db.execute(
+            f"SELECT {fields} FROM {table} WHERE id=? AND scope IN ("
+            + ",".join("?" for _ in owners)
+            + ")",
+            (identifier, *owners),
+        ).fetchone()
+        if not row:
+            raise ValueError("这条记录已清理或不属于当前会话，请刷新后重选。")
+        result = dict(row)
+        for key in ("review", "details", "trait_ids"):
+            if key in result:
+                result[key] = json.loads(result[key])
+        return result
 
     def library(
         self, db, scope="all", kind="all", status="pending", offset=0, review="all"

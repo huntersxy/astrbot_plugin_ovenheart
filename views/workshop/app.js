@@ -8,6 +8,12 @@ const reviewGroups = {passed:"自检通过", flagged:"自检存疑", unknown:"�
 const reviewIssues = {learning_target:"学习对象混淆", evidence:"证据不足", scope:"适用范围或前提", identity:"身份或个人事实", merge:"合并不相容", delivery:"投递或工具要求", other:"其他问题"};
 let libraryScope = "all", libraryOffset = 0, reviewFilter = "all";
 const librarySelection = new Map();
+const libraryPositions = new Map(), historyDetails = new Map();
+let libraryMobileDetail = false, libraryPageScroll = 0, libraryFiltersOpen = false;
+let historySection = "learning", historyStatus = "all", historyOffset = 0, historyAnchor = 0, historyOpenId = null;
+const historySections = {learning:"学习批次", participation:"参与判断", replies:"回复链路", applications:"习惯引用", versions:"历史版本"};
+const historyStatuses = {learning:{error:"失败", running:"学习中", success:"完成"}, participation:{admitted:"交给宿主", waiting:"静默等待", observed:"旁观", limited:"冷却或限额", cancelled:"已取消", error:"决策失败"}, replies:{send_hook:"发送阶段", prepared:"已组装", cancelled:"已取消", empty_response:"未生成回复"}, applications:{}, versions:{}};
+
 
 function reviewLabel(trait) {
   if (trait.review?.approved === true) return "自检通过";
@@ -37,8 +43,8 @@ const readRequests = new Map();
 const viewCache = new Map();
 const localOperations = new Set();
 let loadVersion = 0, cacheEpoch = 0, editVersion = 0, pollTimer, pollErrors = 0, toolsCache;
-const viewKey = () => JSON.stringify([selectedScope, tab, libraryScope, category, status, libraryOffset, reviewFilter]);
-const viewName = () => ["library", "prompts"].includes(tab) ? "summary" : tab;
+const viewKey = () => JSON.stringify([selectedScope, tab, ...(tab === "library" ? [libraryScope, category, status, libraryOffset, reviewFilter] : tab === "history" ? [historySection, historyStatus, historyOffset, historyAnchor] : [])]);
+const viewName = () => ["library", "prompts", "history"].includes(tab) ? "summary" : tab;
 
 function deadline(promise, milliseconds, message) {
   let timer;
@@ -102,12 +108,14 @@ function showView() {
 }
 
 async function load(renderContent = true) {
+  if (renderContent && tab === "history" && !historyOffset && !historyOpenId) historyAnchor = 0;
   const version = ++loadVersion, key = viewKey(), scopeAtStart = selectedScope;
   const pageAtStart = tab, view = renderContent ? viewName() : "summary";
   const previousSettingsRevision = data?.settings_revision;
   const previousPromptsRevision = data?.prompts?.revision;
   const detail = renderContent && pageAtStart === "library"
     ? api("library", undefined, {scope:libraryScope, kind:category, status, offset:libraryOffset, review:reviewFilter})
+    : renderContent && pageAtStart === "history" && selectedScope ? api("history", undefined, {scope:selectedScope, section:historySection, status:historyStatus, offset:historyOffset, anchor:historyAnchor})
     : renderContent && pageAtStart === "prompts" ? api("prompts") : Promise.resolve(null);
   const current = () => version === loadVersion && key === viewKey();
   const [next, extra] = await Promise.all([api("state", undefined, {scope:scopeAtStart, view}), detail]).catch(error => { if (!current()) return [null, null]; throw error; });
@@ -119,6 +127,12 @@ async function load(renderContent = true) {
   if (!selectedScope && data.scope) selectedScope = data.scope.id;
   if (pageAtStart === "library" && extra) { data.library = extra; libraryOffset = extra.offset; }
   if (pageAtStart === "prompts" && extra) data.prompts = extra;
+  if (pageAtStart === "history" && extra) { data.history = extra; historyOffset = extra.offset || 0; historyAnchor = extra.anchor || 0; }
+  if (renderContent && pageAtStart === "history" && !extra && data.scope) {
+    const history = await api("history", undefined, {scope:selectedScope, section:historySection, status:historyStatus, offset:historyOffset, anchor:historyAnchor});
+    if (version !== loadVersion || tab !== pageAtStart) return;
+    data.history = history; historyOffset = history.offset || 0; historyAnchor = history.anchor || 0;
+  }
   if (pageAtStart === "prompts" && !extra && next.prompts_revision && next.prompts_revision !== previousPromptsRevision) {
     const prompts = await api("prompts");
     if (version !== loadVersion || tab !== pageAtStart || selectedScope !== data.scope?.id && data.scope) return;
@@ -202,7 +216,27 @@ function renderProfile() {
   if (localOperations.has("preview-model")) { $("#model-preview").disabled = true; $("#model-preview").textContent = "示例正在生成…"; }
 }
 
+function libraryPositionKey() { return JSON.stringify([libraryScope, category, status, libraryOffset, reviewFilter]); }
+function rememberLibraryPosition() {
+  const list = $("#library-list"), detail = $("#library-detail");
+  if (!list?.dataset.positionKey) return;
+  libraryPositions.set(list.dataset.positionKey, {list:list.scrollTop || 0, detail:detail?.scrollTop || 0, selected:Number(list.dataset.selected)});
+  while (libraryPositions.size > 12) libraryPositions.delete(libraryPositions.keys().next().value);
+}
+function revealLibraryDetail() {
+  const workspace = $("#library-workspace");
+  if (!workspace) return;
+  if (window.innerWidth <= 680) { libraryPageScroll = window.scrollY; libraryMobileDetail = true; workspace.dataset.detail = "true"; }
+  const bounds = workspace.getBoundingClientRect?.();
+  if (bounds && (window.innerWidth <= 680 || bounds.bottom > window.innerHeight || bounds.top < 0)) workspace.scrollIntoView?.({block:"start", behavior:"auto"});
+  $("#library-detail")?.focus?.({preventScroll:true});
+}
 function renderLibrary() {
+  const oldKey = $("#library-list")?.dataset.positionKey;
+  const oldSelected = Number($("#library-list")?.dataset.selected);
+  rememberLibraryPosition();
+  const positionKey = libraryPositionKey(), position = libraryPositions.get(positionKey);
+  if (oldKey && oldKey !== positionKey && position?.selected) selectedTrait = position.selected;
   const library = data.library;
   const traits = (library?.traits || data.traits).filter(t => (category === "all" || t.kind === category) && (status === "all" || t.status === status));
   if (!traits.some(t => t.id === selectedTrait)) selectedTrait = traits[0]?.id;
@@ -215,10 +249,16 @@ function renderLibrary() {
     if (!traits.some(t => t.id === id && t.status === "pending" && t.updated === entry.updated)) librarySelection.delete(id);
   }
   const counts = library?.review_counts || {};
-  const summary = `<section class="library-review-summary" aria-label="自检概览"><h2>按自检结论处理学习结果</h2><p>提取自评和入库自检是两个独立判断。先按结论分组，再查看具体问题；批量操作只处理你勾选的本页待审核条目。</p><p class="muted">当前会话、类别与状态内：自检通过 ${counts.passed ?? "—"} 条 · 自检存疑 ${counts.flagged ?? "—"} 条 · 无匹配自检 ${counts.unknown ?? "—"} 条</p></section>`;
-  const batchControls = `<div class="batch-review" aria-label="批量审核"><div class="actions"><button type="button" id="select-page">勾选本页待审</button><button type="button" id="select-passed">只选本页自检通过</button><button type="button" id="clear-selection">清空勾选</button></div><div class="actions"><span id="selected-count" role="status"></span><button type="button" class="tonal" data-batch-review="active">批准勾选</button><button type="button" class="danger" data-batch-review="rejected">拒绝勾选</button></div></div>`;
-  $("#content").innerHTML = `${summary}<div class="filter-row"><div class="filter-field"><label for="library-scope">会话</label><select id="library-scope"><option value="all">全部会话</option>${([...(data.shared_scope ? [data.shared_scope] : []), ...(data.scopes || [])]).map(s => `<option value="${escape(s.id)}" ${libraryScope === s.id ? "selected" : ""}>${escape(s.label)} / ${escape(s.persona === "[%None]" ? "未设置人格" : s.persona)}</option>`).join("")}</select></div><div class="filter-field"><label for="kind-filter">类别</label><select id="kind-filter"><option value="all">全部类别</option>${Object.entries(kinds).map(([value, name]) => `<option value="${value}" ${category === value ? "selected" : ""}>${name}</option>`).join("")}</select></div><div class="filter-field"><label for="status-filter">状态</label><select id="status-filter">${Object.entries({pending:"待审核", active:"已生效", disabled:"已停用", rejected:"已拒绝", all:"全部状态"}).map(([value, name]) => `<option value="${value}" ${status === value ? "selected" : ""}>${name}</option>`).join("")}</select></div><div class="filter-field"><label for="review-filter">自检分组</label><select id="review-filter"><option value="all">全部自检结论</option>${Object.entries(reviewGroups).map(([key, label]) => `<option value="${key}" ${reviewFilter === key ? "selected" : ""}>${label}（${counts[key] ?? 0}）</option>`).join("")}${Object.entries(reviewIssues).map(([key, label]) => `<option value="${key}" ${reviewFilter === key ? "selected" : ""}>存疑：${label}（${library?.issue_counts?.[key] ?? 0}）</option>`).join("")}</select></div><span class="muted">${library?.total ?? traits.length} 条结果</span></div>${batchControls}
-    ${traits.length ? `<div class="library"><div class="trait-list" aria-label="学习条目">${traits.map(t => `<div class="trait-choice">${t.status === "pending" ? `<label class="trait-check"><input type="checkbox" data-select-trait="${t.id}" aria-label="勾选：${escape(t.situation)}" ${librarySelection.has(t.id) ? "checked" : ""}></label>` : ""}<button type="button" class="trait-row" data-trait="${t.id}" aria-pressed="${selectedTrait === t.id}"><span class="row-meta"><span>${kinds[t.kind]}</span><span class="badge ${t.kind === "jargon" && data.shared_scope && t.scope === data.shared_scope.id ? "" : t.status}">${t.kind === "jargon" && data.shared_scope && t.scope === data.shared_scope.id ? "仅保留" : statuses[t.status]}</span></span><small class="trait-owner">${escape(t.label || data.scope?.label || "")} / ${escape((t.persona || data.scope?.persona) === "[%None]" ? "未设置人格" : (t.persona || data.scope?.persona || ""))}</small><strong>${escape(t.situation)}</strong><p>${escape(t.content)}</p><span class="row-meta">${t.evidence_count || t.evidence.length} 条证据 / ${t.support_count || 1} 批 · 提取自评 ${Math.round(t.confidence * 100)}%</span><small class="review-verdict">${escape(reviewLabel(t))}${t.manual ? " · 人工已决定" : ""}</small></button></div>`).join("")}</div><article class="detail"><h2>${kinds[trait.kind]}</h2><p class="muted">所属会话：${escape(trait.label || data.scope?.label || "")} / ${escape((trait.persona || data.scope?.persona) === "[%None]" ? "未设置人格" : (trait.persona || data.scope?.persona || ""))}</p>${archived ? '<p class="muted" role="note">旧共用词汇的来源尚未确定，条目与证据完整保留，不参与回复。请在来源会话重新学习后审核。</p>' : trait.kind === "jargon" ? '<p class="muted" role="note">群聊词汇始终按来源会话与人格隔离，不受「启用会话隔离」开关影响。</p>' : ""}${reviewHint}<form id="trait-form">${expressionExamples}${field("situation", "适用情境", trait.situation, "只在适合的情境里使用，不必每次重复。", {maxlength:160})}${field("content", "习惯内容", trait.content, "你可以在生效前调整表达；编辑不会自动改变审核状态。", {maxlength:350})}<button type="submit">保存编辑</button></form><div class="actions">${!archived && trait.status !== "active" ? '<button class="primary" data-review="active">批准生效</button>' : trait.status === "active" ? '<button data-review="disabled">停用这条</button>' : ""}${trait.status === "pending" ? '<button class="danger" data-review="rejected">拒绝学习</button>' : '<button data-review="pending">移回待审核</button>'}</div><section class="evidence"><h3>积累与应用</h3><p class="muted">${trait.support_count || 1} 批独立素材，累计 ${trait.evidence_count || trait.evidence.length} 条证据。引用 ${trait.use_count || 0} 次；引用次数不代表模型采用或消息送达。${trait.manual ? " 人工决定已锁定，后续学习只补充证据。" : ""}</p><p class="muted">当前评价：${trait.rating === 1 ? "更合适" : trait.rating === -1 ? "不太合适" : "尚未评价"}</p><div class="actions" aria-label="习惯效果评价">${[[1,"更合适"],[-1,"不太合适"],[0,"清除评价"]].map(([value,label]) => `<button type="button" data-feedback="${value}" aria-pressed="${(trait.rating || 0) === value}">${label}</button>`).join("")}</div><p class="muted">评价调整后续排序；不合适的习惯也可直接停用。</p></section><div class="evidence"><h3>最近的学习来源</h3><p class="muted">最多展示最近 32 条摘录，累计证据数保留。</p>${trait.evidence.map(e => `<blockquote><p>${escape(e.text)}</p><small>${e.label ? `${escape(e.label)} / ${escape(e.persona || "")} · ` : ""}${escape(e.sender)} · ${date(e.created)}</small></blockquote>`).join("")}</div></article></div>` : empty(status === "pending" ? "这里等待下一次发现" : "还没有这类学习结果", "素材积累后会自动批量学习，也可以点击「开始学习」。也可能没有符合当前筛选的条目。可切换自检分组或审核状态查看。")}`;
+  const summary = `<header class="library-heading"><div><h2>学习库</h2><p class="muted">筛选、查看，再决定哪些习惯生效。</p></div><details><summary>审核说明</summary><p>提取自评不等于自检结论；先查看原文和使用条件。批量操作只处理勾选的本页待审核条目，人工决定可以覆盖模型判断。</p></details></header>`;
+  const batchControls = `<div class="batch-review" aria-label="批量审核"><details class="batch-selection-tools"><summary>批量选择</summary><div class="actions"><button type="button" id="select-page">勾选本页待审</button><button type="button" id="select-passed">只选本页自检通过</button><button type="button" id="clear-selection">清空勾选</button></div></details><div class="actions"><span id="selected-count" role="status"></span><button type="button" class="tonal" data-batch-review="active">批准勾选</button><button type="button" class="danger" data-batch-review="rejected">拒绝勾选</button></div></div>`;
+  const pagination = library && library.total > 100 ? `<div class="actions library-pages"><button id="library-prev" ${library.offset === 0 ? "disabled" : ""}>上一页</button><span class="muted">${library.offset / 100 + 1} / ${Math.ceil(library.total / 100)} 页</span><button id="library-next" ${library.offset + 100 >= library.total ? "disabled" : ""}>下一页</button></div>` : "";
+  $("#content").innerHTML = `${summary}<div class="library-filterbar" id="library-filterbar" data-open="${libraryFiltersOpen}"><button type="button" id="library-filter-toggle" aria-controls="library-filters" aria-expanded="${libraryFiltersOpen}">筛选条目<span>${library?.total ?? traits.length} 条结果</span></button><div class="filter-row" id="library-filters"><div class="filter-field"><label for="library-scope">会话</label><select id="library-scope"><option value="all">全部会话</option>${([...(data.shared_scope ? [data.shared_scope] : []), ...(data.scopes || [])]).map(s => `<option value="${escape(s.id)}" ${libraryScope === s.id ? "selected" : ""}>${escape(s.label)} / ${escape(s.persona === "[%None]" ? "未设置人格" : s.persona)}</option>`).join("")}</select></div><div class="filter-field"><label for="kind-filter">类别</label><select id="kind-filter"><option value="all">全部类别</option>${Object.entries(kinds).map(([value, name]) => `<option value="${value}" ${category === value ? "selected" : ""}>${name}</option>`).join("")}</select></div><div class="filter-field"><label for="status-filter">状态</label><select id="status-filter">${Object.entries({pending:"待审核", active:"已生效", disabled:"已停用", rejected:"已拒绝", all:"全部状态"}).map(([value, name]) => `<option value="${value}" ${status === value ? "selected" : ""}>${name}</option>`).join("")}</select></div><div class="filter-field"><label for="review-filter">自检分组</label><select id="review-filter"><option value="all">全部自检结论</option>${Object.entries(reviewGroups).map(([key, label]) => `<option value="${key}" ${reviewFilter === key ? "selected" : ""}>${label}（${counts[key] ?? 0}）</option>`).join("")}${Object.entries(reviewIssues).map(([key, label]) => `<option value="${key}" ${reviewFilter === key ? "selected" : ""}>存疑：${label}（${library?.issue_counts?.[key] ?? 0}）</option>`).join("")}</select></div><span class="muted">${library?.total ?? traits.length} 条结果</span></div></div>${batchControls}
+    ${traits.length ? `<div class="library" id="library-workspace" data-detail="${libraryMobileDetail}"><div class="library-list-pane"><div class="trait-list" id="library-list" tabindex="0" aria-label="学习条目，可独立滚动">${traits.map(t => `<div class="trait-choice">${t.status === "pending" ? `<label class="trait-check"><input type="checkbox" data-select-trait="${t.id}" aria-label="勾选：${escape(t.situation)}" ${librarySelection.has(t.id) ? "checked" : ""}></label>` : ""}<button type="button" class="trait-row" data-trait="${t.id}" aria-pressed="${selectedTrait === t.id}"><span class="row-meta"><span>${kinds[t.kind]}</span><span class="badge ${t.kind === "jargon" && data.shared_scope && t.scope === data.shared_scope.id ? "" : t.status}">${t.kind === "jargon" && data.shared_scope && t.scope === data.shared_scope.id ? "仅保留" : statuses[t.status]}</span></span><small class="trait-owner">${escape(t.label || data.scope?.label || "")} / ${escape((t.persona || data.scope?.persona) === "[%None]" ? "未设置人格" : (t.persona || data.scope?.persona || ""))}</small><strong>${escape(t.situation)}</strong><p>${escape(t.content)}</p><span class="row-meta">${t.evidence_count || t.evidence.length} 条证据 / ${t.support_count || 1} 批 · 提取自评 ${Math.round(t.confidence * 100)}%</span><small class="review-verdict">${escape(reviewLabel(t))}${t.manual ? " · 人工已决定" : ""}</small></button></div>`).join("")}</div>${pagination}</div><article class="detail" id="library-detail" tabindex="-1" aria-label="所选条目详情"><button id="library-back" type="button">返回条目列表</button><h2>${kinds[trait.kind]}</h2><p class="muted">所属会话：${escape(trait.label || data.scope?.label || "")} / ${escape((trait.persona || data.scope?.persona) === "[%None]" ? "未设置人格" : (trait.persona || data.scope?.persona || ""))}</p>${archived ? '<p class="muted" role="note">旧共用词汇的来源尚未确定，条目与证据完整保留，不参与回复。请在来源会话重新学习后审核。</p>' : trait.kind === "jargon" ? '<p class="muted" role="note">群聊词汇始终按来源会话与人格隔离，不受「启用会话隔离」开关影响。</p>' : ""}${reviewHint}<form id="trait-form">${expressionExamples}${field("situation", "适用情境", trait.situation, "只在适合的情境里使用，不必每次重复。", {maxlength:160})}${field("content", "习惯内容", trait.content, "你可以在生效前调整表达；编辑不会自动改变审核状态。", {maxlength:350})}<button type="submit">保存编辑</button></form><div class="actions">${!archived && trait.status !== "active" ? '<button class="primary" data-review="active">批准生效</button>' : trait.status === "active" ? '<button data-review="disabled">停用这条</button>' : ""}${trait.status === "pending" ? '<button class="danger" data-review="rejected">拒绝学习</button>' : '<button data-review="pending">移回待审核</button>'}</div><section class="evidence"><h3>积累与应用</h3><p class="muted">${trait.support_count || 1} 批独立素材，累计 ${trait.evidence_count || trait.evidence.length} 条证据。引用 ${trait.use_count || 0} 次；引用次数不代表模型采用或消息送达。${trait.manual ? " 人工决定已锁定，后续学习只补充证据。" : ""}</p><p class="muted">当前评价：${trait.rating === 1 ? "更合适" : trait.rating === -1 ? "不太合适" : "尚未评价"}</p><div class="actions" aria-label="习惯效果评价">${[[1,"更合适"],[-1,"不太合适"],[0,"清除评价"]].map(([value,label]) => `<button type="button" data-feedback="${value}" aria-pressed="${(trait.rating || 0) === value}">${label}</button>`).join("")}</div><p class="muted">评价调整后续排序；不合适的习惯也可直接停用。</p></section><details class="evidence library-evidence"><summary>最近的学习来源（${trait.evidence.length} 条）</summary><p class="muted">最多展示最近 32 条摘录，累计证据数保留。</p>${trait.evidence.map(e => `<blockquote><p>${escape(e.text)}</p><small>${e.label ? `${escape(e.label)} / ${escape(e.persona || "")} · ` : ""}${escape(e.sender)} · ${date(e.created)}</small></blockquote>`).join("")}</details></article></div>` : empty(status === "pending" ? "这里等待下一次发现" : "还没有这类学习结果", "素材积累后会自动批量学习，也可以点击「开始学习」。也可能没有符合当前筛选的条目。可切换自检分组或审核状态查看。")}`;
+  $("#library-filter-toggle").onclick = () => {
+    libraryFiltersOpen = !libraryFiltersOpen;
+    $("#library-filterbar").dataset.open = String(libraryFiltersOpen);
+    $("#library-filter-toggle").setAttribute?.("aria-expanded", String(libraryFiltersOpen));
+  };
   $("#library-scope").value = libraryScope;
   for (const [selector, current] of [["#library-scope", libraryScope], ["#kind-filter", category], ["#status-filter", status], ["#review-filter", reviewFilter]]) {
     $(selector).onchange = async event => {
@@ -231,7 +271,7 @@ function renderLibrary() {
         else if (selector === "#kind-filter") category = next;
         else if (selector === "#status-filter") status = next;
         else reviewFilter = next;
-        libraryOffset = 0;
+        libraryOffset = 0; libraryMobileDetail = false; libraryFiltersOpen = false;
         try { await load(); }
         catch (error) { [libraryScope, category, status, libraryOffset, reviewFilter] = previous; renderLibrary(); throw error; }
       });
@@ -267,17 +307,32 @@ function renderLibrary() {
   };
   updateSelection();
   if (library && library.total > 100) {
-    $("#content").insertAdjacentHTML("beforeend", `<div class="actions library-pages"><button id="library-prev" ${library.offset === 0 ? "disabled" : ""}>上一页</button><span class="muted">第 ${library.offset / 100 + 1} / ${Math.ceil(library.total / 100)} 页 · 每页最多 100 条</span><button id="library-next" ${library.offset + 100 >= library.total ? "disabled" : ""}>下一页</button></div>`);
+
     for (const [id, step] of [["#library-prev", -100], ["#library-next", 100]]) $(id).onclick = async () => {
       if (dirty && !await confirmAction("翻页会放弃未保存的编辑，继续？")) return;
       await readView(async () => {
-        const previous = libraryOffset; dirty = false; libraryOffset += step;
+        const previous = libraryOffset; dirty = false; libraryOffset += step; libraryMobileDetail = false;
         try { await load(); }
         catch (error) { libraryOffset = previous; throw error; }
       });
     };
   }
-  for (const button of document.querySelectorAll("[data-trait]")) button.onclick = async () => { if (dirty && !await confirmAction("放弃当前未保存的编辑？")) return; dirty = false; selectedTrait = Number(button.dataset.trait); renderLibrary(); };
+  const list = $("#library-list"), detail = $("#library-detail");
+  if (list && traits.length) { list.dataset.positionKey = positionKey; list.dataset.selected = String(selectedTrait); list.scrollTop = position?.list || 0; }
+  if (detail) detail.scrollTop = (oldSelected === selectedTrait || !oldKey && position?.selected === selectedTrait) ? position?.detail || 0 : 0;
+  const back = $("#library-back");
+  if (back) back.onclick = () => {
+    libraryMobileDetail = false; $("#library-workspace").dataset.detail = "false";
+    window.scrollTo?.({top:libraryPageScroll, behavior:"auto"});
+    document.querySelector(`[data-trait="${selectedTrait}"]`)?.focus?.({preventScroll:true});
+  };
+  for (const button of document.querySelectorAll("[data-trait]")) button.onclick = async () => {
+    const next = Number(button.dataset.trait);
+    if (next === selectedTrait) { revealLibraryDetail(); return; }
+    if (dirty && !await confirmAction("放弃当前未保存的编辑？")) return;
+    dirty = false; selectedTrait = next; renderLibrary(); revealLibraryDetail();
+  };
+
   if (trait) {
     for (const button of document.querySelectorAll("[data-feedback]")) button.onclick = async () => { if (dirty && !await confirmAction("评价会放弃未保存的编辑，继续？")) return; mutate("feedback", {id:trait.id, rating:Number(button.dataset.feedback)}, trait.scope); };
     $("#trait-form").onsubmit = async event => {
@@ -294,21 +349,77 @@ function renderLibrary() {
   }
 }
 
+function historyDetailKey(row) {
+  return JSON.stringify([selectedScope, historySection, row.id, row.status, row.outcome, row.finished, row.updated]);
+}
+function historyDetail(section, row) {
+  if (section === "learning") {
+    const review = row.review || {}, timing = review.timing;
+    return `<p>${escape(row.message || "正在分析本批素材…")}</p>${row.memory ? `<p class="muted">${escape(row.memory)}</p>` : ""}${timing ? `<p class="muted">提取 ${escape(timing.extraction_seconds)} 秒；自检 ${escape(timing.review_seconds)} 秒。</p>` : ""}${review.enabled && review.candidates?.length ? `<h3>自检提示与候选</h3><p>自检通过 ${escape(review.passed)} 条，标记 ${escape(review.flagged)} 条。未通过的新候选转待审；未通过的更新不改旧条目。模型判断可由人工审核覆盖。</p><ul>${review.candidates.filter(c => !c.approved).map(c => `<li><strong>${escape(kinds[c.kind] || c.kind)} · ${escape(c.situation)}</strong><p>${escape(c.content)}</p><p>${escape(c.reason)}</p></li>`).join("")}</ul>` : '<p class="muted">没有需要展开的自检候选；不代表已人工审核。</p>'}`;
+  }
+  if (section === "participation") return `<p>${escape(row.reason)}</p>${row.intent ? `<p>回复目标：${escape(row.intent)}</p>` : ""}<p class="muted">${row.mode === "observe" ? "仅观察" : "自动参与"} / ${({admitted:"交给宿主",waiting:"等待后再判断",observed:"已记录",limited:"冷却或限额",cancelled:"已取消",error:"决策失败"})[row.outcome] || escape(row.outcome)} / 把握 ${Math.round((row.confidence || 0) * 100)}%</p>`;
+  if (section === "replies") {
+    const t = row.details || {}, selected = t.selected_ids || [], included = t.included_ids || [], dropped = selected.filter(id => !included.includes(id));
+    const cache = [["情境筛选",t.selector_cache_hit],["重排序",t.rerank_cache_hit]].map(([name, hit]) => `${name}：${hit === true ? "命中" : hit === false ? "未命中" : "未返回缓存信息"}`).join("；");
+    return `<p>${escape(t.cancel_reason || t.reason)}</p><p>${escape(t.retrieval_message)}</p><p>检索选中 ${selected.length} 条，装入 ${included.length} 条，上限 ${escape(t.max_traits)} 条。</p><p>习惯与底稿 ${escape(t.habit_chars)} / ${escape(t.habit_budget)} 字符；额外群聊 ${escape(t.context_count)} / ${escape(t.context_limit)} 条、${escape(t.context_chars)} / ${escape(t.context_budget)} 字符。</p>${t.selection_seconds != null ? `<p>习惯检索 ${escape(t.selection_seconds)} 秒；请求组装 ${escape(t.assembly_seconds)} 秒；收到消息至组装 ${escape(t.input_age_seconds)} 秒${t.elapsed_seconds != null ? `；至当前阶段 ${escape(t.elapsed_seconds)} 秒` : ""}。</p>` : ""}<p>已装入：${included.length ? included.map(id => `#${escape(id)}`).join("、") : "无学习习惯"}${dropped.length ? `；选中未装入：${dropped.map(id => `#${escape(id)}`).join("、")}（受生效状态或字符预算限制）` : ""}</p><p>${escape(cache)}</p><small>目标用户 ${escape(t.target_sender_id)} · 消息 ${escape(t.target_message_id || "无平台编号")}。临时文本 ${escape(t.temporary_chars)} 字符；不是整个请求的字符数。</small>`;
+  }
+  if (section === "applications") return `<p>记录引用：${(row.trait_ids || []).map(id => `#${escape(id)}`).join("、") || "无条目"}</p><p class="muted">引用次数不代表模型采用，也不代表平台送达。</p>`;
+  return `<p>${row.scope === data.shared_scope?.id ? "共用空间" : "当前会话"}的${escape(actions[row.action] || row.action)}之前版本。</p><p class="muted">恢复底稿和学习条目，不恢复原始素材。恢复前也会留存当前版本。</p><button type="button" data-restore="${escape(row.id)}" data-restore-scope="${escape(row.scope)}">恢复此版本</button>`;
+}
+function bindHistoryRestore(root = document) {
+  for (const button of root.querySelectorAll("[data-restore]")) button.onclick = async () => {
+    if (await confirmAction("恢复这个版本的人格底稿和学习状态？当前版本也会自动保留。")) await mutate("restore", {id:Number(button.dataset.restore)}, button.dataset.restoreScope);
+  };
+}
 function renderHistory() {
-  const expandedReviews = new Set([...document.querySelectorAll("details[data-review-run][open]")].map(node => node.dataset.reviewRun));
-  const expandedTraces = new Set([...document.querySelectorAll("details[data-turn-trace][open]")].map(node => node.dataset.turnTrace));
-  const turnRows = (data.turn_traces || []).map(row => {
-    const t = row.details;
-    const selected = t.selected_ids || [], included = t.included_ids || [];
-    const dropped = selected.filter(id => !included.includes(id));
-    const cacheStates = [["情境筛选", t.selector_cache_hit], ["重排序", t.rerank_cache_hit]].map(([label, hit]) => `${label}：${hit === true ? "命中" : hit === false ? "未命中" : "未返回缓存信息"}`).join("；");
-    return `<article class="history-row"><time>${date(row.created)}</time><span class="badge ${["cancelled", "empty_response"].includes(row.status) ? "error" : row.status === "send_hook" ? "success" : "running"}">${({prepared:"已组装",send_hook:"发送阶段",cancelled:"已取消",empty_response:"未生成回复"})[row.status] || escape(row.status)}</span><div><p><strong>${escape(t.target_sender || t.target_sender_id || "当前成员")}</strong> · ${escape(({at:"@ 唤醒",quote:"引用唤醒",name:"名称唤醒",autonomous:"自主参与",native:"原生回复"})[t.route] || t.route)}</p><p>检索选中 ${selected.length} 条，装入 ${included.length} 条，上限 ${escape(t.max_traits)} 条。</p><small>习惯与底稿 ${escape(t.habit_chars)} / ${escape(t.habit_budget)} 字符；额外群聊 ${escape(t.context_count)} / ${escape(t.context_limit)} 条，${escape(t.context_chars)} / ${escape(t.context_budget)} 字符。</small><details data-turn-trace="${escape(row.id)}" ${expandedTraces.has(String(row.id)) ? "open" : ""}><summary>查看条目、缓存与参与原因</summary>${t.cancel_reason ? `<p>${escape(t.cancel_reason)}</p>` : ""}<p>${escape(t.reason)}</p><p>${escape(t.retrieval_message)}</p>${t.selection_seconds != null ? `<p>习惯检索 ${escape(t.selection_seconds)} 秒；请求组装 ${escape(t.assembly_seconds)} 秒；收到消息至组装 ${escape(t.input_age_seconds)} 秒${t.elapsed_seconds != null ? `；至当前阶段 ${escape(t.elapsed_seconds)} 秒` : ""}。</p>` : ""}<p>已装入：${included.length ? included.map(id => `#${escape(id)}`).join("、") : "无学习习惯"}${dropped.length ? `；选中但未装入：${dropped.map(id => `#${escape(id)}`).join("、")}（受生效状态或字符预算限制）` : ""}</p><p>${escape(cacheStates)}</p><small>目标用户 ${escape(t.target_sender_id)} · 消息 ${escape(t.target_message_id || "无平台编号")}。本插件临时文本共 ${escape(t.temporary_chars)} 字符，另含模板与目标说明；不是整个请求的字符数。</small></details></div></article>`;
-  }).join("");
-  $("#content").innerHTML = `<h2>每一次学习，都有迹可循</h2><p class="section-intro">成功批次才会消耗素材；失败批次保留素材，修复原因后可以重新学习。</p>${data.runs.length ? data.runs.map(run => `<article class="history-row"><time>${date(run.started)}</time><span class="badge ${run.status}">${statuses[run.status]}</span><div><p>${escape(run.message || "正在分析本批素材…")}</p><small>${escape(run.memory)}</small>${run.review?.enabled && run.review.candidates?.length ? `<p class="muted">自检通过 ${escape(run.review.passed)} 条，标记 ${escape(run.review.flagged)} 条供人工检查。</p>${run.review.flagged ? `<details data-review-run="${escape(run.id)}" ${expandedReviews.has(String(run.id)) ? "open" : ""}><summary>查看自检提示与候选</summary><p class="muted">未通过的新候选转待审；未通过的更新不改旧条目。模型判断可由人工审核覆盖。</p><ul>${run.review.candidates.filter(c => !c.approved).map(c => `<li><strong>${escape(kinds[c.kind])} · ${escape(c.situation)}</strong><p>${escape(c.content)}</p><p>${escape(c.reason)}</p></li>`).join("")}</ul></details>` : ""}` : ""}</div></article>`).join("") : empty("还没有学习记录", "完成一次自动或手动学习后，这里会展示结果和记忆联动情况。")}
-    <section class="versions"><h2>参与决策</h2><p class="section-intro">${data.settings?.participation_mode === "off" ? "自主参与已关闭。" : data.settings?.participation_mode === "observe" ? "当前仅记录判断，不主动回复。" : "当前允许自主参与，冷却与限额仍有效。"}「交给宿主」表示通过参与门槛，不保证模型生成或平台送达。</p>${(data.decisions || []).length ? data.decisions.map(d => `<article class="history-row"><time>${date(d.created)}</time><span class="badge ${d.outcome === "error" ? "error" : d.outcome === "admitted" ? "active" : ""}">${({reply:"参与回复",wait:"等待",observe:"旁观"})[d.action] || escape(d.action)}</span><div><p>${escape(d.reason)}</p>${d.intent ? `<small>回复目标：${escape(d.intent)}</small>` : ""}<small>${d.mode === "observe" ? "仅观察" : "自动参与"} / ${({admitted:"交给宿主",waiting:"等待后再判断",observed:"已记录",limited:"冷却或限额",cancelled:"已取消",error:"决策失败"})[d.outcome] || escape(d.outcome)} / 把握 ${Math.round(d.confidence * 100)}%</small></div></article>`).join("") : '<p class="muted">在学习设置中选择「仅观察」可先查看群聊决策，再决定是否允许自主回复。</p>'}</section>
-    <section class="versions"><h2>每轮回复与注入</h2><p class="section-intro">显示本会话最近 30 次组装记录。发送阶段不等于平台送达；已组装但未记录发送也不等于生成失败。缓存只指情境筛选和重排序，不代表提供商 KV 命中。</p>${turnRows || '<p class="muted">下一次启用应用的回复会记录目标、习惯与预算；关闭学习仍可记录。已有参与判断见上方。</p>'}</section>
-    <section class="versions"><h2>最近引用的习惯</h2><p class="section-intro">记录进入宿主发送阶段的引用，不推断用户满意度，也不保证消息实际送达。</p>${(data.applications || []).length ? data.applications.map(a => `<div class="version-row"><span>${date(a.created)}<small> ${escape(({contextual:"情境筛选",contextual_fallback:"情境筛选回退",rerank:"模型重排序",hybrid:"语义与文字检索",lexical:"文字检索"}[a.mode] || "相关性检索"))}：${a.trait_ids.map(id => `#${id}`).join("、")}</small></span></div>`).join("") : '<p class="muted">应用习惯并进入宿主发送阶段后，这里会展示引用记录。</p>'}</section><section class="versions"><h2>修改前的版本</h2><p class="section-intro">每次学习、编辑、审核或恢复前都会留存快照，每个空间最多保留 30 个版本。共用与当前会话的版本分别恢复；恢复只影响所标空间的人格底稿与学习条目，不恢复原始素材。</p>${data.revisions.length ? data.revisions.map(r => `<div class="version-row"><span>${actions[r.action] || escape(r.action)} · ${r.scope === data.shared_scope?.id ? "共用空间" : "当前会话"} <small>之前 · ${date(r.created)}</small></span><button data-restore="${r.id}" data-restore-scope="${escape(r.scope || selectedScope)}">恢复此版本</button></div>`).join("") : '<p class="muted">首次修改后，将自动保留之前的版本。</p>'}</section>`;
-  for (const button of document.querySelectorAll("[data-restore]")) button.onclick = async () => { if (await confirmAction("恢复这个版本的人格底稿和学习状态？当前版本也会自动保留。")) mutate("restore", {id:Number(button.dataset.restore)}, button.dataset.restoreScope); };
+  const expanded = new Set([...document.querySelectorAll("details[data-review-run][open]")].map(node => node.dataset.reviewRun));
+  const legacyKeys = {learning:"runs", participation:"decisions", replies:"turn_traces", applications:"applications", versions:"revisions"};
+  const page = data.history?.items && data.history.section === historySection ? data.history : null;
+  const items = page?.items || (data[legacyKeys[historySection]] || []).slice(0,10);
+  const counts = page?.counts || Object.fromEntries(Object.entries(legacyKeys).map(([key,value]) => [key,(data[value] || []).length]));
+  const total = page?.total ?? items.length, offset = page?.offset ?? 0;
+  const descriptions = {learning:"成功批次才消耗素材；失败批次保留素材。展开一条记录查看自检与原因。", participation:`${data.settings?.participation_mode === "off" ? "自主参与已关闭。" : data.settings?.participation_mode === "observe" ? "当前仅记录判断，不主动回复。" : "当前允许自主参与，冷却与限额仍有效。"}交给宿主不保证模型生成或平台送达。`, replies:"发送阶段不等于平台送达；缓存仅指情境筛选和重排序，不代表提供商 KV 命中。", applications:"记录进入宿主发送阶段的习惯引用，不推断满意度或实际送达。", versions:"共用与当前会话的版本分别恢复；只恢复底稿和条目，不恢复原始素材。"};
+  $("#content").innerHTML = `<section class="history-workspace"><header class="history-heading"><div><h2>学习与参与</h2><p class="muted">按类型查看，展开单条详情。</p></div><button id="history-latest" type="button" class="tonal">查看最新</button></header><nav class="history-categories" aria-label="记录类型">${Object.entries(historySections).map(([key,label]) => `<button type="button" data-history-section="${key}" aria-pressed="${key === historySection}">${label}<span>${counts[key] || 0}</span></button>`).join("")}</nav><div class="history-filter"><p>${descriptions[historySection]}</p><label>状态<select id="history-status"><option value="all">全部状态</option>${Object.entries(historyStatuses[historySection]).map(([key,label]) => `<option value="${key}" ${historyStatus === key ? "selected" : ""}>${label}</option>`).join("")}</select></label></div><div class="history-records">${items.length ? items.map(row => {
+    const state = historySection === "participation" ? row.outcome : row.status;
+    const label = historyStatuses[historySection][state] || (historySection === "versions" ? "版本" : historySection === "applications" ? "引用" : state || "记录");
+    const tone = ["error","cancelled","empty_response"].includes(state) ? "error" : ["running","waiting"].includes(state) ? "pending" : ["success","admitted","send_hook"].includes(state) ? "success" : "";
+    const title = historySection === "learning" ? row.message || "正在分析本批素材…" : historySection === "participation" ? row.reason : historySection === "replies" ? `${row.target_sender || row.details?.target_sender || "当前成员"} · ${({at:"@ 唤醒",quote:"引用唤醒",name:"名称唤醒",autonomous:"自主参与",native:"原生回复"})[row.route || row.details?.route] || "回复记录"}` : historySection === "versions" ? actions[row.action] || row.action : `引用 ${row.trait_count ?? row.trait_ids?.length ?? 0} 条习惯`;
+    const inline = row.review || row.details || row.trait_ids || historySection === "participation" || historySection === "versions" ? row : historyDetails.get(historyDetailKey(row))?.data;
+    const open = Number(row.id) === historyOpenId || expanded.has(String(row.id));
+    return `<details class="history-record" data-history-id="${row.id}" ${historySection === "learning" ? `data-review-run="${row.id}"` : ""} ${open ? "open" : ""}><summary><time>${date(row.started || row.created)}</time><span class="badge ${tone}">${escape(label)}</span><span class="history-record-title">${escape(title)}${historySection === "learning" && row.flagged ? `<small>${row.flagged} 条自检存疑</small>` : ""}</span></summary><div class="history-record-detail">${inline ? historyDetail(historySection, inline) : '<p class="muted">展开后读取详情。</p>'}</div></details>`;
+  }).join("") : empty("没有符合条件的记录", "切换类型或状态，或等待下一次学习与回复。")}</div><footer class="history-pagination"><span class="muted">${total ? `${offset + 1}–${Math.min(offset + 10,total)} / ${total} 条` : "0 条记录"}</span><div class="actions"><button id="history-prev" ${offset ? "" : "disabled"}>上一页</button><button id="history-next" ${offset + 10 < total ? "" : "disabled"}>下一页</button></div></footer><p class="history-reading-note muted">展开详情或翻页时保持位置；点击「查看最新」更新记录。</p></section>`;
+  for (const button of document.querySelectorAll("[data-history-section]")) button.onclick = async () => {
+    historySection = button.dataset.historySection; historyStatus = "all"; historyOffset = historyAnchor = 0; historyOpenId = null;
+    await readView(() => load());
+  };
+  $("#history-status").onchange = async event => {
+    historyStatus = event.target.value; historyOffset = historyAnchor = 0; historyOpenId = null;
+    await readView(() => load());
+  };
+  $("#history-latest").onclick = async () => { historyOffset = historyAnchor = 0; historyOpenId = null; historyDetails.clear(); await readView(() => load()); };
+  for (const [id,step] of [["#history-prev",-10],["#history-next",10]]) $(id).onclick = async () => {
+    historyOffset = Math.max(0,offset + step); historyOpenId = null; await readView(() => load());
+  };
+  for (const node of document.querySelectorAll("details[data-history-id]")) node.ontoggle = async () => {
+    const id = Number(node.dataset.historyId);
+    if (!node.open) { if (historyOpenId === id) historyOpenId = null; return; }
+    historyOpenId = id; loadVersion++;
+    for (const other of document.querySelectorAll("details[data-history-id]")) if (other !== node) other.open = false;
+    const item = items.find(row => row.id === id), key = historyDetailKey(item);
+    const scope = selectedScope, section = historySection;
+    const body = node.querySelector(".history-record-detail");
+    const cached = historyDetails.get(key);
+    if (cached && Date.now() - cached.at < 30000) { body.innerHTML = historyDetail(section,cached.data); bindHistoryRestore(body); return; }
+    body.innerHTML = '<p class="muted" role="status">正在读取这条记录…</p>';
+    try {
+      const result = await api("history/detail", undefined, {scope, section, id});
+      if (tab !== "history" || scope !== selectedScope || section !== historySection || !node.isConnected) return;
+      historyDetails.set(key,{data:result,at:Date.now()});
+      while (historyDetails.size > 12) historyDetails.delete(historyDetails.keys().next().value);
+      body.innerHTML = historyDetail(section,result); bindHistoryRestore(body);
+    } catch (error) { if (node.isConnected) body.textContent = error.message || "详情读取失败，请重新展开或刷新。"; }
+  };
+  bindHistoryRestore();
 }
 
 function renderSettings() {
@@ -528,19 +639,26 @@ function markDirty(event) {
 $("#content").addEventListener("input", markDirty);
 $("#content").addEventListener("change", markDirty);
 async function navigateView() {
+  rememberLibraryPosition();
+  const page = tab, scope = selectedScope;
   const cached = viewCache.get(viewKey());
   showView();
+  $("#content").scrollIntoView?.({block:"start",behavior:"auto"});
   if (cached && Date.now() - cached.at < 30000) { loadVersion++; return; }
-  try { await load(); } catch (error) { notify(error.message || "本页数据读取失败，请点击刷新重试。", true); }
+  try {
+    await load();
+    if (tab === page && selectedScope === scope && !dirty) $("#content").scrollIntoView?.({block:"start",behavior:"auto"});
+  } catch (error) { notify(error.message || "本页数据读取失败，请点击刷新重试。", true); }
 }
 $("#scope").onchange = async event => {
   const next = event.target.value; event.target.value = selectedScope;
   if (dirty && !await confirmAction("切换会话会放弃未保存的编辑，继续？")) return;
-  selectedScope = next; selectedTrait = null; dirty = false; await navigateView();
+  selectedScope = next; selectedTrait = null; historyOpenId = null; historyAnchor = historyOffset = 0; dirty = false; await navigateView();
 };
 $("#refresh").onclick = async () => {
   if (dirty && !await confirmAction("刷新会放弃未保存的编辑，继续？")) return;
   dirty = false; invalidateViews();
+  if (tab === "history") { historyOpenId = null; historyOffset = historyAnchor = 0; historyDetails.clear(); }
   try { await load(); } catch (error) { notify(error.message, true); }
 };
 $("#learn").onclick = async () => { if (!dirty || await confirmAction("开始学习会放弃当前未保存的编辑，继续？")) await mutate("learn"); };
@@ -558,7 +676,7 @@ function schedulePoll(delay) {
     if (pending || polling || document.hidden) { schedulePoll(); return; }
     polling = true;
     try {
-      await load(!data || !dirty && (tab === "history" || tab === "library"));
+      await load(!data || !dirty && (tab === "library" || tab === "history" && !historyOffset && !historyOpenId));
       pollErrors = 0;
     } catch (error) { pollErrors = Math.min(2, pollErrors + 1); notify(error.message || "连接已中断，请刷新。", true); }
     finally { polling = false; schedulePoll(); }
