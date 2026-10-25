@@ -12,8 +12,8 @@ import pytest
 from astrbot.api import AstrBotConfig
 from astrbot.dashboard.services import config_service
 
+from astrbot_plugin_ovenheart.jev import host_settings
 from astrbot_plugin_ovenheart.main import PLUGIN_NAME, PersonaPlugin
-from astrbot_plugin_ovenheart.settings import validate_settings
 from tests.test_runtime import api_call
 
 pytest_plugins = ["tests.test_runtime"]
@@ -28,8 +28,17 @@ SCHEMA = json.loads(
 async def native_plugin(plugin, tmp_path):
     config = AstrBotConfig(str(tmp_path / "native_config.json"), schema=SCHEMA)
     config.save_config(plugin.settings)
+    config.save_config(
+        {
+            "jev_connection": {
+                "base_url": "http://example.invalid/v1",
+                "model": "jev-latest",
+                "api_key": "synthetic-native-secret",
+            }
+        }
+    )
     plugin.config = config
-    plugin.host_settings = validate_settings(dict(config))
+    plugin.host_settings = host_settings(config)
     return plugin
 
 
@@ -59,10 +68,11 @@ async def test_panel_save_is_visible_in_native_config_and_dashboard(
             Path(plugin.config.config_path).read_text, encoding="utf-8-sig"
         )
     )
-    assert disk == plugin.settings == display.get_plugin_config(PLUGIN_NAME)["config"]
+    assert host_settings(disk) == plugin.settings
+    assert disk == display.get_plugin_config(PLUGIN_NAME)["config"]
     state = (await api_call(plugin.page_api.state))["data"]
     assert (
-        state["settings"] == disk
+        state["settings"] == host_settings(disk)
         and state["settings_revision"] == plugin.settings_revision
     )
 
@@ -111,7 +121,10 @@ async def test_panel_toggle_preserves_other_settings_after_native_reload(
         )
     )
     reloaded = AstrBotConfig(plugin.config.config_path, schema=SCHEMA)
-    assert disk == dict(reloaded) == dict(plugin.config) == plugin.settings == expected
+    assert disk == dict(reloaded) == dict(plugin.config)
+    assert host_settings(disk) == plugin.settings == expected
+    assert reloaded["jev_connection"]["api_key"] == "synthetic-native-secret"
+    assert "jev_connection" not in await plugin.store.call("settings")
 
 
 async def test_native_config_save_and_reload_replaces_old_panel_guards(
@@ -224,7 +237,7 @@ async def test_native_write_failure_does_not_report_success_or_publish_changes(
         {"action": "settings", "payload": {"debug_enabled": True}},
     )
     assert response["status"] == "error" and "配置" in response["message"]
-    assert plugin.settings == dict(plugin.config) == before
+    assert plugin.settings == host_settings(plugin.config) == before
     assert await asyncio.to_thread(Path(plugin.config.config_path).read_bytes) == disk
     assert await plugin.store.call("settings") == guards
     assert plugin.settings_revision == revision
@@ -247,15 +260,12 @@ async def test_two_settings_forms_cannot_overwrite_each_other(native_plugin):
         )
     )
     assert sorted(r["status"] for r in results) == ["error", "ok"]
-    assert plugin.settings == dict(plugin.config)
-    assert (
-        json.loads(
-            await asyncio.to_thread(
-                Path(plugin.config.config_path).read_text, encoding="utf-8-sig"
-            )
+    assert plugin.settings == host_settings(plugin.config)
+    assert json.loads(
+        await asyncio.to_thread(
+            Path(plugin.config.config_path).read_text, encoding="utf-8-sig"
         )
-        == plugin.settings
-    )
+    ) == dict(plugin.config)
 
 
 async def test_cancelled_save_finishes_native_persistence_and_runtime_publication(

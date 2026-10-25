@@ -18,6 +18,8 @@ files = [
         "__init__.py",
         "main.py",
         "auxiliary.py",
+        "jev.py",
+        "jev_transport.py",
         "direct_priority.py",
         "learning.py",
         "memory_bridge.py",

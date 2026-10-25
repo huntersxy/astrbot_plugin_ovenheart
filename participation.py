@@ -1030,12 +1030,29 @@ class ParticipationController:
         )
         # The retained window can contain thirty turns, but only these twenty
         # were offered above. A guessed older sequence is not an informed target.
-        return parse_plan(
+        plan = parse_plan(
             response.completion_text,
             settings,
             waited,
             offered_messages(messages, settings),
         )
+        if plan["action"] == "reply":
+            target = next(
+                m for m in messages if m["sequence"] == plan["target_sequence"]
+            )
+            probability = await plugin.jev.participation(event, scope, target, messages)
+            if probability is not None:
+                plan["jev_probability"] = probability
+                if probability < settings["jev_reply_threshold"]:
+                    plan.update(
+                        action="observe",
+                        intent="",
+                        target_sequence=0,
+                        decoration=None,
+                        expression_intent={},
+                        reason="Jev 判定当前不宜主动接话，继续旁观。",
+                    )
+        return plan
 
     def close(self):
         """Interrupt all live handlers and release retained conversation material."""

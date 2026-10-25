@@ -107,6 +107,7 @@ class PageAPI:
             group_context=self.plugin.group_context.status(),
             conversation=self.plugin.conversation.status(),
             oven_multi=self.plugin.oven_multi.status(),
+            jev=self.plugin.jev.status(),
             outgoing_media={
                 "meme_bound": self.plugin.outgoing_media._owner is not None
             },

@@ -53,6 +53,12 @@ DEFAULTS = {
     "participation_cooldown": 90,
     "participation_hourly_limit": 12,
     "planner_provider_id": "",
+    "jev_enabled": False,
+    "jev_participation_enabled": True,
+    "jev_learning_enabled": True,
+    "jev_timeout_sec": 4,
+    "jev_max_state_chars": 6000,
+    "jev_reply_threshold": 0.6,
     "planner_timeout": 20,
     "planner_interval_seconds": 60,
     "planner_reply_threshold": 0.7,
@@ -86,6 +92,9 @@ def validate_settings(values: dict) -> dict:
     if not isinstance(values, dict) or set(values) - DEFAULTS.keys():
         raise ValueError("配置包含未知字段，请刷新页面后重试。")
     bounds = {
+        "jev_timeout_sec": (1, 20),
+        "jev_max_state_chars": (1500, 16000),
+        "jev_reply_threshold": (0.1, 1.0),
         "auto_confidence": (0.5, 1.0),
         "min_evidence": (1, 10),
         "batch_size": (4, 100),

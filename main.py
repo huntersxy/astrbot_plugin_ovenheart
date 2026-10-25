@@ -37,6 +37,8 @@ from .auxiliary import AuxiliaryUsage
 from .conversation import ConversationContext
 from .direct_priority import DirectPriority
 from .group_context import GroupContextBridge
+from .jev import JevService
+from .jev import host_settings as read_host_settings
 from .learning import (
     LEARNING_DELIVERY_RULE,
     LEARNING_RHYTHM_RULE,
@@ -390,7 +392,7 @@ class PersonaPlugin(Star):
         super().__init__(context)
         self.context = context
         self.config = config
-        self.host_settings = validate_settings(dict(config))
+        self.host_settings = read_host_settings(config)
         self.settings = DEFAULTS | self.host_settings
         self.settings_lock = asyncio.Lock()
         self.settings_revision = uuid4().hex
@@ -409,6 +411,7 @@ class PersonaPlugin(Star):
         self.conversation = ConversationContext(self)
         self.outgoing_media = OutgoingMediaBridge(self)
         self.oven_multi = OvenMultiBridge(self)
+        self.jev = JevService(self)
         self.tasks: set[asyncio.Task] = set()
         self.busy: set[str] = set()
         self.prewarming: set[str] = set()
@@ -613,7 +616,7 @@ class PersonaPlugin(Star):
         self.settings = await self.store.call(
             "sync_config", self.config, DEFAULTS | self.host_settings, True
         )
-        self.host_settings = validate_settings(dict(self.config))
+        self.host_settings = read_host_settings(self.config)
         self.prompt_overrides = await self.store.call("prompt_overrides")
         self.prompts = prompts.merge(self.prompt_overrides)
         self.retriever.templates = self.prompts
@@ -675,7 +678,7 @@ class PersonaPlugin(Star):
             if (
                 expected_revision is not None
                 and expected_revision != self.settings_revision
-            ) or validate_settings(dict(self.config)) != self.host_settings:
+            ) or read_host_settings(self.config) != self.host_settings:
                 raise ValueError(
                     "配置已在另一页面修改，请刷新后重新编辑，旧表单未保存。"
                 )
@@ -696,7 +699,7 @@ class PersonaPlugin(Star):
                 await commit
                 cancelled = True
             self.settings = merged
-            self.host_settings = validate_settings(dict(self.config))
+            self.host_settings = read_host_settings(self.config)
             self.settings_revision = uuid4().hex
             self.debug("settings_updated", fields=sorted(patch))
             self.learning_context.clear()
@@ -3805,6 +3808,7 @@ class PersonaPlugin(Star):
                     "flagged": 0,
                     "candidates": [],
                 }
+            traits, review["jev"] = await self.jev.learning(traits, base, deadline)
             review["extraction_cache"] = {"hit": draft_hit}
             review["timing"] = {
                 "extraction_seconds": round(extraction_seconds, 3),
@@ -4000,6 +4004,7 @@ class PersonaPlugin(Star):
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
         await self.auxiliary.flush()
+        await self.jev.client.close()
         self.events.clear()
         self.speaker_events.clear()
         self.learning_context.clear()

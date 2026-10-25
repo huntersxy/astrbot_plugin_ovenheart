@@ -269,6 +269,13 @@ function renderSettings() {
       <div class="number-fields">${field("auto_confidence", "自动生效置信度", s.auto_confidence, "由模型评估，不等同于统计概率。", {type:"number", min:.5, max:1, step:.01})}${field("min_evidence", "每条最少证据数", s.min_evidence, "不足时不保存学习条目。", {type:"number", min:1, max:10})}</div>
       ${Object.entries(kinds).map(([key, label]) => switchField(`learn_${key}`, `学习${label}`, "", s[`learn_${key}`])).join("")}
     </section>
+    <section class="settings-group"><h2>Jev 辅助判断</h2><p>接口地址、模型名和 API Key 在 AstrBot 原生插件配置的「Jev / TypeSafe 连接」填写。烤箱之心独占主动回复；意图与情绪由 Oven Multi 的独立开关管理。</p>
+      <p class="muted">${data.jev?.configured ? "已配置原生连接。" : "尚未填写 API Key；保持原有参与与学习流程。"}</p>
+      ${switchField("jev_enabled", "启用 Jev", "失败或未配置时沿用原流程，固定发送模板为英文，聊天原文保留原语言。", s.jev_enabled)}
+      ${switchField("jev_participation_enabled", "主动参与判断", "只核验规划选中的真实目标，可阻止不宜接话的自主回复；不阻止明确 @ 与名字唤醒。", s.jev_participation_enabled)}
+      ${switchField("jev_learning_enabled", "学习置信度核验", "按原始证据独立核验，只能降低候选置信度；保留现有自检与人工审核。", s.jev_learning_enabled)}
+      <div class="number-fields">${field("jev_reply_threshold", "主动回复门槛", s.jev_reply_threshold, "P(应回复)，由 Jev 判断，不等同于校准后的事实概率。", {type:"number",min:.1,max:1,step:.05})}${field("jev_timeout_sec", "调用超时", s.jev_timeout_sec, "秒；超时继续原流程。", {type:"number",min:1,max:20})}${field("jev_max_state_chars", "参与语境上限", s.jev_max_state_chars, "字符；优先保留目标，省略更旧消息。", {type:"number",min:1500,max:16000})}</div>
+    </section>
     <section class="settings-group"><h2>素材与节奏</h2><p>只采集收到的文字消息，跳过机器人自己和命令。采集本身不会触发回复；是否自主参与由参与设置决定。</p>
       <div class="number-fields">${field("min_messages", "自动学习素材门槛", s.min_messages, "条消息", {type:"number", min:4, max:100})}${field("batch_size", "每批最多素材", s.batch_size, "条消息", {type:"number", min:4, max:100})}${field("interval_seconds", "每会话学习间隔", s.interval_seconds, "秒；同时作为失败重试冷却", {type:"number", min:30, max:86400})}${field("retention_days", "原始素材保留时间", s.retention_days, "天；含明确引用，证据摘录随条目保留", {type:"number", min:1, max:90})}${field("max_messages_per_scope", "每会话素材上限", s.max_messages_per_scope, "条；超出后淘汰最旧素材", {type:"number", min:100, max:1000})}</div>
       ${field("provider_id", "学习模型 ID", s.provider_id, "留空使用该会话的当前模型。填写 AstrBot 中已配置的模型提供商 ID。", {type:"text"})}

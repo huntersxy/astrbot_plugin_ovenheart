@@ -3,7 +3,10 @@
     "description": "群聊上下文方式",
     "type": "string",
     "default": "native",
-    "options": ["native", "structured"],
+    "options": [
+      "native",
+      "structured"
+    ],
     "hint": "structured 使用统一的结构化群聊历史：最近40条、最多24000字符，包含消息身份、引用和媒体状态，重载可恢复。切换前关闭宿主的群聊上下文感知与原生主动回复；正常会话历史、平台消息存储和工具继续保留。native 保留宿主方式。"
   },
   "enabled": {
@@ -323,5 +326,73 @@
     "type": "list",
     "default": [],
     "hint": "黑名单模式排除这些精确工具名称；留空允许宿主原本可用的工具，不会启用宿主已停用或无权限的工具。"
+  },
+  "jev_connection": {
+    "description": "Jev / TypeSafe 连接",
+    "type": "object",
+    "hint": "连接信息仅在原生配置维护；只用于主动参与及学习证据核验，不做意图与情绪注入。开关在人格工坊的学习设置中。",
+    "items": {
+      "base_url": {
+        "description": "TypeSafe 接口地址",
+        "type": "string",
+        "default": "https://api.typesafe.ai"
+      },
+      "model": {
+        "description": "Jev 模型名",
+        "type": "string",
+        "default": "jev-latest"
+      },
+      "api_key": {
+        "description": "TypeSafe API Key",
+        "type": "string",
+        "default": "",
+        "hint": "只保存在宿主插件配置中，不进入工坊状态或学习数据库。"
+      }
+    }
+  },
+  "jev_enabled": {
+    "description": "启用 Jev 辅助判断",
+    "type": "bool",
+    "default": false
+  },
+  "jev_participation_enabled": {
+    "description": "Jev 主动参与判断",
+    "type": "bool",
+    "default": true
+  },
+  "jev_learning_enabled": {
+    "description": "Jev 学习置信度核验",
+    "type": "bool",
+    "default": true
+  },
+  "jev_timeout_sec": {
+    "description": "Jev 超时秒数",
+    "type": "int",
+    "default": 4,
+    "slider": {
+      "min": 1,
+      "max": 20,
+      "step": 1
+    }
+  },
+  "jev_max_state_chars": {
+    "description": "Jev 参与语境字符上限",
+    "type": "int",
+    "default": 6000,
+    "slider": {
+      "min": 1500,
+      "max": 16000,
+      "step": 1
+    }
+  },
+  "jev_reply_threshold": {
+    "description": "Jev 主动回复门槛",
+    "type": "float",
+    "default": 0.6,
+    "slider": {
+      "min": 0.1,
+      "max": 1,
+      "step": 0.05
+    }
   }
 }
