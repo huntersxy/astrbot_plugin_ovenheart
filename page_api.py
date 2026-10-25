@@ -360,9 +360,14 @@ class PageAPI:
             state = await self.plugin.store.read("scope_profile", scope)
             if not state:
                 raise ValueError("当前会话不存在。")
-            if operation in ("legacy_preview", "legacy_import"):
+            if operation in ("legacy_preview", "legacy_import", "legacy_cancel"):
                 if payload:
                     raise ValueError("旧记忆导入不接受自定义文件路径或来源参数。")
+                if operation == "legacy_cancel":
+                    return {
+                        "status": "ok",
+                        "data": await self.plugin.legacy_import.cancel(scope),
+                    }
                 result = (
                     await self.plugin.legacy_import.preview(scope)
                     if operation == "legacy_preview"

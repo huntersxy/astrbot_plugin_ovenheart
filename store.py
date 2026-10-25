@@ -194,6 +194,9 @@ class Store:
                 updated REAL NOT NULL
             );
             CREATE INDEX IF NOT EXISTS turn_traces_scope ON turn_traces(scope,id);
+            CREATE TABLE IF NOT EXISTS legacy_import_queue (
+                scope TEXT PRIMARY KEY
+            );
             CREATE TABLE IF NOT EXISTS auxiliary_usage (
                 bucket INTEGER NOT NULL, stage TEXT NOT NULL, provider TEXT NOT NULL, model TEXT NOT NULL,
                 calls INTEGER NOT NULL, successes INTEGER NOT NULL, errors INTEGER NOT NULL,
@@ -2043,6 +2046,16 @@ class Store:
                 (provider, scope, scope, SHARED_SCOPE),
             )
         }
+
+    def legacy_import_queue(self, db, scope=None, pending=True):
+        if scope is not None:
+            if pending:
+                db.execute(
+                    "INSERT OR IGNORE INTO legacy_import_queue VALUES (?)", (scope,)
+                )
+            else:
+                db.execute("DELETE FROM legacy_import_queue WHERE scope=?", (scope,))
+        return [row[0] for row in db.execute("SELECT scope FROM legacy_import_queue")]
 
     def auxiliary_usage(self, db, rows=None):
         """Persist bounded hourly totals only; unknown/cancelled usage stays unreported."""

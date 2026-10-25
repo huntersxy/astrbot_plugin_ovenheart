@@ -644,6 +644,7 @@ class PersonaPlugin(Star):
         self.prompts = prompts.merge(self.prompt_overrides)
         self.retriever.templates = self.prompts
         await self.store.call("prune", self.settings["retention_days"])
+        await self.legacy_import.restore()
         self.page_api = PageAPI(self)
         self.page_api.register()
         self.memory.install()
@@ -1100,6 +1101,7 @@ class PersonaPlugin(Star):
         await self.image_memory.observe(event, scope, persona)
         await self.midterm_memory.observe_native(event, scope, persona)
         self.events[scope] = event
+        self.legacy_import.observe(scope)
         self.speaker_events.pop((scope, sender), None)
         self.speaker_events[scope, sender] = event
         if len(self.speaker_events) > 128:

@@ -233,7 +233,49 @@ class LivingMemoryImport:
         self.plugin = plugin
         self.busy = {}
         self.status = {}
+        self.pending = set()
+        self.launching = {}
         self.directory = plugin.room_memory.directory.parent / "livingmemory_imports"
+
+    async def restore(self):
+        self.pending = set(await self.plugin.store.call("legacy_import_queue"))
+        for scope in self.pending:
+            self.status[scope] = {
+                "state": "waiting_source",
+                "message": "已保存迁入请求；等待当前会话下一条真实且获准的消息。",
+            }
+
+    def observe(self, scope):
+        if scope in self.pending and scope not in self.busy:
+            self.pending.remove(scope)
+            self.launching[scope] = self.plugin.track(self.resume(scope))
+
+    async def resume(self, scope):
+        try:
+            await self.start(scope)
+        except Exception as exc:
+            self.status[scope] = {
+                "state": "error",
+                "message": str(exc)
+                if isinstance(exc, ValueError)
+                else "待迁入请求未能启动（" + type(exc).__name__ + "），请重新预览。",
+            }
+            await self.plugin.store.call("legacy_import_queue", scope, False)
+        finally:
+            self.launching.pop(scope, None)
+
+    async def cancel(self, scope):
+        self.pending.discard(scope)
+        await self.plugin.store.call("legacy_import_queue", scope, False)
+        task = self.busy.get(scope) or self.launching.get(scope)
+        if task is not None:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+        self.status[scope] = {
+            "state": "cancelled",
+            "message": "已取消待迁入请求；已成功写入的原生记忆和原库保留。",
+        }
+        return self.status[scope]
 
     async def access(self, event, scope, persona):
         if not await self.plugin.room_memory.permitted(event, scope, persona, True):
@@ -300,6 +342,8 @@ class LivingMemoryImport:
     async def preview(self, scope):
         if scope in self.busy:
             raise ValueError("当前会话正在导入，请查看进度，完成后可重新预览。")
+        if scope in self.pending:
+            raise ValueError("当前会话已排队等待真实消息；可先取消，再重新预览。")
         event = self.plugin.events.get(scope)
         if event is None:
             raise ValueError("当前会话缺少近期真实来源，请收到新消息后重试。")
@@ -323,11 +367,19 @@ class LivingMemoryImport:
             raise ValueError("当前会话已有记忆导入任务。")
         event = self.plugin.events.get(scope)
         if event is None:
-            raise ValueError("当前会话缺少近期真实来源，请收到新消息后重试。")
+            await self.plugin.store.call("legacy_import_queue", scope)
+            self.pending.add(scope)
+            self.status[scope] = {
+                "state": "waiting_source",
+                "message": "已保存迁入请求；等待当前会话下一条真实且获准的消息。",
+            }
+            return self.status[scope]
         actual, persona, _ = await self.plugin.resolve_scope(event)
         if actual != scope:
             raise ValueError("当前人格归属已变化，请刷新后重试。")
         owner, path, scopes = await self.access(event, scope, persona)
+        await self.plugin.store.call("legacy_import_queue", scope)
+        self.pending.discard(scope)
         self.status[scope] = {
             "state": "running",
             "processed": 0,
@@ -401,6 +453,8 @@ class LivingMemoryImport:
             )
         finally:
             self.busy.pop(scope, None)
+            if not self.plugin.closing:
+                await self.plugin.store.call("legacy_import_queue", scope, False)
 
     async def retired(self, event):
         meta = self.plugin.context.get_registered_star("astrbot_plugin_livingmemory")

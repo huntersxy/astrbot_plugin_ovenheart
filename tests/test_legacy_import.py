@@ -147,6 +147,33 @@ async def test_snapshot_import_uses_live_atoms_preserves_source_and_native_names
     p.context.llm_generate.assert_not_awaited()
 
 
+async def test_waiting_import_survives_reload_can_cancel_and_uses_next_real_source(
+    legacy,
+):
+    from astrbot_plugin_ovenheart.legacy_import import LivingMemoryImport
+
+    p, _, scope, _, _, _ = legacy
+    p.events.clear()
+    result = await p.legacy_import.start(scope)
+    assert result["state"] == "waiting_source"
+    assert not p.legacy_import.directory.exists()
+    assert await p.store.call("legacy_import_queue") == [scope]
+    p.legacy_import = LivingMemoryImport(p)
+    await p.legacy_import.restore()
+    assert scope in p.legacy_import.pending
+    await p.legacy_import.cancel(scope)
+    assert not await p.store.call("legacy_import_queue")
+    await p.legacy_import.start(scope)
+    p.legacy_import = LivingMemoryImport(p)
+    await p.legacy_import.restore()
+    await material(p, "next-real-source")
+    await asyncio.gather(*tuple(p.legacy_import.launching.values()))
+    await asyncio.gather(*tuple(p.legacy_import.busy.values()))
+    assert p.legacy_import.status[scope]["state"] == "completed"
+    assert p.legacy_import.status[scope]["stored"] == 2
+    assert not await p.store.call("legacy_import_queue")
+
+
 async def test_reimport_does_not_revive_native_forgotten_records_or_widen_old_access(
     legacy,
 ):
