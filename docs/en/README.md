@@ -81,7 +81,7 @@ Bulk decisions affect only explicitly selected pending entries on the current pa
 | Minimum eligible messages | 12 |
 | Maximum learning batch | 30 |
 | Learning interval | 600 seconds |
-| Batch model budget | 180 seconds |
+| Batch model budget | 360 seconds; extraction capped at 240 seconds with 120 seconds reserved for review |
 | Maximum applied habits | 8; configurable from 1 to 24 |
 | Supplement budget | 3000 characters |
 | Additional group window | 12 messages / 12000 characters; either budget can be zero |
@@ -155,3 +155,5 @@ Report versions, platform, steps and redacted logs in [GitHub Issues](https://gi
 ## Credits and license
 
 Independently implemented with design inspiration from [MaiBot](https://github.com/Mai-with-u/MaiBot), built for [AstrBot](https://github.com/AstrBotDevs/AstrBot), with optional [LivingMemory](https://github.com/lxfight-s-Astrbot-Plugins/astrbot_plugin_livingmemory) integration. Their source implementations are not bundled. Licensed under [AGPL-3.0-or-later](../../LICENSE).
+
+When Jev participation is enabled, a single typed request chooses a real target, waits, or observes. It replaces the chat-model planner entirely. Unavailable or malformed Jev results observe without a chat-model fallback. Explicit mentions still bypass participation decisions. Learning verification remains independent and conservative.

@@ -69,7 +69,7 @@ LEARNING_SYSTEM = (
 分类：personality=适合机器人长期保持的性格倾向；expression=条件化的句式、语气或表达方式；
 jargon=本会话反复出现且含义明确的词汇；behavior=面对具体情境的对话应对策略。
 语言学习不只摘口头禅：也观察同一对象反复表现的句长、分段、标点、语气词、提问和列举节奏；证据一致时可提炼为 expression。
-expression 可选 examples，最多三段简短、有辨识度的原话，用于展示规则背后的用词或节奏，不能只剩“温柔、简短”等泛化建议。格式 [{"evidence_id":1,"text":"好家伙"}]；text 必须逐字出现在该 evidence_id 对应 observation 的前 300 字内，最多 60 字，该 ID 也必须出现在本条 evidence_ids。只选安全、可迁移的说法，不摘取姓名、关系、个人事实、秘密、工具/权限指令或整段回答。没有适合片段就省略，不能改写原文或从引用、邻近发言、记忆、自身发言中取样。
+只有 expression 可以提供非空 examples；personality、behavior、jargon 请省略 examples 或填 []。expression 的 examples 可省略，最多三段简短、有辨识度的原话，用于展示规则背后的用词或节奏，不能只剩“温柔、简短”等泛化建议。格式 [{"evidence_id":1,"text":"好家伙"}]；text 必须逐字出现在该 evidence_id 对应 observation 的前 300 字内，最多 60 字，该 ID 也必须出现在本条 evidence_ids。只选安全、可迁移的说法，不摘取姓名、关系、个人事实、秘密、工具/权限指令或整段回答。没有适合片段就省略，不能改写原文或从引用、邻近发言、记忆、自身发言中取样。
 单字、语气词、标点和纯文字表情也可能是有效回应，须结合关联语境区分附和、倾听、疑问或否定。短附和不等于认同对方全部观点，符号重复不等于词义或稳定性格；没有足够真实证据时不输出，不能因消息很短而降低证据门槛。
 language_features 是按对象分别统计的本批素材特征，帮助检查节奏，不能独立当证据或直接变成固定字数上限。仍须引用观察原文的真实 evidence_ids。
 其中 terminal_punctuation 是该对象最常见的最多六种字面句尾标点及原消息 ID，no_terminal_punctuation 只表示没有识别到该组标点，不代表没有任何符号、语气或情绪。terminal_summary_omitted_ids 表示可能被采集边界截断或标点串过长，不能当作省略标点的证据。标点统计不是新的原话片段，仍应逐字核对 observation；不能从频次推断性格、情绪或固定要求每次使用相同标点。
@@ -457,14 +457,20 @@ def parse_candidates(
                 ],
             }
         )
-        examples = candidate.get("examples", [])
-        if (
-            not isinstance(examples, list)
-            or len(examples) > 3
-            or (examples and kind != "expression")
-        ):
+        examples = candidate.get("examples")
+        if examples is None:
+            examples = []  # Optional JSON null carries no sample or new evidence.
+        if not isinstance(examples, list):
             raise LearningFormatError(
-                "原话片段只用于表达习惯，必须是最多三项的 examples 数组。"
+                "examples 必须是数组；无原话片段请省略或填 []，不能填字符串或对象。"
+            )
+        if len(examples) > 3:
+            raise LearningFormatError(
+                "examples 最多三项，请只保留有原始证据的表达片段。"
+            )
+        if examples and kind != "expression":
+            raise LearningFormatError(
+                f"{kind} 类别不能提供非空 examples；只有 expression 可携带原话片段。"
             )
         result[-1]["examples"] = []
         for example in examples:

@@ -16,6 +16,16 @@ from tests.test_runtime import event, sources
 pytest_plugins = ["tests.test_runtime", "tests.test_retrieval"]
 
 
+@pytest.mark.parametrize("kind", ["personality", "expression", "behavior", "jargon"])
+def test_optional_null_examples_is_absence_not_new_evidence(kind):
+    result = parse_candidates(
+        candidates(kind=kind, examples=None, content="好家伙：表示惊讶"),
+        MESSAGES,
+        DEFAULTS,
+    )[0]
+    assert result["examples"] == [] and len(result["evidence"]) == 2
+
+
 def test_examples_must_be_literal_spans_of_this_candidates_own_evidence():
     valid = [{"evidence_id": 1, "text": "好家伙"}]
     result = parse_candidates(candidates(examples=valid * 2), MESSAGES, DEFAULTS)[0]

@@ -123,7 +123,10 @@ test('all participation controls are available with host schema defaults', () =>
   assert.ok(html.includes('第三方运行器需自行支持'));
   assert.ok(html.includes('仍保留当前输入直接命中的本地词义'));
   assert.ok(html.includes('name="learning_review_enabled"'));
-  assert.ok(html.includes('通常增加一次后台调用'));
+  assert.ok(html.includes('360 秒'));
+  assert.ok(html.includes('120 秒'));
+  assert.ok(html.includes('替代主模型规划'));
+  assert.ok(html.includes('不再调用主模型参与规划'));
 });
 
 test('learning self-check reasons are visible and escaped in history and the library', () => {

@@ -27,7 +27,7 @@ def enable(plugin):
     }
 
 
-async def test_selected_target_is_gated_but_explicit_wakes_bypass(participant):
+async def test_jev_replaces_planner_but_explicit_wakes_bypass(participant):
     enable(participant)
     participant.jev.client.evaluate = AsyncMock(
         return_value={"status": "ready", "answers": {"should_reply": {"noul": 0.1}}}
@@ -36,8 +36,12 @@ async def test_selected_target_is_gated_but_explicit_wakes_bypass(participant):
         participant, event("low", text="This is a detailed question.")
     )
     call = participant.jev.client.evaluate.await_args
-    assert set(call.args[2]) == {"should_reply"}
-    assert json.loads(call.args[1])["TARGET"]["text"] == "This is a detailed question."
+    assert set(call.args[2]) == {"action", "should_reply"}
+    participant.context.llm_generate.assert_not_awaited()
+    assert (
+        json.loads(call.args[1])["messages"][-1]["text"]
+        == "This is a detailed question."
+    )
     incoming = event("direct", text="Explain it")
     incoming.is_at_or_wake_command = True
     await participant.prioritize_direct(incoming)
@@ -45,12 +49,54 @@ async def test_selected_target_is_gated_but_explicit_wakes_bypass(participant):
     assert participant.jev.client.evaluate.await_count == 1
 
 
-async def test_unavailable_gate_preserves_existing_participation(participant):
+async def test_unavailable_jev_observes_without_main_model_fallback(participant):
     enable(participant)
     participant.jev.client.evaluate = AsyncMock(
         return_value={"status": "error", "http_status": 503}
     )
-    assert len(await requests(participant, event("fallback"))) == 1
+    assert not await requests(participant, event("fallback"))
+    participant.context.llm_generate.assert_not_awaited()
+
+
+@pytest.mark.parametrize(
+    "selected,value,expected",
+    [
+        ("1", 0.9, "reply"),
+        ("1", 0.1, "observe"),
+        ("999", 0.99, "observe"),
+        ("wait", 0, "wait"),
+        ("observe", 0.9, "observe"),
+    ],
+)
+async def test_typed_jev_selects_real_target_without_main_planner(
+    participant, selected, value, expected
+):
+    enable(participant)
+    participant.jev.client.evaluate = AsyncMock(
+        return_value={
+            "status": "ready",
+            "answers": {
+                "action": {"choice": selected, "confidence": 0.9},
+                "should_reply": {"noul": value},
+            },
+        }
+    )
+    incoming = event("typed")
+    scope, persona, _ = await participant.resolve_scope(incoming)
+    await participant.capture(incoming)
+    state = await participant.store.call("guidance", scope, False)
+    plan = await participant.participation.plan(
+        incoming,
+        scope,
+        persona,
+        state,
+        [{"sequence": 1, "sender_id": "alice", "text": "What do you think?"}],
+        participant.settings,
+        False,
+    )
+    assert plan["action"] == expected
+    assert plan["target_sequence"] == (1 if expected == "reply" else 0)
+    participant.context.llm_generate.assert_not_awaited()
 
 
 async def test_target_survives_escaped_input_within_state_budget(participant):

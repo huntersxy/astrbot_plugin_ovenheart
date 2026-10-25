@@ -33,7 +33,7 @@ async def test_review_timeout_resumes_only_review_after_reload_without_consuming
         payload = json.loads(kwargs["prompt"])
         calls.append("review" if "candidates" in payload else "extraction")
         if "candidates" in payload:
-            await asyncio.sleep(1)
+            await asyncio.sleep(1.3)
             return SimpleNamespace(
                 completion_text=json.dumps(
                     {
@@ -44,7 +44,7 @@ async def test_review_timeout_resumes_only_review_after_reload_without_consuming
                     }
                 )
             )
-        await asyncio.sleep(1.2)
+        await asyncio.sleep(0.9)
         return await completion(**kwargs)
 
     plugin.context.llm_generate.side_effect = model

@@ -804,6 +804,21 @@ class ParticipationController:
                 while recall is in progress.
         """
         plugin = self.plugin
+        if settings.get("jev_enabled") and settings.get(
+            "jev_participation_enabled", True
+        ):
+            # Jev owns this decision. Do not pay for a main-model planner or
+            # fall back to one after an unavailable/uncertain typed judgment.
+            return await plugin.jev.plan(
+                event,
+                scope,
+                persona,
+                state,
+                offered_messages(messages, settings),
+                settings,
+                waited,
+                followup,
+            )
         revision = plugin.settings_revision
         prompts_revision = plugin.prompts_revision
         deadline = time.monotonic() + settings["retrieval_timeout"]
@@ -1036,22 +1051,6 @@ class ParticipationController:
             waited,
             offered_messages(messages, settings),
         )
-        if plan["action"] == "reply":
-            target = next(
-                m for m in messages if m["sequence"] == plan["target_sequence"]
-            )
-            probability = await plugin.jev.participation(event, scope, target, messages)
-            if probability is not None:
-                plan["jev_probability"] = probability
-                if probability < settings["jev_reply_threshold"]:
-                    plan.update(
-                        action="observe",
-                        intent="",
-                        target_sequence=0,
-                        decoration=None,
-                        expression_intent={},
-                        reason="Jev 判定当前不宜主动接话，继续旁观。",
-                    )
         return plan
 
     def close(self):

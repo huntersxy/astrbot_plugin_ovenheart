@@ -8,7 +8,10 @@ from types import SimpleNamespace
 import pytest
 
 from astrbot_plugin_ovenheart.learning import LEARNING_REVIEW_SYSTEM
-from astrbot_plugin_ovenheart.settings import LEARNING_TIMEOUT_SECONDS
+from astrbot_plugin_ovenheart.settings import (
+    LEARNING_REVIEW_RESERVE_SECONDS,
+    LEARNING_TIMEOUT_SECONDS,
+)
 from tests.test_runtime import completion, sources
 
 pytest_plugins = ["tests.test_runtime"]
@@ -85,9 +88,10 @@ async def test_extraction_overlaps_but_review_waits_and_receives_stable_order(
         task.cancel()
         await asyncio.gather(task, return_exceptions=True)
     assert result["status"] == "success" and result["count"] == 4
-    assert len(deadlines) == 3 and len(set(deadlines)) == 1
-    assert started + LEARNING_TIMEOUT_SECONDS <= deadlines[0]
-    assert deadlines[0] <= time.monotonic() + LEARNING_TIMEOUT_SECONDS
+    assert len(deadlines) == 3 and deadlines[0] == deadlines[1]
+    assert deadlines[2] - deadlines[0] == pytest.approx(LEARNING_REVIEW_RESERVE_SECONDS)
+    assert started + LEARNING_TIMEOUT_SECONDS <= deadlines[2]
+    assert deadlines[2] <= time.monotonic() + LEARNING_TIMEOUT_SECONDS
     assert [c["kind"] for c in review_seen[0]["candidates"]] == [
         "personality",
         "expression",
