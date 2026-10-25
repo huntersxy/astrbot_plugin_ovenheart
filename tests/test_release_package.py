@@ -41,6 +41,8 @@ kernel = importlib.import_module(spec.name+'.vendor.maibot.amemorix.runtime.sdk_
 assert kernel.SDKMemoryKernel
 native = importlib.import_module(spec.name+'.native_memory_kernel')
 assert native.NativeMemoryKernel
+midterm = importlib.import_module(spec.name+'.midterm')
+assert midterm.MidTermMemory(None).template
 """
     result = subprocess.run(
         [sys.executable, "-I", "-c", code, str(extracted)],

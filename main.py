@@ -53,6 +53,7 @@ from .learning import (
 )
 from .memory_bridge import MemoryBridge
 from .memory_consolidation import MemoryConsolidation
+from .midterm import MidTermMemory
 from .outgoing_media import OutgoingMediaBridge
 from .oven_multi import JEV_RULE, OvenMultiBridge
 from .oven_multi import reading as jev_reading
@@ -415,6 +416,7 @@ class PersonaPlugin(Star):
         self.person_memory = PersonMemory(self)
         self.memory_consolidation = MemoryConsolidation(self)
         self.room_memory = RoomMemory(self)
+        self.midterm_memory = MidTermMemory(self)
         self.retriever = HabitRetriever(
             context, self.store, self.prompts, self.auxiliary.generate
         )
@@ -1077,6 +1079,7 @@ class PersonaPlugin(Star):
         self.room_memory.observe(event, scope)
         await self.person_memory.observe(event, scope, persona)
         await self.memory_consolidation.observe(event, scope, persona)
+        await self.midterm_memory.observe_native(event, scope, persona)
         self.events[scope] = event
         self.speaker_events.pop((scope, sender), None)
         self.speaker_events[scope, sender] = event
@@ -2414,6 +2417,17 @@ class PersonaPlugin(Star):
             persona,
             ((plan or {}).get("target") or {}).get("text") or event.get_message_str(),
         )
+        recalls = await self.midterm_memory.context(
+            event, scope, persona, (plan or {}).get("messages", [])
+        )
+        native_memories = [
+            *recalls,
+            *[
+                row
+                for row in native_memories
+                if row["id"] not in {recall["id"] for recall in recalls}
+            ],
+        ]
         if native_memories:
             req.extra_user_content_parts.append(
                 TextPart(

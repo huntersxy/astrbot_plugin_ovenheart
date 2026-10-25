@@ -1,0 +1,29 @@
+{
+  "commit": "5c7637e6913c84d1c3d5e742fa9e95a7e70d3501",
+  "source": "src/maisaka/memory/mid_term.py",
+  "source_sha256": "f39436936f7c5b353c370472ad2c9672218e92886c68e08a51e8230735ea1793",
+  "ported_sha256": "f3efd41fd951e900b1f688ef06efd03b0a9b40b4b3e730264323b6e8fe038792",
+  "template_sha256": "d288413f3470e95b51b4b2b6f0eb925f72a3d58bbcb88b6a3b4d7eb03c3066c3",
+  "symbol_ast_sha256": {
+    "MidTermMemorySummaryModel": "8006f1d209afb79d7435f20902784a9b58bcaff0cb9fdcda4c687454f532e57b",
+    "MidTermMemoryRecallCandidate": "ae259cb64f89bd11633feeb7adb704eefcc6914f8326a34cf26700616e129ff3",
+    "_parse_summary_response": "35f975dc8f2da8aaecb7a18c839eef39d793abfd80d7f00d978d44fc07aab7a3",
+    "_load_json_payload": "4116a6edcb78e658d25c671e24c805b1cd87b5637eafcf9b24032d43bc498b81",
+    "_parse_json_candidate": "978836cc749d0348cbcdc59a955883e2c475c038010680c23ab761b849563f35",
+    "_coerce_str_list": "0c36ff41e22606ca26b28f61cb573b22a8eefb162510d52f3e163869a114cdcd",
+    "_normalize_recall_cues": "5c98ffeab515dbf5e0f624fbf7b67883ed4e802f37b6673e3a7986e3058305e7",
+    "_normalize_recall_cue_text": "57814bcf34ac2fba8783549c394023da1ecf797f808de7af94d570632e4f251a",
+    "_resolve_payload_summary": "da19e412518e805fbc8eb52d07059fdf925dd0894a0af5975a2c91b1a33238f5",
+    "_iter_recall_cue_payloads": "2029961cc86a3e6eb653353d47b875f349a1cc69c89d8b2745190d296e8d5a68",
+    "_is_mid_term_memory_candidate_already_recalled": "45789413bd93eb58095e70ef0d1f995557f437d687a00a5d5a8fb8ddd5889243",
+    "_normalize_reference_identity_text": "9d1d355f2ad6efa8a4435f83693fbd4db05b437c46c794eeaa6971c8b0adbeb6",
+    "_select_best_recall_candidate": "535ef8e2eb465cfc7a0c9207a886afc29ffd4183d1e64c120c59cebbfdb9682c",
+    "_get_candidate_embedding": "b876fb349dc7991226a6c4bd7123c6b72a174ba68261024baae0222eb3ffcd4c",
+    "_cosine_similarity": "7249686ddab3ff75e75fdd04107897872d53a8a2a9bcf29fe0580bd9fa0a3ff4",
+    "_format_mid_term_memory_reference": "e7244312360778846c3142473d1b6aa7c030635f8deb29bc0b7fb96062eb4d07",
+    "_build_summary_message_id": "3474faf70594afa9062c57b1612ff48a2221065f58c99c0981d1caf72cbe8c45",
+    "_to_base36": "0248dcb81a355d202d0b6deaaad511a1643e693d246808fd720d429df110b585",
+    "_truncate": "7f22fe2764c40f990cf23588783f56df3254a1da350aa205d825dd32065c56c7"
+  },
+  "adaptation": "Pure original parser, cue, cosine selection and reference algorithms. Native internal identity DTO replaces MaiBot context-message dependency. Host compression, provenance, storage and transport live in midterm.py."
+}

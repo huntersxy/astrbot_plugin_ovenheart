@@ -477,6 +477,18 @@
     "default": true,
     "hint": "将新素材增量摘要为长期记忆，并生成可检索的情景。遵守会话、人格、来源与学习开关；后台模型调用计入辅助用量。"
   },
+  "midterm_memory_enabled": {
+    "type": "bool",
+    "description": "聊天回想",
+    "hint": "把离开短期上下文的原生发言压缩为近期回想，并按原版语义阈值召回。原生模式复用宿主消息历史；暂停学习后停止更新。",
+    "default": true
+  },
+  "midterm_memory_limit": {
+    "type": "int",
+    "description": "聊天回想保留数",
+    "hint": "当前原生会话最多参与中期语义匹配的摘要数，1至50。",
+    "default": 10
+  },
   "memory_summary_min_messages": {
     "description": "群聊摘要最少新发言",
     "type": "int",

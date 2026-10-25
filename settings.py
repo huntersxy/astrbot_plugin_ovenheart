@@ -26,6 +26,8 @@ DEFAULTS = {
     "native_memory_enabled": True,
     "memory_summary_enabled": True,
     "memory_feedback_enabled": True,
+    "midterm_memory_enabled": True,
+    "midterm_memory_limit": 10,
     "memory_summary_min_messages": 12,
     "memory_summary_interval": 600,
     "memory_summary_provider_id": "",
@@ -139,6 +141,7 @@ def validate_settings(values: dict) -> dict:
         "person_memory_min_messages": (1, 30),
         "person_memory_interval": (0, 86400),
         "memory_summary_min_messages": (1, 50),
+        "midterm_memory_limit": (1, 50),
         "memory_summary_interval": (0, 86400),
     }
     for key, value in values.items():

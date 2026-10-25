@@ -144,7 +144,7 @@ class ConversationContext:
             else None,
         }
 
-    async def _seed(self, event, cid):
+    async def _seed(self, event, cid, *, limit=CONTEXT_COUNT):
         manager = getattr(self.plugin.context, "message_history_manager", None)
         if manager is None:
             return []
@@ -158,7 +158,7 @@ class ConversationContext:
             lower = max(
                 lower, float(conversation.created_at or 0) if conversation else 0
             )
-        return await self.history(event, lower, event.created_at, limit=CONTEXT_COUNT)
+        return await self.history(event, lower, event.created_at, limit=limit)
 
     async def history(self, event, lower, upper, *, limit=80, limit_mode="latest"):
         """Read the host's existing transcript in the requested time window."""
@@ -320,6 +320,9 @@ class ConversationContext:
             )
             window = self._publish(scope, state)
             event.set_extra("ovenheart_context_binding", (scope, state["epoch"]))
+            await self.plugin.midterm_memory.observe(
+                event, scope, state["messages"], self.snapshot(event, scope)
+            )
             self.plugin.participation.sources[scope, event_source(event)] = event
             while len(self.plugin.participation.sources) > 128:
                 self.plugin.participation.sources.pop(

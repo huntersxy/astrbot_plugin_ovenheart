@@ -353,10 +353,19 @@ class PlannerSession:
         memories, memory_status = await self.plugin.memory.planning_context(
             self.event, self.persona, self.messages, self.settings
         )
+        native = await self.plugin.room_memory.context(
+            self.event, self.scope, self.persona, query
+        )
+        recalls = await self.plugin.midterm_memory.context(
+            self.event, self.scope, self.persona, self.messages
+        )
         memories = [
-            *await self.plugin.room_memory.context(
-                self.event, self.scope, self.persona, query
-            ),
+            *recalls,
+            *[
+                row
+                for row in native
+                if row["id"] not in {recall["id"] for recall in recalls}
+            ],
             *memories,
         ]
         self.track_memory_targets(memories)

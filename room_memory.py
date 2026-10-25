@@ -475,6 +475,36 @@ class RoomState:
             ]
         return {"paragraphs": hits, "relations": edges, "episodes": episodes}
 
+    async def midterm_records(self, cid, limit):
+        rows = self.metadata._conn.execute(
+            "SELECT hash,metadata FROM paragraphs WHERE source=? AND json_extract(metadata,'$.midterm.cid')=? ORDER BY created_at DESC",
+            ("chat_summary:" + self.path.name, cid),
+        ).fetchall()
+        cutoff = max(
+            (json.loads(r["metadata"])["midterm"]["end"] for r in rows), default=0
+        )
+        found = self.metadata.get_paragraphs_by_hashes(
+            [r["hash"] for r in rows[:limit]]
+        )
+        hits = self.kernel._get_search_hit_service()._filter_user_visible_hits(
+            [
+                {
+                    "hash": r["hash"],
+                    "type": "paragraph",
+                    "source": r["source"],
+                    "content": r["content"],
+                    "metadata": r["metadata"],
+                }
+                for r in found.values()
+            ]
+        )
+        return {"cutoff": cutoff, "records": hits}
+
+    async def midterm_store(self, payload, evidence):
+        saved = await self.write(payload["summary"], evidence, [])
+        self.metadata.update_paragraph_metadata(saved["id"], {"midterm": payload})
+        return saved
+
     async def change(self, action, payload, evidence):
         from .native_memory_kernel import correction_evidence
         from .vendor.maibot.amemorix.utils.hash import normalize_text
@@ -1131,7 +1161,8 @@ class RoomMemory:
         state = self.rooms.get(scope)
         if (
             state is not None
-            and operation in ("search", "write", "change", "person_context")
+            and operation
+            in ("search", "write", "change", "person_context", "midterm_records")
             and state.operation == "consolidate"
             and state.revision == revision
         ):
