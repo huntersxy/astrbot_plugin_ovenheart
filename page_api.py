@@ -15,6 +15,7 @@ from astrbot.core.star.session_plugin_manager import SessionPluginManager
 
 from . import prompts
 from .learning import build_guidance, build_guidance_parts, habit_text
+from .native_context import native_time
 from .settings import PROFILE_DEFAULTS, SHARED_SCOPE, learning_blocked
 
 
@@ -653,6 +654,14 @@ class PageAPI:
                 host_prompt=host_prompt,
                 templates=self.plugin.prompts,
             )
+            time_context = native_time(self.plugin.context, umo)
+            extra_parts = [TextPart(text=temporary).mark_as_temp()] if temporary else []
+            if time_context:
+                extra_parts.append(
+                    TextPart(
+                        text="<system_reminder>" + time_context + "</system_reminder>"
+                    ).mark_as_temp()
+                )
             response = await asyncio.wait_for(
                 self.plugin.track(
                     self.plugin.auxiliary.generate(
@@ -662,11 +671,7 @@ class PageAPI:
                         system_prompt=host_prompt + ("\n\n" + system if system else ""),
                         contexts=[],
                         tools=None,
-                        extra_user_content_parts=[
-                            TextPart(text=temporary).mark_as_temp()
-                        ]
-                        if temporary
-                        else [],
+                        extra_user_content_parts=extra_parts,
                     )
                 ),
                 timeout=90,
@@ -728,6 +733,7 @@ class PageAPI:
                 "data": {
                     "reply": reply,
                     "provider_id": provider_id,
+                    "time_context": time_context,
                     "model": str(model or ""),
                     "usage": {
                         "input_cached": usage.input_cached,

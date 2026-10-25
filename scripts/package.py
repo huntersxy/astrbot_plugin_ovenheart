@@ -23,6 +23,7 @@ files = [
         "direct_priority.py",
         "learning.py",
         "memory_bridge.py",
+        "native_context.py",
         "group_context.py",
         "conversation.py",
         "outgoing_media.py",

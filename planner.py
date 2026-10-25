@@ -15,6 +15,7 @@ import jsonschema
 from astrbot.core.agent.tool import FunctionTool, ToolSet
 
 from .learning import build_guidance
+from .native_context import native_time
 from .participation import event_source, offered_messages, parse_plan, planner_message
 from .person_memory import FACTS_SCHEMA
 from .room_memory import CHANGE_SCHEMAS, MEMORY_SCHEMA
@@ -516,6 +517,9 @@ class PlannerSession:
                 prompt=json.dumps(
                     {
                         "identity": anchor["prompt"] if anchor else "",
+                        "time_context": native_time(
+                            self.plugin.context, self.event.unified_msg_origin
+                        ),
                         "behavior_guidance": build_guidance(
                             self.profile,
                             selected["traits"],

@@ -12,23 +12,60 @@ import asyncio
 import hashlib
 import json
 import os
+import re
 import subprocess
 import sys
+import traceback
 from datetime import datetime
 from pathlib import Path
 
 PINNED = "5c7637e6913c84d1c3d5e742fa9e95a7e70d3501"
 
 
+class ReferenceFailure(RuntimeError):
+    """Only sanitized source errors may cross the private-input boundary."""
+
+
+def reference_commit(source):
+    if (source / ".git").exists():
+        commit = subprocess.check_output(
+            ["git", "-C", str(source), "rev-parse", "HEAD"], text=True
+        ).strip()
+        subprocess.run(
+            [
+                "git",
+                "-C",
+                str(source),
+                "diff",
+                "--quiet",
+                "HEAD",
+                "--",
+                "src",
+                "prompts",
+                "locales",
+                "pyproject.toml",
+            ],
+            check=True,
+        )
+        return commit
+    manifest = json.loads(
+        (source / ".reference-source.json").read_text(encoding="utf-8")
+    )
+    if "src/chat/replyer/maisaka_generator_base.py" not in manifest["files"]:
+        raise ValueError("Reference archive does not include the original replyer")
+    for relative, expected in manifest["files"].items():
+        path = (source / relative).resolve()
+        if (
+            not path.is_relative_to(source)
+            or hashlib.sha256(path.read_bytes()).hexdigest() != expected
+        ):
+            raise ValueError("Reference archive source verification failed")
+    return manifest["commit"]
+
+
 async def run(args, packet):
     source = args.source.resolve()
-    commit = (
-        await asyncio.to_thread(
-            subprocess.check_output,
-            ["git", "-C", str(source), "rev-parse", "HEAD"],
-            text=True,
-        )
-    ).strip()
+    commit = await asyncio.to_thread(reference_commit, source)
     if commit != PINNED:
         raise ValueError("Reference source differs from the pinned MaiBot commit")
     instance = args.instance.resolve()
@@ -39,6 +76,7 @@ async def run(args, packet):
     os.chdir(instance)
     sys.path.insert(0, str(source))
 
+    from src.chat.replyer.maisaka_expression_selector import maisaka_expression_selector
     from src.chat.replyer.maisaka_generator import MaisakaReplyGenerator
     from src.common.data_models.message_component_data_model import (
         MessageSequence,
@@ -101,6 +139,21 @@ async def run(args, packet):
             return persona
 
     replyer = NativeIdentityReplyer()
+    traits = packet.get("traits", [])
+    expressions = [
+        {"situation": trait["situation"], "style": trait["content"]}
+        for trait in traits
+        if trait["kind"] == "expression"
+    ]
+    requirements = [
+        str(packet.get("profile", {}).get(key) or "")
+        for key in ("identity", "behavior")
+    ] + [
+        f"当{trait['situation']}时：{trait['content']}"
+        for trait in traits
+        if trait["kind"] != "expression"
+    ]
+    habits = maisaka_expression_selector._build_expression_habits_block(expressions)
     history = [
         ContentContextMessage(
             raw_message=MessageSequence([TextComponent(text=query)]),
@@ -109,10 +162,31 @@ async def run(args, packet):
         )
     ]
     success, result = await asyncio.wait_for(
-        replyer.generate_reply_with_context(chat_history=history), timeout=120
+        replyer.generate_reply_with_context(
+            chat_history=history,
+            expression_habits=habits,
+            selected_expression_ids=[trait["id"] for trait in traits],
+            reply_tool_args={
+                "_plugin_reply_prompt": "\n".join(
+                    value for value in requirements if value
+                )
+            },
+        ),
+        timeout=120,
     )
     if not success:
-        raise RuntimeError("Reference replyer did not produce a visible reply")
+        reason = (
+            result.error_message or "Reference replyer did not produce a visible reply"
+        )
+        for secret in [
+            *keys,
+            persona,
+            *(provider.get("custom_headers") or {}).values(),
+        ]:
+            if secret:
+                reason = reason.replace(str(secret), "[redacted]")
+        reason = re.sub(r"https?://\S+", "[endpoint]", reason)
+        raise ReferenceFailure(reason[:350])
     return {
         "stage": "replyer_only",
         "source_commit": commit,
@@ -126,11 +200,35 @@ async def run(args, packet):
         "output_tokens": result.completion.completion_tokens,
         "seconds": result.metrics.overall_ms / 1000,
         "reference_max_output_tokens": reference_model.max_tokens,
+        "request_chars": len(result.completion.request_prompt),
+        "persona_literal_in_prompt_dump": persona in result.completion.request_prompt,
+        "query_literal_in_prompt_dump": query in result.completion.request_prompt,
         "selected_expression_ids": result.selected_expression_ids,
+        "traits": [
+            {
+                "id": trait["id"],
+                "kind": trait["kind"],
+                "example_count": len(trait.get("examples", [])),
+            }
+            for trait in traits
+        ],
+        "ovenheart": {
+            key: packet.get("ovenheart", {}).get(key)
+            for key in (
+                "reply",
+                "provider_id",
+                "model",
+                "usage",
+                "selected_ids",
+                "seconds",
+                "time_context",
+            )
+        },
         "limitations": [
             "No Planner, action tools, learning, memory or IM delivery is exercised.",
             "Native persona is returned verbatim by the identity adapter.",
-            "Reference expressions are empty; compare only with an empty native selection.",
+            "Native selector choices are fixed for this replyer-only comparison.",
+            "Reference expression.style maps native content; separate native evidence examples are not copied into that field.",
             "Reference output cap defaults to 4096 when native config has no explicit cap.",
         ],
     }
@@ -158,7 +256,21 @@ if __name__ == "__main__":
     except Exception as exc:
         # Do not expose provider errors or validation inputs containing secrets.
         print(
-            json.dumps({"phase": "failed", "error": type(exc).__name__}),
+            json.dumps(
+                {
+                    "phase": "failed",
+                    "error": type(exc).__name__,
+                    "reason": str(exc) if isinstance(exc, ReferenceFailure) else None,
+                    "location": [
+                        {
+                            "file": Path(frame.filename).name,
+                            "line": frame.lineno,
+                            "function": frame.name,
+                        }
+                        for frame in traceback.extract_tb(exc.__traceback__)[-4:]
+                    ],
+                }
+            ),
             file=sys.stderr,
         )
         sys.exit(1)
