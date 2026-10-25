@@ -368,7 +368,7 @@ class ConversationContext:
         finally:
             self.pending.discard(key)
 
-    def snapshot(self, event, scope):
+    def snapshot(self, event, scope, *, through_sequence=None):
         window = self.plugin.participation.windows.get(scope)
         if not window or event.get_extra("ovenheart_context_binding") != (
             scope,
@@ -385,8 +385,12 @@ class ConversationContext:
             [
                 m
                 for m in window["messages"]
-                if (m["time"], m.get("arrival_order", 0))
-                <= (event.created_at, self.order(event))
+                if (
+                    m["sequence"] <= through_sequence
+                    if through_sequence is not None
+                    else (m["time"], m.get("arrival_order", 0))
+                    <= (event.created_at, self.order(event))
+                )
             ][-CONTEXT_COUNT:]
         ):
             value = copy.deepcopy(record)
@@ -419,8 +423,15 @@ class ConversationContext:
         window = self.plugin.participation.windows.get(scope, {})
         records = list(window.get("messages", [])) if self.active(event) else messages
         boundary = (event.created_at, self.order(event))
+        plan = event.get_extra("ovenheart_decision") or {}
         records = [
-            m for m in records if (m["time"], m.get("arrival_order", 0)) <= boundary
+            m
+            for m in records
+            if (
+                m["sequence"] <= plan["sequence"]
+                if plan.get("batch_id")
+                else (m["time"], m.get("arrival_order", 0)) <= boundary
+            )
         ]
 
         def excerpt(m):
@@ -521,7 +532,13 @@ class ConversationContext:
             binding = event.get_extra("ovenheart_context_binding")
             if binding and binding != (scope, expected):
                 return
-            owned = bool(plan and window["sequence"] == plan["sequence"])
+            owned = bool(
+                plan
+                and (
+                    window["sequence"] == plan["sequence"]
+                    or (plan.get("batch_id") and acknowledge)
+                )
+            )
             room = self.plugin.participation.rooms.get(
                 self.plugin.participation.room_key(event)
             )

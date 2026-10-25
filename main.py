@@ -1201,14 +1201,7 @@ class PersonaPlugin(Star):
                                 not plan.get("followup")
                                 or self.settings["participation_followup"]
                             )
-                            and self.participation.windows.get(plan["scope"], {}).get(
-                                "sequence"
-                            )
-                            == plan["sequence"]
-                            and self.participation.rooms.get(plan["room"], {}).get(
-                                "source"
-                            )
-                            == plan["room_source"]
+                            and self.participation.current(plan)
                         ),
                     ),
                 )
@@ -1545,12 +1538,7 @@ class PersonaPlugin(Star):
             return False
         window = self.participation.windows.get(scope)
         room = self.participation.rooms.get(plan["room"])
-        if (
-            window is None
-            or window["sequence"] != plan["sequence"]
-            or room is None
-            or room["source"] != plan["room_source"]
-        ):
+        if not self.participation.current(plan):
             reason = (
                 "已有回复，取消过时的参与决策。"
                 if room is None
@@ -2073,8 +2061,6 @@ class PersonaPlugin(Star):
             Returns:
                 Whether this admission and its current tool policy still allow it.
             """
-            window = self.participation.windows.get(plan["scope"])
-            room = self.participation.rooms.get(plan["room"])
             current = self.settings
             live = bool(
                 not event.is_stopped()
@@ -2082,10 +2068,7 @@ class PersonaPlugin(Star):
                 and current["apply_enabled"]
                 and current["participation_mode"] == "auto"
                 and (not plan.get("followup") or current["participation_followup"])
-                and window is not None
-                and window["sequence"] == plan["sequence"]
-                and room is not None
-                and room["source"] == plan["room_source"]
+                and self.participation.current(plan)
             )
             permitted = (
                 name in current["autonomous_tools"]
@@ -2810,6 +2793,7 @@ class PersonaPlugin(Star):
             if not plan and direct_reply.get("scope") == scope:
                 owner = direct_reply.get("source", source)
             current = room is None or room["source"] == owner
+            admission_owned = bool(plan and self.participation.current(plan))
             if room:
                 # A send hook supersedes any unsent continuation in this room.
                 room.pop("work", None)
@@ -2852,7 +2836,7 @@ class PersonaPlugin(Star):
                 await self.conversation.delivered(event, scope, plan, text, current)
             if window is not None and text and not self.conversation.active(event):
                 window["changed"].set()
-                owned = bool(plan and window["sequence"] == plan["sequence"])
+                owned = admission_owned
                 window["sequence"] += 1
                 if current:
                     window["consumed"] = window["sequence"]

@@ -109,7 +109,7 @@ test('all participation controls are available with host schema defaults', () =>
   const settings=Object.fromEntries(Object.entries(schema).map(([key,value])=>[key,value.default]));
   runInContext(`data={settings:${JSON.stringify(settings)},memory:{message:'未启用'},scope:null}; renderSettings();`,context);
   const html=element('#content').innerHTML;
-  for (const name of ['participation_mode','participation_min_messages','participation_debounce','participation_cooldown','participation_hourly_limit','planner_provider_id','planner_timeout','planner_reply_threshold','planner_max_wait','debug_enabled','session_isolation']) {
+  for (const name of ['participation_mode','participation_min_messages','participation_debounce','participation_silence_seconds','participation_cooldown','participation_hourly_limit','planner_provider_id','planner_timeout','planner_reply_threshold','planner_max_wait','debug_enabled','session_isolation']) {
     assert.ok(html.includes('name="'+name+'"'),name);
   }
   assert.ok(element('#autonomous-tool-picker').innerHTML.includes('name="autonomous_tool_policy"'));

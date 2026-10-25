@@ -42,7 +42,7 @@ reply 的 intent 写本次对话目标、要回应的对象和简短应对策略
 reply 可用 expression_intent 单独说明本轮表达意图：focus（侧重点）、reply_act（回应动作）、scene（交流情境）、tone（语气）、prefer（偏好表达）、avoid（避免表达）。各字段可省略，值只能是最多 80 字的文字，合计最多 240 字；只写本轮有依据的需要，不编造习惯、不写正文、工具指令或权限要求。当前明确要求和真实消息优先于表达意图；wait、observe 填空对象。
 decoration 决定引用与 @：none 都不加；quote 引用 target_sequence 那条消息；mention 真 @ 那条消息的发送者；quote_mention 两者都加。
 只在回应较早消息、需要让对方看到上下文或收到提醒时才加装饰；普通接话用 none。不要在正文里写 @昵称 或引用标记。
-本轮最多等待一次，wait_elapsed 为 true 后不能再次 wait。不得编造身份、个人经历、关系或消息事实。
+wait_elapsed 为 true 表示静默窗口结束后出现了新消息，可以选择继续静默或回复其中一条；无新输入时调度器不会重复询问。不得编造身份、个人经历、关系或消息事实。
 is_followup 为 true 时，刚回复的成员在继续说话。可自然接住追问，但不要因“连续接话”就强制回复；简单致谢、告别、问题已结束时可 observe，信息不全时仍可 wait。
 仅输出一个 JSON 对象，不要代码块或解释：
 {"action":"reply","confidence":0.85,"reason":"对方明确在向群内寻求安慰，此时简短回应有帮助","intent":"回应对方的失落，先接住情绪再问是否愿意说说","expression_intent":{"tone":"温和、简短","avoid":"未经邀请就给方案"},"target_sequence":18,"decoration":"quote_mention","wait_seconds":0}
@@ -186,7 +186,11 @@ def parse_plan(text: str, settings: dict, waited: bool = False, messages=None) -
             intent="",
             reason="参与把握不足，继续旁观。" + plan["reason"][:180],
         )
-    if waited and plan["action"] == "wait":
+    if (
+        waited
+        and plan["action"] == "wait"
+        and not settings.get("participation_silence_seconds", 0)
+    ):
         result.update(
             action="observe",
             intent="",
@@ -215,7 +219,7 @@ def parse_plan(text: str, settings: dict, waited: bool = False, messages=None) -
 
 
 class ParticipationController:
-    """Debounce new messages, interrupt stale plans and hand replies to the host."""
+    """Accumulate ordinary chat in silence; explicit wakes preempt owned work."""
 
     def __init__(self, plugin):
         self.plugin = plugin
@@ -276,6 +280,21 @@ class ParticipationController:
             if direct:
                 previous.pop("work", None)
             return previous
+        work = previous.get("work") if previous else None
+        if (
+            previous
+            and work
+            and work.get("batch_id")
+            and not direct
+            and previous.get("umo") == event.unified_msg_origin
+            and not previous["changed"].is_set()
+            and time.time() - work["created"] <= 300
+        ):
+            # Ordinary arrivals update the same ledger, never interrupt its
+            # judge, reset the fixed silence timer, or launch a second owner.
+            previous["arrival"] = event.created_at
+            previous["latest_source"] = source
+            return previous
         work = previous.get("work") if previous and not direct else None
         if work:
             work["interrupted"] = True
@@ -289,8 +308,140 @@ class ParticipationController:
             "arrival": event.created_at,
             "changed": asyncio.Event(),
             "work": work,
+            "umo": event.unified_msg_origin,
         }
         return self.rooms[key]
+
+    def current(self, plan):
+        """A frozen batch survives ordinary arrivals; direct wakes still revoke it."""
+        window = self.windows.get(plan["scope"])
+        room = self.rooms.get(plan["room"])
+        if window is None or room is None or room["source"] != plan["room_source"]:
+            return False
+        if plan.get("context_epoch") and window.get("epoch") != plan["context_epoch"]:
+            return False
+        work = room.get("work") or {}
+        if plan.get("batch_id") and work.get("batch_id") == plan["batch_id"]:
+            return not room["changed"].is_set() and time.time() - work["created"] <= 300
+        return window["sequence"] == plan["sequence"]
+
+    async def interruptible_plan(
+        self,
+        event,
+        scope,
+        persona,
+        state,
+        messages,
+        settings,
+        waited,
+        followup,
+        changed,
+    ):
+        task = self.plugin.track(
+            self.plan(
+                event, scope, persona, state, messages, settings, waited, followup
+            )
+        )
+        interruption = asyncio.create_task(changed.wait())
+        try:
+            done, _ = await asyncio.wait(
+                (task, interruption), return_when=asyncio.FIRST_COMPLETED
+            )
+            return None if interruption in done else await task
+        finally:
+            for pending in (task, interruption):
+                if not pending.done():
+                    pending.cancel()
+            await asyncio.gather(task, interruption, return_exceptions=True)
+
+    async def batch_plan(
+        self,
+        event,
+        scope,
+        persona,
+        state,
+        window,
+        changed,
+        settings,
+        followup,
+        structured,
+    ):
+        """One owner and one request at a time; only changed input is rejudged."""
+        silence = settings["participation_silence_seconds"]
+        end = time.monotonic() + 240
+        waited = False
+        while time.monotonic() < end:
+            if (
+                changed.is_set()
+                or self.windows.get(scope) is not window
+                or self.plugin.pending_direct(scope)
+                or not await self.plugin.permitted(event)
+            ):
+                return None
+            sequence = window["sequence"]
+            messages = (
+                self.plugin.conversation.snapshot(
+                    event, scope, through_sequence=sequence
+                )
+                if structured
+                else list(window["messages"])
+            )
+            plan = await self.interruptible_plan(
+                event,
+                scope,
+                persona,
+                state,
+                messages,
+                settings,
+                waited,
+                followup,
+                changed,
+            )
+            if plan is None:
+                return None
+            if (
+                plan["action"] == "observe"
+                or settings["participation_mode"] == "observe"
+            ):
+                return plan, messages, sequence
+            if waited and plan["action"] == "reply":
+                return plan, messages, sequence
+            await self.plugin.store.call(
+                "decide",
+                scope,
+                plan | {"room": self.room_key(event)},
+                settings["participation_mode"],
+                "waiting",
+                settings,
+            )
+            duration = max(silence, plan.get("wait_seconds", 0))
+            duration = min(duration, max(0, end - time.monotonic()))
+            if await self.quiet_period(changed, duration):
+                return None
+            if self.windows.get(scope) is not window:
+                return None
+            if window["sequence"] == sequence:
+                if plan["action"] == "wait":
+                    plan = plan | {
+                        "action": "observe",
+                        "intent": "",
+                        "target_sequence": 0,
+                        "decoration": None,
+                        "expression_intent": {},
+                        "reason": "静默结束且没有新输入，继续旁观，不重复请求。",
+                    }
+                return plan, messages, sequence
+            # The next judgment sees the whole accumulated window, once.
+            waited = True
+        return None
+
+    async def quiet_period(self, changed, duration):
+        """Wait once on cancellation, never on ordinary message arrivals."""
+        try:
+            await asyncio.wait_for(changed.wait(), timeout=duration)
+            return True
+        except asyncio.TimeoutError:
+            return False
 
     async def consider(self, event) -> dict | None:
         """Plan for the latest live event, superseding obsolete in-flight events.
@@ -560,6 +711,11 @@ class ParticipationController:
                 "id": None,
                 "created": time.time(),
                 "interrupted": False,
+                **(
+                    {"batch_id": uuid4().hex}
+                    if settings["participation_silence_seconds"] > 0
+                    else {}
+                ),
             }
             room["work"] = attempt
             if resumed:
@@ -576,7 +732,22 @@ class ParticipationController:
                 if structured
                 else list(window["messages"])
             )
-            for waited in (False, True):
+            batch = None
+            if attempt.get("batch_id"):
+                batch = await self.batch_plan(
+                    event,
+                    scope,
+                    persona,
+                    state,
+                    window,
+                    changed,
+                    settings,
+                    followup,
+                    structured,
+                )
+                if batch is None:
+                    return None
+            for waited in (False,) if batch else (False, True):
                 if (
                     plugin.settings["participation_mode"]
                     != settings["participation_mode"]
@@ -584,8 +755,10 @@ class ParticipationController:
                     or not await plugin.permitted(event)
                 ):
                     return None
-                task = plugin.track(
-                    self.plan(
+                if batch:
+                    plan, messages, sequence = batch
+                else:
+                    plan = await self.interruptible_plan(
                         event,
                         scope,
                         persona,
@@ -594,21 +767,10 @@ class ParticipationController:
                         settings,
                         waited,
                         followup,
+                        changed,
                     )
-                )
-                interruption = asyncio.create_task(changed.wait())
-                try:
-                    done, _ = await asyncio.wait(
-                        (task, interruption), return_when=asyncio.FIRST_COMPLETED
-                    )
-                    if interruption in done:
+                    if plan is None:
                         return None
-                    plan = await task
-                finally:
-                    for work in (task, interruption):
-                        if not work.done():
-                            work.cancel()
-                    await asyncio.gather(task, interruption, return_exceptions=True)
                 plugin.debug("participation_plan", scope=scope, plan=plan)
                 target = next(
                     (m for m in messages if m["sequence"] == plan["target_sequence"]),
@@ -639,7 +801,7 @@ class ParticipationController:
                     plan["reason"] = "连续接话：" + plan["reason"][:235]
                 if (
                     changed.is_set()
-                    or window["sequence"] != sequence
+                    or (not batch and window["sequence"] != sequence)
                     or plugin.pending_direct(scope)
                     or not await plugin.permitted(event)
                 ):
@@ -739,6 +901,7 @@ class ParticipationController:
                         "profile": state["scope"]["profile"],
                         "resumed": resumed,
                         "room_source": room["source"],
+                        **({"batch_id": attempt["batch_id"]} if batch else {}),
                     }
                 return None
         except asyncio.CancelledError:

@@ -59,6 +59,7 @@ async def participant(plugin, monkeypatch):
         participation_mode="auto",
         participation_min_messages=1,
         participation_debounce=0,
+        participation_silence_seconds=0,
     )
     monkeypatch.setattr(
         SessionServiceManager,
@@ -1087,14 +1088,14 @@ def test_wait_and_observe_plans_never_carry_a_reply_target():
         assert plan["target_sequence"] == 0
 
 
-def test_low_confidence_and_repeated_wait_become_observation():
+def test_low_confidence_observes_and_batch_wait_can_continue():
     assert (
         parse_plan(decision(confidence=0.6).completion_text, DEFAULTS)["action"]
         == "observe"
     )
     assert (
         parse_plan(decision("wait").completion_text, DEFAULTS, waited=True)["action"]
-        == "observe"
+        == "wait"
     )
 
 

@@ -232,11 +232,18 @@
     "type": "int",
     "default": 2
   },
+  "participation_silence_seconds": {
+    "description": "决定参与后的静默收集（秒）",
+    "type": "int",
+    "default": 8,
+    "hint": "首次决定回复后先静默收集；新消息不重置计时、不打断判断请求。到期有新输入才统一判断继续静默或回复其中一条，无新输入复用原决定。设为 0 使用即时模式。",
+    "slider": {"min": 0, "max": 120, "step": 1}
+  },
   "planner_interval_seconds": {
     "description": "普通群聊判断间隔（秒）",
     "type": "int",
     "default": 60,
-    "hint": "减少重复旁观判断；直接唤醒、同成员续话和未完成工作续接保留原流程。实际判断还受新消息数量与回复冷却限制。"
+    "hint": "减少重复旁观判断；静默窗口内的新消息集中处理，不逐条重启请求。明确唤醒仍即时处理，实际判断还受新消息数量与回复冷却限制。"
   },
   "participation_cooldown": {
     "description": "自主参与冷却（秒）",

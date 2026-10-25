@@ -232,7 +232,7 @@ class JevService:
                 for t in selection["traits"][:4]
             ],
             "bot_names": [redact(n) for n in settings["mention_names"]][:8],
-            "wait_already_used": waited,
+            "after_silence": waited,
             "same_member_followup": followup,
         }
 
@@ -287,7 +287,7 @@ class JevService:
             for i in eligible
         }
         criteria["observe"] = "No useful non-intrusive contribution; remain silent."
-        if not waited:
+        if not waited or settings.get("participation_silence_seconds", 0) > 0:
             criteria["wait"] = "Information is incomplete and a brief wait could help."
         questions = {
             "action": {
