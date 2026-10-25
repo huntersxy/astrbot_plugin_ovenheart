@@ -407,6 +407,74 @@ class RoomState:
             "backfill": self.metadata.get_paragraph_vector_backfill_status_counts(),
         }
 
+    async def person_context(self, sender):
+        source = "chat_summary:" + self.path.name
+        hashes = [
+            r[0]
+            for r in self.metadata._conn.execute(
+                """
+            SELECT p.hash FROM paragraphs p
+            WHERE p.is_deleted=0 AND p.source=?
+              AND (p.expires_at IS NULL OR p.expires_at>?)
+              AND EXISTS (SELECT 1 FROM json_each(p.metadata,'$.evidence') e
+                          WHERE json_extract(e.value,'$.sender')=?)
+            ORDER BY p.created_at DESC LIMIT 24
+        """,
+                (source, time.time(), sender),
+            )
+        ]
+        rows = self.metadata.get_paragraphs_by_hashes(hashes)
+        hits = [
+            {
+                "hash": h,
+                "type": "paragraph",
+                "content": rows[h]["content"][:800],
+                "score": 0.0,
+                "source": source,
+                "metadata": rows[h]["metadata"],
+            }
+            for h in hashes
+            if h in rows
+        ]
+        # These are real recent authored records, not nickname-based ownership.
+        # Keep the same effective-version and feedback filters as SDK retrieval.
+        hits = self.kernel._get_search_hit_service()._filter_user_visible_hits(hits)[:4]
+        relations = {}
+        for hit in hits:
+            for relation in self.metadata.get_paragraph_relations(hit["hash"]):
+                if sender in (relation["subject"], relation["object"]):
+                    relations[relation["hash"]] = {
+                        **relation,
+                        "type": "relation",
+                        "content": f"{relation['subject']} {relation['predicate']} {relation['object']}",
+                    }
+        edges = self.kernel._get_search_hit_service()._filter_user_visible_hits(
+            list(relations.values())
+        )
+        episodes = []
+        if hits and not self.metadata.is_episode_source_query_blocked(source):
+            candidates = await self.kernel.episode_retriever.query(
+                query="", person=sender, source=source, top_k=4, include_paragraphs=True
+            )
+            selected = {h["hash"] for h in hits}
+            episodes = [
+                {
+                    "hash": e["episode_id"],
+                    "type": "episode",
+                    "content": (e["title"] + ": " + e["summary"])[:800],
+                    "score": e.get("score", 0),
+                    "source": source,
+                    "metadata": {
+                        "source_type": "chat_summary",
+                        "participants": e.get("participants", []),
+                        "paragraph_ids": [p["hash"] for p in e["paragraphs"]],
+                    },
+                }
+                for e in candidates
+                if any(p["hash"] in selected for p in e["paragraphs"])
+            ]
+        return {"paragraphs": hits, "relations": edges, "episodes": episodes}
+
     async def change(self, action, payload, evidence):
         from .native_memory_kernel import correction_evidence
         from .vendor.maibot.amemorix.utils.hash import normalize_text
@@ -1063,7 +1131,7 @@ class RoomMemory:
         state = self.rooms.get(scope)
         if (
             state is not None
-            and operation in ("search", "write", "change")
+            and operation in ("search", "write", "change", "person_context")
             and state.operation == "consolidate"
             and state.revision == revision
         ):
@@ -1155,6 +1223,20 @@ class RoomMemory:
             event, scope, persona
         ):
             return []
+        return result
+
+    async def person_context(self, event, scope, persona, sender):
+        empty = {"paragraphs": [], "relations": [], "episodes": []}
+        revision = self.plugin.settings_revision
+        if sender in self.plugin.settings[
+            "blocked_senders"
+        ] or not await self.permitted(event, scope, persona):
+            return empty
+        result = await self.call(scope, "person_context", sender, event=event)
+        if revision != self.plugin.settings_revision or not await self.permitted(
+            event, scope, persona
+        ):
+            return empty
         return result
 
     async def context(self, event, scope, persona, query):

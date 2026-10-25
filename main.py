@@ -2384,7 +2384,7 @@ class PersonaPlugin(Star):
                 TextPart(
                     text=(
                         "[OvenHeart person profiles]\n以下是按真实成员及当前会话、人格隔离的画像，仅供内部参考。"
-                        "人物不同不得串用，当前明确更正优先于旧事实，不背诵档案。\n"
+                        "人物不同不得串用，当前明确更正优先于旧事实，不背诵档案。近期互动只表示有该成员原文依据的共同经历，不表示其中所有描述都是此人的个人事实。\n"
                         + json.dumps(people, ensure_ascii=False)
                     )
                 ).mark_as_temp()
