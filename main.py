@@ -63,6 +63,7 @@ from .participation import ParticipationController, bound_reply_messages, event_
 from .person_memory import PersonMemory
 from .reply_payload import dumps as dump_reply_payload
 from .reply_payload import message_view, payload_view, reply_messages
+from .reply_rhythm import ReplyRhythm
 from .retrieval import HabitRetriever
 from .room_memory import RoomMemory
 from .settings import (
@@ -428,6 +429,7 @@ class PersonaPlugin(Star):
         self.direct_priority = DirectPriority(self)
         self.conversation = ConversationContext(self)
         self.outgoing_media = OutgoingMediaBridge(self)
+        self.reply_rhythm = ReplyRhythm(self)
         self.oven_multi = OvenMultiBridge(self)
         self.jev = JevService(self)
         self.tasks: set[asyncio.Task] = set()
@@ -1351,7 +1353,7 @@ class PersonaPlugin(Star):
             if plan.get("direct"):
                 request = (
                     await self.collect_planner_request(event)
-                    if plan.get("private_continuation")
+                    if plan.get("direct_continuation")
                     else event.get_extra("ovenheart_planner_initial_request")
                 )
                 if request is None:
@@ -1378,6 +1380,7 @@ class PersonaPlugin(Star):
         event.clear_result()
         event.set_extra("ovenheart_reply_scope", plan["scope"])
         self.outgoing_media.bind_event(event)
+        self.reply_rhythm.bind(event)
         selection = await self.emoji_actions.select(session)
         if selection["success"] and await self.check_participation(event):
             result = await self.emoji_actions.send(event, session, selection["index"])
@@ -2430,6 +2433,7 @@ class PersonaPlugin(Star):
         ):
             return
         self.outgoing_media.bind_event(event)
+        self.reply_rhythm.bind(event)
         if not event.get_extra("ovenheart_observed", False):
             await self.capture(event)
         scope, persona, label = await self.resolve_scope(event, req)
@@ -2981,6 +2985,30 @@ class PersonaPlugin(Star):
             event: Native message event after the send pipeline.
         """
         await self.outgoing_media.capture_result(event)
+        if event.get_extra(
+            "ovenheart_text_delivery_incomplete"
+        ) and not event.get_extra("ovenheart_actual_text_segments"):
+            plan = event.get_extra("ovenheart_decision")
+            if plan:
+                await self.store.call(
+                    "cancel_decision",
+                    plan["scope"],
+                    plan["id"],
+                    "原生分段发送未完成，未观察到成功文字段。",
+                )
+            event.set_extra(
+                "ovenheart_planner_receipt",
+                {
+                    "send_hook": False,
+                    "reply_text": "",
+                    "delivery_status": "text send failed; no successful segment observed",
+                    "delivery_failed": True,
+                },
+            )
+            await self.record_turn_trace(
+                event, status="send_failed", cancel_reason="原生分段发送未完成。"
+            )
+            return
         event.set_extra("ovenheart_direct_sent", True)
         if (
             event.get_extra("_clean_group_context_session")
@@ -3109,7 +3137,13 @@ class PersonaPlugin(Star):
                         )
             window = self.participation.windows.get(scope)
             result = event.get_result()
-            text = result.get_plain_text()[:1200] if result else ""
+            text = (
+                "\n".join(event.get_extra("ovenheart_actual_text_segments"))[:1200]
+                if event.get_extra("ovenheart_actual_text_segments") is not None
+                else result.get_plain_text()[:1200]
+                if result
+                else ""
+            )
             if plan and plan.get("planner_session"):
                 receipt = event.get_extra("ovenheart_planner_receipt", {})
                 event.set_extra(
@@ -3120,7 +3154,12 @@ class PersonaPlugin(Star):
                             receipt.get("reply_text", "") + "\n" + text
                         ).strip()[:4000],
                         "target_sequence": plan["target_sequence"],
-                        "delivery_status": "native_send_hook; platform receipt unverified",
+                        "partial_text": bool(
+                            event.get_extra("ovenheart_text_delivery_incomplete")
+                        ),
+                        "delivery_status": "partial native text send; platform receipt unverified"
+                        if event.get_extra("ovenheart_text_delivery_incomplete")
+                        else "native_send_hook; platform receipt unverified",
                     },
                 )
             rhythm_key = str(plan["id"]) if plan else source

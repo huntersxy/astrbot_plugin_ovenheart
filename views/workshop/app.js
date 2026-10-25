@@ -469,6 +469,9 @@ function renderSettings() {
       ${switchField("emoji_enabled", "Planner表情动作", "查看本会话的表情候选，选择后随文字回复发送；真实发送结果回流后续规划。", s.emoji_enabled)}
       ${field("emoji_provider_id", "独立表情选择模型 ID", s.emoji_provider_id ?? "", "使用支持图片的模型；留空使用视觉Planner或宿主图片描述模型。", {type:"text"})}
       ${switchField("planner_visual_enabled", "Planner视觉候选拼图", "Planner模型支持图片输入时开启；否则使用已有描述选择。拼图只进入内部工具上下文。", s.planner_visual_enabled)}
+      ${switchField("reply_rhythm_enabled", "语义分段与回复节奏", "按语义切分并发送原文片段；宿主已启用分段时沿用宿主，不叠加。", s.reply_rhythm_enabled)}
+      <div class="number-fields">${field("reply_split_max_messages", "每次正文最多分段数", s.reply_split_max_messages ?? 3, "超过时按原版规则合并", {type:"number",min:1,max:10})}${field("reply_typing_speed", "模拟打字时间倍率", s.reply_typing_speed ?? 0.25, "0关闭等待；每段最多5秒", {type:"number",min:0,max:3,step:0.05})}</div>
+      ${field("reply_split_provider_id", "语义断句模型 ID", s.reply_split_provider_id ?? "", "留空使用Planner或当前模型；使用已有快速模型可缩短等待，计入reply_split用量。", {type:"text"})}
       ${field("image_embedding_provider_id", "图片嵌入模型 ID", s.image_embedding_provider_id ?? "", "原生 DashScope 多模态嵌入提供商；留空仍可回忆同一图片。", {type:"text"})}
       ${switchField("memory_feedback_enabled", "根据后续反馈维护记忆", "跟进已召回记忆的实际后续反馈，按原版窗口和置信度判断是否修正。暂停学习时停止更新，调用计入辅助用量。", s.memory_feedback_enabled)}
       ${switchField("memory_summary_enabled", "自动整理群聊经历", "累计新素材后生成增量摘要和可检索的情景；空增量不会反复整理。暂停学习时停止更新，已有记忆继续可查。", s.memory_summary_enabled)}

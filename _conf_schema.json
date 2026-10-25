@@ -96,6 +96,21 @@
     "type": "bool", "description": "Planner表情动作", "default": true,
     "hint": "Planner从当前会话已识别的表情包中选择，随文字回复后单独发送；自己的真实媒体发送进入后续规划。"
   },
+  "reply_rhythm_enabled": {
+    "type": "bool", "description": "语义分段与回复节奏", "default": true,
+    "hint": "Planner正文按原版语义切分并用原文发送，模拟有限打字间隔。宿主已启用分段时沿用宿主，不叠加。"
+  },
+  "reply_split_provider_id": {
+    "type": "string", "description": "语义断句模型 ID", "default": "",
+    "hint": "留空使用Planner模型或当前会话模型；推荐填写已有快速模型，调用计入reply_split用量。"
+  },
+  "reply_split_max_messages": {
+    "type": "int", "description": "每次正文最多分段数", "default": 3
+  },
+  "reply_typing_speed": {
+    "type": "float", "description": "模拟打字时间倍率", "default": 0.25,
+    "hint": "0关闭等待；按原版中英文字时间计算，每段最多等待5秒。不会修改正文。"
+  },
   "emoji_provider_id": {
     "type": "string", "description": "独立表情选择模型 ID", "default": "",
     "hint": "应使用支持图片的模型。留空优先使用已启用视觉的Planner模型，否则使用宿主图片描述模型；子代理调用计入emoji_select用量。"

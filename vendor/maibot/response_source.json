@@ -1,0 +1,33 @@
+{
+  "commit": "5c7637e6913c84d1c3d5e742fa9e95a7e70d3501",
+  "splitter": {
+    "source": "src/chat/utils/llm_sentence_splitter.py",
+    "source_sha256": "11b3739947919f20b11596c7875595a88ee1b204765c8a11431b32475466501a",
+    "ported_sha256": "2485d900532bfe68effc9570a9453f64965172cac9b6d49db8611c1d1cede9fd",
+    "symbol_ast_sha256": {
+      "_normalize_json_payload": "fa9d7a8058f1d9c5fba675760bfbb77182b2f20d0d482ab1417a226085c8eca9",
+      "_is_no_split_marker": "cf893bdf1995b29e905697631e724f2fbbe6047f5805c758af85bf06f6a0a346",
+      "_strip_whitespace": "9b6a4b7cf1a89e97289d579209847cfd9241f8258b240164f3bad35a8f408343",
+      "_map_sentences_to_original": "36d80232dcd3b5e9efde0d2c2586e380a21ec3870ee16acce2f32360979205cf",
+      "_extract_trailing_comma": "6449d89ce683580d6629f51f143b6e1959728efd7e29096b730e90997ad43af9",
+      "split_text_with_llm": "96fb2513868ae5fc14383f4717576de9cea17a882f574e1de86cceec596e9077"
+    }
+  },
+  "typing": {
+    "source": "src/chat/utils/utils.py",
+    "source_sha256": "982916db3282e061ca2d7e924c0a4e8a525f286921f5422e64a88ecfeb4d0160",
+    "ported_sha256": "9340c0c4c383694114488804296987148669e6608044a0b80849174d1fe363cf",
+    "symbol_ast_sha256": {
+      "calculate_typing_time": "e9d111df2d59ea2b9402b7bf7c14e652cd3a8dfc88bfe899e024b473a2f32067"
+    }
+  },
+  "adaptation": "Only native logger/model imports change. Root reply_rhythm.py handles AstrBot send timing and permissions.",
+  "segments": {
+    "source": "src/chat/utils/utils.py",
+    "ported_sha256": "17877d46e3fab246518fa631a7ae812f93dd2afd6fe266224573b25f334c1eb2",
+    "symbol_ast_sha256": {
+      "ProcessedResponseSegment": "bae8d8fd26ae9e91327b4eb5a72c1d48e9e14958b14fe0d6205196fb6dbe4378",
+      "_merge_processed_segments_to_max_count": "33158f1a63297b677b02e166493adaf899daa0dffc35e12a091b7565d6c27d4d"
+    }
+  }
+}

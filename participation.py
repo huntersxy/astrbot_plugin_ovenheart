@@ -1327,7 +1327,11 @@ class ParticipationController:
         )
         if (
             not receipt
-            or not (receipt.get("send_hook") or receipt.get("media_only"))
+            or not (
+                receipt.get("send_hook")
+                or receipt.get("media_only")
+                or receipt.get("delivery_failed")
+            )
             or event.is_stopped()
             or not self.current(previous)
         ):
@@ -1347,7 +1351,11 @@ class ParticipationController:
         private = event.is_private_chat()
         pending_direct = bool(
             previous.get("direct")
-            and previous.get("media_only")
+            and (
+                previous.get("media_only")
+                or receipt.get("partial_text")
+                or receipt.get("delivery_failed")
+            )
             and not session.replied
         )
         if previous.get("direct") and not private and not pending_direct:
@@ -1405,6 +1413,7 @@ class ParticipationController:
             "followup": False,
             "direct": private or pending_direct,
             "private_continuation": private,
+            "direct_continuation": private or pending_direct,
         }
         decision = await self.plugin.store.call(
             "decide",
@@ -1433,6 +1442,8 @@ class ParticipationController:
             "ovenheart_selection_seconds",
             "ovenheart_planner_receipt",
             "ovenheart_stream_recorded",
+            "ovenheart_actual_text_segments",
+            "ovenheart_text_delivery_incomplete",
         ):
             event.get_extra().pop(key, None)
         event.clear_result()
