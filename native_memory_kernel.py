@@ -24,6 +24,20 @@ class NativeMemoryKernel(SDKMemoryKernel):
         super().__init__(plugin_root=plugin_root, config=config)
         self._correction_admin_service = NativeCorrectionService(self)
 
+    async def shutdown(self):
+        # Upstream drops its sparse index reference without unloading its
+        # independent SQLite connection. Release it after all workers stop.
+        sparse = self.sparse_index
+        await super().shutdown()
+        if sparse is not None:
+            sparse.unload()
+
+    def close(self):
+        sparse = self.sparse_index
+        super().close()
+        if sparse is not None:
+            sparse.unload()
+
     async def ingest_text(self, **values):
         metadata = values.get("metadata") or {}
         correction = correction_evidence.get()

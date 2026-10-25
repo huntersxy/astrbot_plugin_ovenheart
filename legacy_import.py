@@ -9,6 +9,7 @@ import json
 import math
 import sqlite3
 import time
+from contextlib import closing
 from dataclasses import dataclass
 from pathlib import Path
 from uuid import uuid4
@@ -35,7 +36,9 @@ def source_namespace(path):
 
 def read_legacy(path, namespace, source_scopes, persona, snapshot=""):
     """The source boundary validates values once; internal units are typed."""
-    with sqlite3.connect(Path(path).resolve().as_uri() + "?mode=ro", uri=True) as db:
+    with closing(
+        sqlite3.connect(Path(path).resolve().as_uri() + "?mode=ro", uri=True)
+    ) as db:
         db.row_factory = sqlite3.Row
         tables = {
             r[0]
@@ -186,10 +189,10 @@ def read_legacy(path, namespace, source_scopes, persona, snapshot=""):
 def backup_legacy(source, destination):
     destination.parent.mkdir(parents=True, exist_ok=True)
     with (
-        sqlite3.connect(
-            Path(source).resolve().as_uri() + "?mode=ro", uri=True
+        closing(
+            sqlite3.connect(Path(source).resolve().as_uri() + "?mode=ro", uri=True)
         ) as original,
-        sqlite3.connect(destination) as snapshot,
+        closing(sqlite3.connect(destination)) as snapshot,
     ):
         original.backup(snapshot)
 
@@ -200,7 +203,7 @@ def native_preview(path, units):
     counts = {"ready": 0, "skipped": 0, "conflicts": 0}
     if not path.exists():
         return counts | {"ready": len(units)}
-    with sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True) as db:
+    with closing(sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True)) as db:
         ledger = db.execute(
             "SELECT 1 FROM sqlite_master WHERE type='table' AND name='ovenheart_legacy_imports'"
         ).fetchone()
@@ -431,7 +434,9 @@ class LivingMemoryImport:
 
     @staticmethod
     def read_retired(path, namespace, scopes):
-        with sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True) as db:
+        with closing(
+            sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True)
+        ) as db:
             if not db.execute(
                 "SELECT 1 FROM sqlite_master WHERE type='table' AND name='ovenheart_legacy_imports'"
             ).fetchone():
