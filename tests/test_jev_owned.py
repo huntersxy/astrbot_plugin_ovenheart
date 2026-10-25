@@ -36,7 +36,7 @@ async def test_jev_replaces_planner_but_explicit_wakes_bypass(participant):
         participant, event("low", text="This is a detailed question.")
     )
     call = participant.jev.client.evaluate.await_args
-    assert set(call.args[2]) == {"action", "should_reply"}
+    assert set(call.args[2]) == {"action", "should_reply", "reply_act", "reply_style"}
     participant.context.llm_generate.assert_not_awaited()
     assert (
         json.loads(call.args[1])["messages"][-1]["text"]

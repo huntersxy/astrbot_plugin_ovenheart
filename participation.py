@@ -367,7 +367,11 @@ class ParticipationController:
         structured,
     ):
         """One owner and one request at a time; only changed input is rejudged."""
-        silence = settings["participation_silence_seconds"]
+        silence = (
+            min(2, settings["participation_silence_seconds"])
+            if followup
+            else settings["participation_silence_seconds"]
+        )
         end = time.monotonic() + 240
         waited = False
         while time.monotonic() < end:
@@ -637,7 +641,7 @@ class ParticipationController:
                 and (own.get("reply_to") or {}).get("sender_id")
                 == event.get_sender_id()
                 and pending
-                and all(m["sender_id"] == event.get_sender_id() for m in pending)
+                and pending[-1]["sender_id"] == event.get_sender_id()
             )
             previous = room.get("work")
             resumed = bool(

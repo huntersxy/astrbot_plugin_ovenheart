@@ -12,6 +12,8 @@ from weakref import WeakKeyDictionary
 from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent
 from astrbot.api.platform import MessageType
+from astrbot.api.provider import ProviderRequest
+from astrbot.core.agent.message import TextPart
 from astrbot.core.star.session_plugin_manager import SessionPluginManager
 from astrbot.core.star.star_handler import EventType, star_handlers_registry
 
@@ -21,8 +23,9 @@ from .learning import normalize_quote
 class MemoryBridge:
     """Reuse LivingMemory's scope and permission policy without owning its data."""
 
-    def __init__(self, context):
+    def __init__(self, context, can_extend=None):
         self.context = context
+        self.can_extend = can_extend
         self._reply_sources = WeakKeyDictionary()
         self._hooks = []
         self._owner = None
@@ -156,7 +159,7 @@ class MemoryBridge:
             # Pre-upgrade requests can outlive the retired private adapter.
             if event.get_extra("livingmemory_reply_source_requested", False) is True:
                 return
-            await original(event, *args, **kwargs)
+            await self._invoke(original, event, *args, **kwargs)
             return
         binding = self._reply_sources.get(event)
         if binding is None or binding[2] is not owner or self._owner is not owner:
@@ -206,7 +209,43 @@ class MemoryBridge:
         checkpoint = event.get_extra("llm_checkpoint_id")
         if isinstance(checkpoint, str) and checkpoint:
             view.set_extra("llm_checkpoint_id", checkpoint)
-        await original(view, *args, **kwargs)
+        await self._invoke(original, view, *args, **kwargs)
+
+    async def _invoke(self, original, event, *args, **kwargs):
+        """Interpret the native memory injection socially without another search."""
+        req = args[0] if args else kwargs.get("req")
+        before = (
+            len(req.extra_user_content_parts) if isinstance(req, ProviderRequest) else 0
+        )
+        await original(event, *args, **kwargs)
+        if (
+            not isinstance(req, ProviderRequest)
+            or self.can_extend is None
+            or not await self.can_extend(event)
+        ):
+            return
+        # This is LivingMemory's published injection marker; unknown shapes are
+        # left untouched. Reflection and memory content are never rewritten.
+        if not any(
+            isinstance(part, TextPart) and "<RAG-Faiss-Memory>" in part.text
+            for part in req.extra_user_content_parts[before:]
+        ):
+            return
+        marker = "[OvenHeart social memory]\n"
+        if any(
+            isinstance(part, TextPart) and part.text.startswith(marker)
+            for part in req.extra_user_content_parts
+        ):
+            return
+        req.extra_user_content_parts.append(
+            TextPart(
+                text=marker
+                + "长期记忆用于理解相处方式和这次话题的来由，而不只是回答事实题。"
+                "先核对记忆参与者、来源时间与本轮真实对象；同群发生不等于属于当前成员，缺少归属就不套用。"
+                "有依据时自然延续熟悉程度、共同话题、承诺或此前分歧；不逐条背诵档案、不凭空亲昵，"
+                "不把别人的经历当成自己经历。当前更正和明确意愿优先于旧印象；无关记忆忽略。"
+            ).mark_as_temp()
+        )
 
     def status(self) -> dict:
         """Report native memory readiness and the plugin-owned runtime adapter.
@@ -243,6 +282,53 @@ class MemoryBridge:
             else "LivingMemory 尚未初始化完成。",
         }
 
+    async def planning_context(self, event, persona, messages, settings):
+        """Bring authorized shared recollections into the decision before speaking.
+
+        Personal scope is deliberately deferred until a real addressee is known.
+        Sequence links identify the query sources, never ownership of old facts.
+        """
+        if not settings["memory_enabled"]:
+            return [], "本次未启用参与记忆。"
+        sources = [
+            {
+                "id": m["sequence"],
+                "sender": m["sender_id"],
+                "text": m["text"],
+                "reply_to": m.get("reply_to"),
+            }
+            for m in messages[-6:]
+            if not m.get("self")
+        ]
+        if not sources:
+            return [], "没有可关联的真实人类发言。"
+        try:
+            memories, status = await asyncio.wait_for(
+                self.recall(
+                    event,
+                    persona,
+                    settings | {"memory_top_k": min(3, settings["memory_top_k"])},
+                    observations=sources,
+                    defer_user_scope=True,
+                    include_social_metadata=True,
+                ),
+                timeout=min(1.5, settings["retrieval_timeout"]),
+            )
+        except asyncio.TimeoutError:
+            return [], "参与记忆超过短等待预算，最终回复仍走原生记忆召回。"
+        except Exception as exc:
+            logger.warning("参与记忆暂不可用 (%s)", type(exc).__name__)
+            return [], "参与记忆暂不可用，保留真实对话。"
+        return [
+            {
+                "id": m["id"],
+                "content": m["content"][:300],
+                "for_sequences": m.get("for_evidence_ids", []),
+                "social": m.get("social", {}),
+            }
+            for m in memories[:3]
+        ], status
+
     async def recall(
         self,
         event,
@@ -251,6 +337,7 @@ class MemoryBridge:
         *,
         observations: list[dict] | None = None,
         defer_user_scope: bool = False,
+        include_social_metadata: bool = False,
     ) -> tuple[list[dict], str]:
         """Retrieve context using LivingMemory's own policy and engine.
 
@@ -262,6 +349,8 @@ class MemoryBridge:
                 query and bind recalled context to eligible source IDs.
             defer_user_scope: Skip personal memory before a planner has selected
                 its reply target; native final-reply recall still owns that path.
+            include_social_metadata: Preserve bounded native participant, fact
+                and time fields for attribution during social planning.
 
         Returns:
             Bounded memory excerpts and a visible integration status.
@@ -383,6 +472,22 @@ class MemoryBridge:
                 }
                 for m in memories[: settings["memory_top_k"]]
             ]
+            if include_social_metadata:
+                for excerpt, memory in zip(excerpts, memories, strict=False):
+                    metadata = getattr(memory, "metadata", None)
+                    if not isinstance(metadata, dict):
+                        continue
+                    social = {}
+                    for key, limit, chars in (
+                        ("participants", 8, 48),
+                        ("key_facts", 3, 120),
+                    ):
+                        values = metadata.get(key)
+                        if isinstance(values, list):
+                            social[key] = [str(v)[:chars] for v in values[:limit]]
+                    if metadata.get("create_time") is not None:
+                        social["source_time"] = str(metadata["create_time"])[:40]
+                    excerpt["social"] = social
             return (
                 excerpts,
                 f"参考 {len(excerpts)} 条长期记忆；遵循 LivingMemory 的访问与作用域设置。",

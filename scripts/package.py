@@ -40,6 +40,7 @@ files = [
         "README.md",
         "LICENSE",
         "CHANGELOG.md",
+        "scripts/evaluate_social_reply.py",
     )
 ]
 for directory, extensions in (
@@ -53,6 +54,7 @@ for directory, extensions in (
     )
 files.extend(root / path for path in (
     "docs/zh/README.md", "docs/en/README.md", "docs/design/reply-context.md",
+    "docs/design/social-reply.md",
     "docs/evaluation/jev-review-2026-10-25.md", "docs/evaluation/jev-cases.json",
     "docs/evaluation/jev-benchmark-2026-10-25.json",
 ))

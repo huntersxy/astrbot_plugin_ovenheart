@@ -403,7 +403,7 @@ class PersonaPlugin(Star):
         self.prompt_overrides: dict[str, str] = {}
         self.prompts = prompts.merge({})
         self.prompts_revision = uuid4().hex
-        self.memory = MemoryBridge(context)
+        self.memory = MemoryBridge(context, self.owns_group_reply)
         self.group_context = GroupContextBridge(self)
         self.auxiliary = AuxiliaryUsage(context, self.store)
         self.retriever = HabitRetriever(
@@ -2003,7 +2003,7 @@ class PersonaPlugin(Star):
                         goal=direct["reply_goal"],
                         reason="宿主已进入直接回复流程，不再判断是否参与。",
                         target=target["sender"] or target["sender_id"],
-                        expression_intent={},
+                        expression_intent=direct.get("expression_intent", {}),
                         profile=state["scope"]["profile"] if state["scope"] else {},
                         scope=scope,
                     )
@@ -2014,7 +2014,7 @@ class PersonaPlugin(Star):
                         messages=direct["messages"],
                         reply_message=target,
                         reply_context=direct["reply_context"],
-                        expression_intent={},
+                        expression_intent=direct.get("expression_intent", {}),
                         profile=state["scope"]["profile"] if state["scope"] else {},
                         scope=scope,
                     )
@@ -2385,6 +2385,16 @@ class PersonaPlugin(Star):
         query = ("\n".join(reversed(recent)) + "\n" + focus + goal).strip()
         settings = self.settings.copy()
         prompts_revision = self.prompts_revision
+        contextual_judge = (
+            self.jev.select_habits
+            if settings["jev_enabled"] and settings["selection_mode"] == "contextual"
+            else None
+        )
+        retrieval_settings = (
+            settings | {"retrieval_timeout": min(1.5, settings["retrieval_timeout"])}
+            if contextual_judge
+            else settings
+        )
         provider_id, identity = None, ""
         if settings["selection_mode"] == "contextual" and state["traits"]:
             anchor = self.context.persona_manager.get_persona_v3_by_id(persona)
@@ -2406,13 +2416,14 @@ class PersonaPlugin(Star):
                 scope if settings["session_isolation"] else SHARED_SCOPE,
                 state["traits"],
                 query,
-                settings,
+                retrieval_settings,
                 provider_id=provider_id,
                 identity=identity,
                 literal_query=literal_query[:2400],
                 literal_focus=literal_focus,
                 recent_expression_ids=state.get("recent_expression_ids", []),
                 expression_intent=expression_intent,
+                contextual_judge=contextual_judge,
             )
         )
         # wait_for waits for cancellation to finish. An optional selector whose
@@ -2420,7 +2431,9 @@ class PersonaPlugin(Star):
         try:
             done, _ = await asyncio.wait(
                 {selection_task},
-                timeout=settings["retrieval_timeout"] + settings["selector_timeout"],
+                timeout=(retrieval_settings["retrieval_timeout"] + 4.5)
+                if contextual_judge
+                else settings["retrieval_timeout"] + settings["selector_timeout"],
             )
             if done:
                 selection = await selection_task
@@ -2484,6 +2497,8 @@ class PersonaPlugin(Star):
             for t in selection["traits"]
             if t["id"] in current and habit_text(current[t["id"]]) == habit_text(t)
         ]
+        if selection.get("expression_intent") and (plan or direct):
+            (plan or direct)["expression_intent"] = selection["expression_intent"]
         role = ""
         if settings["guidance_delivery"] == "dual":
             anchor = self.context.persona_manager.get_persona_v3_by_id(persona)
@@ -2496,6 +2511,12 @@ class PersonaPlugin(Star):
             host_prompt=role,
             templates=self.prompts,
         )
+        if selection["mode"] == "contextual_inline":
+            notice = "以下表达尚未判定适用；请你结合完整对话自行挑选，也可全部不用，不为套用候选改变话题或立场。\n"
+            if user_guidance:
+                user_guidance += "\n" + notice
+            elif guidance:
+                guidance += "\n" + notice
         system_injection = ""
         user_injection = ""
         if guidance and guidance not in req.system_prompt:
@@ -2526,7 +2547,9 @@ class PersonaPlugin(Star):
             "ovenheart_trace_metrics",
             {
                 "scope": scope,
-                "selected_ids": [t["id"] for t in selection["traits"]],
+                "selected_ids": []
+                if selection["mode"] == "contextual_inline"
+                else [t["id"] for t in selection["traits"]],
                 "included_ids": included_ids,
                 "habit_chars": len(guidance) + len(user_guidance),
                 "habit_user_chars": len(user_guidance),
@@ -2536,6 +2559,10 @@ class PersonaPlugin(Star):
                 "retrieval_message": selection["message"][:800],
                 "selector_cache_hit": selection.get("selector_cache_hit"),
                 "rerank_cache_hit": selection.get("rerank_cache_hit"),
+                "selector_engine": selection.get("selector_engine", "chat"),
+                "expression_intent": (plan or direct or {}).get(
+                    "expression_intent", {}
+                ),
             },
         )
         self.debug(

@@ -903,7 +903,7 @@ async def test_followup_admission_is_bounded_to_the_recent_addressee(
         sender="bob" if condition == "different_member" else "alice",
     )
     output = await requests(participant, follow)
-    assert bool(output) is (condition == "same_member")
+    assert bool(output) is (condition in ("same_member", "interrupted"))
     if output:
         payload = json.loads(
             participant.context.llm_generate.await_args.kwargs["prompt"]

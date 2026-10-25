@@ -276,6 +276,7 @@ class HabitRetriever:
         recent_expression_ids=(),
         expression_intent=None,
         record_status=True,
+        contextual_judge=None,
     ):
         """Recall, optionally rerank, then select habits within bounded deadlines.
 
@@ -296,6 +297,8 @@ class HabitRetriever:
             expression_intent: Optional validated per-turn style intent from the
                 participation planner, independent of the literal human input.
             record_status: Whether this request may replace runtime status.
+            contextual_judge: Optional typed judgment sharing reply planning with
+                habit applicability, without a separate chat-model generation.
 
         Returns:
             Habits, retrieval mode and a visible fallback explanation.
@@ -364,6 +367,7 @@ class HabitRetriever:
             and pool
             and settings["selection_mode"] != "lexical"
             and settings["rerank_provider_id"]
+            and contextual_judge is None
         ):
             try:
                 pool = await self.rerank_pool(
@@ -390,16 +394,30 @@ class HabitRetriever:
             result["traits"] = []
             result["mode"] = "contextual_fallback"
             try:
-                selected, cached = await self.contextual_ids(
-                    pool,
-                    query,
-                    settings,
-                    provider_id,
-                    identity,
-                    recent_expression_ids,
-                    expression_intent,
-                    scope=scope,
-                )
+                if contextual_judge is not None:
+                    judgment = await contextual_judge(
+                        pool,
+                        query,
+                        settings,
+                        identity,
+                        recent_expression_ids,
+                        expression_intent,
+                    )
+                    selected = judgment["selected_ids"]
+                    cached = judgment.get("cache_hit", False)
+                    result["expression_intent"] = judgment["expression_intent"]
+                    result["selector_engine"] = "jev"
+                else:
+                    selected, cached = await self.contextual_ids(
+                        pool,
+                        query,
+                        settings,
+                        provider_id,
+                        identity,
+                        recent_expression_ids,
+                        expression_intent,
+                        scope=scope,
+                    )
                 offered = {t["id"]: t for t in pool}
                 result.update(
                     traits=[
@@ -431,6 +449,17 @@ class HabitRetriever:
                 result["message"] = (
                     f"情境筛选{problem}，本轮不选表达、性格与行为习惯；保留人格底稿和当前输入直接命中的词汇。请检查学习模型与筛选等待上限。"
                 )
+                if contextual_judge is not None:
+                    # The actual reply model has the full conversational context.
+                    # These are explicitly optional candidates, not asserted choices.
+                    result.update(
+                        traits=[t for t in pool if t["kind"] == "expression"][
+                            : min(4, settings["max_traits"])
+                        ],
+                        mode="contextual_inline",
+                        selector_engine="reply_model",
+                        message="快速判读暂不可用，由主回复模型结合完整上下文判断最多四条可选表达；提供候选不代表已采用。",
+                    )
         recent = {i for i in recent_expression_ids if type(i) is int}
         if recent and settings["selection_mode"] != "contextual":
             # Only rotate near-equivalent expressions inside the bounded pool.
