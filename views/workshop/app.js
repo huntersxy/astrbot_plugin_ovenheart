@@ -467,6 +467,7 @@ function renderSettings() {
       ${switchField("native_memory_enabled", "A_memorix 通用记忆", "保存有真实来源的段落和关系，按会话和人格隔离；使用原版 BM25、图谱与双路检索，配置嵌入模型后启用双向量池。现有 LivingMemory 回忆继续保留。", s.native_memory_enabled)}
       ${switchField("image_memory_enabled", "图片记忆", "保存当前会话中真实出现的图片、作者原话和模型观察；图片描述沿用宿主的图片描述模型，暂停学习后不再入库。", s.image_memory_enabled)}
       ${switchField("emoji_enabled", "Planner表情动作", "查看本会话的表情候选，选择后随文字回复发送；真实发送结果回流后续规划。", s.emoji_enabled)}
+      ${field("emoji_provider_id", "独立表情选择模型 ID", s.emoji_provider_id ?? "", "使用支持图片的模型；留空使用视觉Planner或宿主图片描述模型。", {type:"text"})}
       ${switchField("planner_visual_enabled", "Planner视觉候选拼图", "Planner模型支持图片输入时开启；否则使用已有描述选择。拼图只进入内部工具上下文。", s.planner_visual_enabled)}
       ${field("image_embedding_provider_id", "图片嵌入模型 ID", s.image_embedding_provider_id ?? "", "原生 DashScope 多模态嵌入提供商；留空仍可回忆同一图片。", {type:"text"})}
       ${switchField("memory_feedback_enabled", "根据后续反馈维护记忆", "跟进已召回记忆的实际后续反馈，按原版窗口和置信度判断是否修正。暂停学习时停止更新，调用计入辅助用量。", s.memory_feedback_enabled)}

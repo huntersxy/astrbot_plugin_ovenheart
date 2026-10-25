@@ -56,6 +56,7 @@ EXPRESSION_SCHEMA = {
     "additionalProperties": False,
 }
 ACTION_SCHEMAS = {
+    "send_emoji": {"type": "object", "properties": {}, "additionalProperties": False},
     "show_emoji_list": {
         "type": "object",
         "properties": {},
@@ -153,6 +154,7 @@ class PlannerSession:
         self.direct = bool(event.is_at_or_wake_command)
         self.memory_ids = set()
         self.emojis = {}
+        self.reacted = set()
 
     def trace(self, action, **details):
         self.plugin.debug(
@@ -273,7 +275,38 @@ class PlannerSession:
             return json.dumps(
                 {"memories": [*native, *memories], "status": status}, ensure_ascii=False
             )
-        if name == "reply":
+        if name in ("reply", "send_emoji"):
+            if name == "send_emoji":
+                targets = [
+                    row
+                    for row in self.messages
+                    if not row.get("self") and row.get("replyable", True)
+                ]
+                target = next(
+                    (
+                        row
+                        for row in targets
+                        if self.direct
+                        and not self.replied
+                        and row["source"] == event_source(self.event)
+                    ),
+                    None,
+                )
+                if target is None:
+                    target = next(
+                        (
+                            row
+                            for row in reversed(targets)
+                            if row["sequence"] not in self.reacted
+                        ),
+                        None,
+                    )
+                if target is None or target["sequence"] in self.reacted:
+                    return "错误：当前真实消息已用表情回应；请处理文字请求、等待新消息或结束，不重复发表情。"
+                arguments = {
+                    "msg_id": str(target["sequence"]),
+                    "reply_reference": "只发送符合当前语境的表情，由视觉子代理选择。",
+                }
             if (
                 arguments.get("attach_emoji") is not None
                 and arguments["attach_emoji"] not in self.emojis
@@ -293,7 +326,7 @@ class PlannerSession:
                 )
             ):
                 return "错误：本轮由直接唤醒触发，请先处理 trigger.msg_id 的请求。"
-            if sequence in self.replied:
+            if name == "reply" and sequence in self.replied:
                 return "错误：这条消息已回复，请依据实际回复结果选择其他行动。"
             plan = parse_plan(
                 json.dumps(
@@ -317,6 +350,7 @@ class PlannerSession:
                 reply_style=arguments.get("reply_style", "正常回复"),
                 planner_session=self.id,
                 attach_emoji=arguments.get("attach_emoji"),
+                media_only=name == "send_emoji",
             )
             self.waits = 0
         elif name == "wait":
@@ -373,7 +407,9 @@ class PlannerSession:
     def acknowledge(self, result):
         if self.pending and not self.pending.done():
             if self.action["action"] == "reply" and result.get("send_hook"):
-                self.replied.add(self.action["target_sequence"])
+                (self.reacted if self.action.get("media_only") else self.replied).add(
+                    self.action["target_sequence"]
+                )
             self.pending.set_result(
                 result
                 | {"recent_messages": [planner_message(m) for m in self.messages]}
@@ -420,7 +456,7 @@ class PlannerSession:
         )
         tools = []
         for name, schema in ACTION_SCHEMAS.items():
-            if name == "show_emoji_list" and not (
+            if name in ("show_emoji_list", "send_emoji") and not (
                 self.settings["emoji_enabled"]
                 and self.settings["image_memory_enabled"]
                 and self.settings["native_memory_enabled"]
@@ -446,6 +482,7 @@ class PlannerSession:
             tool = PlannerTool(
                 name=name,
                 description={
+                    "send_emoji": "只发送一个符合当前语境的表情，由视觉子代理从本会话真实表情库选择；不生成文字。不要用表情代替用户要求完成的具体任务。结果回流后继续判断。",
                     "show_emoji_list": "查看当前会话中识别为表情包的候选；不会发送。reply.attach_emoji填写实际提供的序号，文字回复后发送该表情。",
                     "query_image_memory": "查询本轮真实消息中某张图片的历史同图、相似图及关联记忆；image_index为该消息第几张图片，从0开始。只查当前会话。",
                     "remember_memory": "保存有本轮真实人类原文支持的段落和关系；不是发送消息，不记录猜测为事实。evidence.msg_id 使用 recent_messages 的 sequence。",

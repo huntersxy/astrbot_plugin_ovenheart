@@ -96,6 +96,10 @@
     "type": "bool", "description": "Planner表情动作", "default": true,
     "hint": "Planner从当前会话已识别的表情包中选择，随文字回复后单独发送；自己的真实媒体发送进入后续规划。"
   },
+  "emoji_provider_id": {
+    "type": "string", "description": "独立表情选择模型 ID", "default": "",
+    "hint": "应使用支持图片的模型。留空优先使用已启用视觉的Planner模型，否则使用宿主图片描述模型；子代理调用计入emoji_select用量。"
+  },
   "planner_visual_enabled": {
     "type": "bool", "description": "Planner视觉候选拼图", "default": false,
     "hint": "仅当Planner模型支持图片输入时开启。开启后候选拼图进入内部工具上下文；关闭时使用已有描述选择，不假装看到了候选图。"

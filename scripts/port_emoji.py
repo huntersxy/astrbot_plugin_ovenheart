@@ -8,6 +8,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE = ROOT.parent / "MaiBot/src/maisaka/builtin_tool/send_emoji.py"
 SYMBOLS = {
+    "EmojiSelectionResult",
     "_calculate_grid_shape",
     "_build_placeholder_tile",
     "_build_labeled_tile",
@@ -17,12 +18,12 @@ SYMBOLS = {
 
 def main():
     raw = SOURCE.read_bytes()
-    source = raw.decode("utf-8")
+    source = raw.decode("utf-8").replace("\r\n", "\n")
     lines = source.splitlines(keepends=True)
     nodes = [
         node
         for node in ast.parse(source).body
-        if isinstance(node, ast.FunctionDef) and node.name in SYMBOLS
+        if isinstance(node, (ast.FunctionDef, ast.ClassDef)) and node.name in SYMBOLS
     ]
     assert len(nodes) == len(SYMBOLS)
     text = '''"""Original MaiBot emoji contact-sheet functions; see emoji_source.json and NOTICE.md."""
@@ -31,6 +32,7 @@ import math
 from io import BytesIO
 from typing import List
 from PIL import Image as PILImage, ImageDraw, ImageFont
+from pydantic import BaseModel, Field as PydanticField
 
 _EMOJI_CANDIDATE_TILE_SIZE = 256
 _EMOJI_INDEX_BADGE_SIZE = 64
@@ -44,7 +46,9 @@ _EMOJI_INDEX_FONT_SIZE = 32
         + "\n"
     )
     target = ROOT / "vendor/maibot/emoji_tiles.py"
-    target.write_text(text, encoding="utf-8")
+    target.write_text(text, encoding="utf-8", newline="\n")
+    template = ROOT.parent / "MaiBot/prompts/zh-CN/emoji_selection.prompt"
+    (target.parent / "emoji_selection.txt").write_bytes(template.read_bytes())
     (target.parent / "emoji_source.json").write_text(
         json.dumps(
             {
@@ -52,6 +56,7 @@ _EMOJI_INDEX_FONT_SIZE = 32
                 "source": "src/maisaka/builtin_tool/send_emoji.py",
                 "source_sha256": hashlib.sha256(raw).hexdigest(),
                 "ported_sha256": hashlib.sha256(target.read_bytes()).hexdigest(),
+                "template_sha256": hashlib.sha256(template.read_bytes()).hexdigest(),
                 "symbol_ast_sha256": {
                     node.name: hashlib.sha256(
                         ast.dump(node, include_attributes=False).encode()

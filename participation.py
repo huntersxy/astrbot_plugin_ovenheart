@@ -1327,7 +1327,7 @@ class ParticipationController:
         )
         if (
             not receipt
-            or not receipt.get("send_hook")
+            or not (receipt.get("send_hook") or receipt.get("media_only"))
             or event.is_stopped()
             or not self.current(previous)
         ):
@@ -1345,7 +1345,12 @@ class ParticipationController:
             }
             event.set_extra("ovenheart_planner_receipt", receipt)
         private = event.is_private_chat()
-        if previous.get("direct") and not private:
+        pending_direct = bool(
+            previous.get("direct")
+            and previous.get("media_only")
+            and not session.replied
+        )
+        if previous.get("direct") and not private and not pending_direct:
             work = self.rooms[previous["room"]].get("work")
             if work:
                 work["direct"] = False
@@ -1386,6 +1391,7 @@ class ParticipationController:
         if (
             plan["action"] == "reply"
             and not private
+            and not pending_direct
             and session.settings["participation_frequency"] == 0
         ):
             plan.update(
@@ -1397,14 +1403,14 @@ class ParticipationController:
         plan = plan | {
             "room": previous["room"],
             "followup": False,
-            "direct": private,
+            "direct": private or pending_direct,
             "private_continuation": private,
         }
         decision = await self.plugin.store.call(
             "decide",
             scope,
             plan,
-            "direct" if private else "auto",
+            "direct" if private or pending_direct else "auto",
             "admitted" if plan["action"] == "reply" else "observed",
             self.plugin.settings,
         )

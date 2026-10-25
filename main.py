@@ -1274,6 +1274,9 @@ class PersonaPlugin(Star):
         event.set_extra("enable_streaming", False)
         event.call_llm = True
         self.memory.clear_reply_source(event)
+        if plan.get("media_only"):
+            await self.send_planned_emoji(event, plan)
+            return
         target = plan.get("target") or {}
         if target.get("source") != plan["room_source"]:
             source = self.participation.sources.get(
@@ -1367,6 +1370,49 @@ class PersonaPlugin(Star):
             # The next planner action still belongs to the original arrival.
             event.message_obj.message_id = original_id
             event.message_obj.sender = original_sender
+
+    async def send_planned_emoji(self, event, plan):
+        session = self.participation.planner.sessions.get(plan["scope"])
+        if not session or not await self.check_participation(event):
+            return
+        event.clear_result()
+        event.set_extra("ovenheart_reply_scope", plan["scope"])
+        self.outgoing_media.bind_event(event)
+        selection = await self.emoji_actions.select(session)
+        if selection["success"] and await self.check_participation(event):
+            result = await self.emoji_actions.send(event, session, selection["index"])
+        else:
+            result = {
+                "sent": False,
+                "error": selection.get("error", "发送前会话条件已改变。"),
+            }
+        sent = result["sent"]
+        if sent:
+            await self.store.call("note_reply", plan["scope"], plan["room"])
+            self.participation.rhythm.observe(
+                plan["room"], "media:" + str(plan["id"]), time.time(), own=True
+            )
+            window = self.participation.windows.get(plan["scope"])
+            if window:
+                window["consumed"] = window["sequence"]
+        else:
+            await self.store.call(
+                "cancel_decision", plan["scope"], plan["id"], result["error"]
+            )
+        event.set_extra(
+            "ovenheart_planner_receipt",
+            {
+                "send_hook": sent,
+                "media_only": True,
+                "reply_text": "",
+                "media": result | {"selection": selection},
+                "target_sequence": plan["target_sequence"],
+                "delivery_status": result.get("delivery_status", "not sent"),
+            },
+        )
+        await self.record_turn_trace(
+            event, status="media_only_sent" if sent else "media_only_failed"
+        )
 
     async def check_mention(self, event: AstrMessageEvent) -> bool:
         """Recheck a name-triggered wake before dispatch, generation and delivery.

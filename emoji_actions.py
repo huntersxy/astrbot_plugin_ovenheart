@@ -13,7 +13,11 @@ from astrbot.core.message.components import Image
 from astrbot.core.message.message_event_result import MessageChain
 from mcp.types import CallToolResult, ImageContent, TextContent
 
-from .vendor.maibot.emoji_tiles import _merge_emoji_tiles
+from .vendor.maibot.emoji_tiles import (
+    EmojiSelectionResult,
+    _calculate_grid_shape,
+    _merge_emoji_tiles,
+)
 
 _indices = count(1)
 
@@ -105,12 +109,118 @@ class EmojiActions:
                 "description": choice["caption"],
                 "delivery_status": "native send returned; platform acknowledgement unverified",
             }
+
         except asyncio.CancelledError:
             raise
         except Exception as exc:
             return {
                 "sent": False,
-                "error": "表情发送未完成（"
-                + type(exc).__name__
-                + "）。文字回复已发送。",
+                "error": "表情发送未完成（" + type(exc).__name__ + "）。",
             }
+
+    async def select(self, session):
+        """Original visual sub-agent contract: recent twelve turns and one grid."""
+        if not self.plugin.settings[
+            "emoji_enabled"
+        ] or not await self.plugin.image_memory.permitted(
+            session.event, session.scope, session.persona
+        ):
+            return {"success": False, "error": "当前表情选择未启用或无权访问。"}
+        provider = self.plugin.settings["emoji_provider_id"]
+        if not provider and self.plugin.settings["planner_visual_enabled"]:
+            provider = self.plugin.settings[
+                "planner_provider_id"
+            ] or await self.plugin.context.get_current_chat_provider_id(
+                session.event.unified_msg_origin
+            )
+        if not provider:
+            provider = (
+                self.plugin.context.get_config(session.event.unified_msg_origin)
+                .get("provider_ltm_settings", {})
+                .get("image_caption_provider_id", "")
+            )
+        if not provider:
+            return {
+                "success": False,
+                "error": "未配置表情选择视觉模型。请设置emoji_provider_id或宿主图片描述模型。",
+            }
+        available = await self.plugin.room_memory.call(
+            session.scope, "image_candidates", event=session.event
+        )
+        if not available:
+            return {"success": False, "error": "当前会话没有可用表情包。"}
+        selected = sample(available, min(6, len(available)))
+        images = await asyncio.gather(
+            *(asyncio.to_thread(Path(item["path"]).read_bytes) for item in selected)
+        )
+        collage = await asyncio.to_thread(_merge_emoji_tiles, images)
+        rows, columns = _calculate_grid_shape(len(selected))
+        template = (
+            Path(__file__).parent / "vendor/maibot/emoji_selection.txt"
+        ).read_text(encoding="utf-8")
+        await session.check_current()
+        try:
+            response = await asyncio.wait_for(
+                self.plugin.auxiliary.generate(
+                    "emoji_select",
+                    chat_provider_id=provider,
+                    system_prompt=template.format(
+                        emoji_count=len(selected), grid_rows=rows, grid_columns=columns
+                    ),
+                    prompt=json.dumps(
+                        [
+                            {
+                                "sender": row["sender"],
+                                "text": row["text"],
+                                "media": row.get("media", []),
+                            }
+                            for row in session.messages[-12:]
+                        ],
+                        ensure_ascii=False,
+                    ),
+                    image_urls=[
+                        "data:image/png;base64," + base64.b64encode(collage).decode()
+                    ],
+                ),
+                timeout=session.settings["planner_timeout"],
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            return {
+                "success": False,
+                "error": "表情选择模型请求失败（" + type(exc).__name__ + "）。",
+            }
+        await session.check_current()
+        fallback = False
+        if getattr(response, "role", "") == "err":
+            return {"success": False, "error": "表情选择模型返回了错误响应。"}
+        try:
+            choice = EmojiSelectionResult.model_validate_json(
+                response.completion_text or ""
+            )
+            offset, reason = choice.emoji_index - 1, choice.reason.strip()
+            if not 0 <= offset < len(selected):
+                offset, fallback = 0, True
+        except ValueError:
+            offset, reason, fallback = 0, "", True
+        chosen = selected[offset]
+        caption = next(
+            (
+                item["text"]
+                for item in reversed(chosen["observations"])
+                if json.loads(item["evidence_json"]).get("is_emoji") is True
+            ),
+            "表情包",
+        )
+        index = next(_indices)
+        session.emojis[index] = {
+            "asset_id": chosen["asset"]["asset_id"],
+            "caption": caption,
+        }
+        return {
+            "success": True,
+            "index": index,
+            "reason": reason,
+            "fallback_to_first": fallback,
+        }

@@ -26,6 +26,7 @@ DEFAULTS = {
     "native_memory_enabled": True,
     "image_memory_enabled": True,
     "emoji_enabled": True,
+    "emoji_provider_id": "",
     "planner_visual_enabled": False,
     "image_embedding_provider_id": "",
     "memory_summary_enabled": True,

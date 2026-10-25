@@ -110,3 +110,103 @@ async def test_original_candidate_grid_selected_attachment_and_real_send_result(
             for occurrence in item["occurrences"]
         )
     assert "这下终于搞定啦" in str(provider.text_chat.await_args.kwargs["contexts"])
+
+
+async def seed_emoji_library(p):
+    p.settings.update(
+        native_memory_enabled=True,
+        image_memory_enabled=True,
+        emoji_enabled=True,
+        emoji_provider_id="selector-vision",
+        participation_frequency=0,
+    )
+    vision = SimpleNamespace(
+        text_chat=AsyncMock(
+            return_value=SimpleNamespace(
+                completion_text='{"description":"绿色猫猫开心表情包","is_emoji":true}'
+            )
+        )
+    )
+    p.context.get_provider_by_id = lambda _: vision
+    p.context.get_config = lambda _: {
+        "plugin_set": ["*"],
+        "platform_settings": {},
+        "wake_prefix": [],
+        "provider_ltm_settings": {
+            "image_caption": True,
+            "image_caption_provider_id": "vision",
+        },
+    }
+    await capture(p, "emoji-source", picture(), "开心猫猫")
+
+
+async def test_standalone_emoji_uses_original_visual_selector_and_returns_media_only_receipt(
+    native_planner,
+):
+    p, provider = native_planner
+    await seed_emoji_library(p)
+    p.context.llm_generate = AsyncMock(
+        return_value=SimpleNamespace(
+            completion_text='{"emoji_index":999,"reason":"回应开心的语气"}'
+        )
+    )
+    provider.text_chat.side_effect = [action("send_emoji"), action("stop")]
+    incoming = event("pure-emoji", text="哈哈哈太棒了")
+    incoming.is_at_or_wake_command = True
+    sent = AsyncMock(return_value=True)
+    incoming.send = sent
+    assert not [request async for request in p.participate(incoming)]
+    assert sent.await_count == 1
+    assert p.context.llm_generate.await_count == 1
+    selection_call = p.context.llm_generate.await_args.kwargs
+    assert selection_call["chat_provider_id"] == "selector-vision"
+    assert selection_call["image_urls"][0].startswith("data:image/png;base64,")
+    assert "哈哈哈太棒了" in selection_call["prompt"]
+    receipt = incoming.get_extra("ovenheart_planner_receipt")
+    assert receipt["send_hook"] and receipt["media_only"] and not receipt["reply_text"]
+    assert receipt["media"]["selection"]["fallback_to_first"]
+    assert "media_only" in str(provider.text_chat.await_args.kwargs["contexts"])
+    await p.auxiliary.flush()
+    assert (
+        next(
+            row
+            for row in await p.store.call("auxiliary_usage")
+            if row["stage"] == "emoji_select"
+        )["calls"]
+        == 1
+    )
+
+
+async def test_failed_standalone_selection_returns_to_text_request_despite_group_zero_frequency(
+    native_planner,
+):
+    p, provider = native_planner
+    await seed_emoji_library(p)
+    p.context.llm_generate = AsyncMock(side_effect=RuntimeError("selector unavailable"))
+    provider.text_chat.side_effect = [
+        action("send_emoji"),
+        action(
+            "reply",
+            msg_id="1",
+            reply_reference="表情失败不影响帮用户完成当前任务，继续文字说明。",
+        ),
+        action("stop"),
+    ]
+    incoming = event("pure-emoji-failure", text="先给个表情，然后解释一下这个结果")
+    incoming.is_at_or_wake_command = True
+    sent = AsyncMock(return_value=True)
+    incoming.send = sent
+    replies = p.participate(incoming)
+    request = await anext(replies)
+    assert incoming.get_extra("ovenheart_decision")["direct"]
+    assert not incoming.get_extra("ovenheart_decision")["media_only"]
+    await p.apply_persona(incoming, request)
+    await p.apply_participation(incoming, request)
+    await send_reply(p, incoming, "这个结果说明任务已经完成。")
+    with pytest.raises(StopAsyncIteration):
+        await anext(replies)
+    assert sent.await_count == 0
+    assert provider.text_chat.await_count == 3
+    assert "表情选择模型请求失败" in str(
+        provider.text_chat.await_args.kwargs["contexts"]
+    )
