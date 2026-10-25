@@ -2947,6 +2947,11 @@ class PersonaPlugin(Star):
                 "turn_trace_failed", scope=metrics["scope"], error=type(exc).__name__
             )
 
+    @filter.on_agent_begin(priority=100000)
+    async def meter_native_reply(self, event, run_context):
+        """Attach accounting to this native runner before its first transport."""
+        self.auxiliary.bind_native(event, run_context)
+
     @filter.on_agent_done(priority=-100000)
     async def record_generation_outcome(self, event, run_context, response):
         """Distinguish an empty model result from a still-running native task."""

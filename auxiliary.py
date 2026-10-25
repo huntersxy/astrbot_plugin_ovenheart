@@ -1,4 +1,4 @@
-"""Aggregate actual helper usage without storing prompts or delaying responses."""
+"""Aggregate actual model usage without storing prompts or delaying responses."""
 
 from __future__ import annotations
 
@@ -18,6 +18,8 @@ class AuxiliaryUsage:
         self.lock = asyncio.Lock()
         self.dropped = 0
         self.on_record = None
+        self.native_bound = 0
+        self.native_unavailable = 0
 
     async def generate(self, stage, **kwargs):
         return await self.measure(stage, self.context.llm_generate, kwargs)
@@ -44,69 +46,136 @@ class AuxiliaryUsage:
             status = "cancelled"
             raise
         finally:
-            usage = getattr(response, "usage", None)
-            raw = getattr(response, "raw_completion", None)
-            model = (
-                raw.get("model", "")
-                if isinstance(raw, dict)
-                else getattr(raw, "model", "")
+            self.record(stage, kwargs, response, status, started, provider_id)
+
+    async def stream(self, stage, invoke, kwargs, *, provider_id):
+        started = time.monotonic()
+        response = None
+        status = "cancelled"
+        source = invoke(**kwargs)
+        try:
+            async for part in source:
+                if part is not None and not part.is_chunk:
+                    response = part
+                    status = "error" if part.role == "err" else "success"
+                yield part
+        except asyncio.CancelledError:
+            status = "cancelled"
+            raise
+        except Exception:
+            status = "error"
+            raise
+        finally:
+            try:
+                await source.aclose()
+            finally:
+                self.record(stage, kwargs, response, status, started, provider_id)
+
+    def bind_native(self, event, run_context):
+        """Wrap only the host runner registered for this exact native event."""
+        try:
+            from astrbot.core.pipeline.process_stage.follow_up import (
+                _ACTIVE_AGENT_RUNNERS,
             )
-            system_chars = len(kwargs.get("system_prompt") or "")
-            prompt_chars = len(kwargs.get("prompt") or "")
-            for message in kwargs.get("contexts") or []:
-                content = (
-                    message.content
-                    if isinstance(message, Message)
-                    else message.get("content")
-                ) or ""
-                role = (
-                    message.role
-                    if isinstance(message, Message)
-                    else message.get("role")
-                )
-                length = (
-                    len(content)
-                    if isinstance(content, str)
-                    else sum(
-                        len(
-                            part.text
-                            if isinstance(part, TextPart)
-                            else part.get("text") or ""
-                        )
-                        for part in content
-                        if isinstance(part, (TextPart, dict))
+        except ImportError:
+            self.native_unavailable += 1
+            return
+
+        runner = _ACTIVE_AGENT_RUNNERS.get(event.unified_msg_origin)
+        if runner is None or runner.run_context is not run_context:
+            self.native_unavailable += 1
+            return
+        if event.get_extra("ovenheart_usage_runner") is runner:
+            return
+        runner.provider = self.native_provider(runner.provider)
+        runner.fallback_providers = [
+            self.native_provider(provider) for provider in runner.fallback_providers
+        ]
+        event.set_extra("ovenheart_usage_runner", runner)
+        self.native_bound += 1
+
+    def native_provider(self, provider):
+        wrapped = copy.copy(provider)
+        identifier = str(provider.provider_config["id"])
+
+        async def measured(**kwargs):
+            return await self.measure(
+                "native_reply", provider.text_chat, kwargs, provider_id=identifier
+            )
+
+        async def streamed(**kwargs):
+            source = self.stream(
+                "native_reply",
+                provider.text_chat_stream,
+                kwargs,
+                provider_id=identifier,
+            )
+            try:
+                async for response in source:
+                    yield response
+            finally:
+                await source.aclose()
+
+        wrapped.text_chat = measured
+        wrapped.text_chat_stream = streamed
+        return wrapped
+
+    def record(self, stage, kwargs, response, status, started, provider_id=None):
+        usage = getattr(response, "usage", None)
+        raw = getattr(response, "raw_completion", None)
+        model = (
+            raw.get("model", "") if isinstance(raw, dict) else getattr(raw, "model", "")
+        )
+        system_chars = len(kwargs.get("system_prompt") or "")
+        prompt_chars = len(kwargs.get("prompt") or "")
+        for message in kwargs.get("contexts") or []:
+            content = (
+                message.content
+                if isinstance(message, Message)
+                else message.get("content")
+            ) or ""
+            role = message.role if isinstance(message, Message) else message.get("role")
+            length = (
+                len(content)
+                if isinstance(content, str)
+                else sum(
+                    len(
+                        part.text
+                        if isinstance(part, TextPart)
+                        else part.get("text") or ""
                     )
+                    for part in content
+                    if isinstance(part, (TextPart, dict))
                 )
-                if role == "system":
-                    system_chars += length
-                else:
-                    prompt_chars += length
-            self.pending.append(
-                {
-                    "bucket": int(time.time() // 3600) * 3600,
-                    "stage": stage,
-                    "provider": str(
-                        provider_id or kwargs.get("chat_provider_id") or ""
-                    ),
-                    "model": str(model or ""),
-                    "calls": 1,
-                    "successes": int(status == "success"),
-                    "errors": int(status == "error"),
-                    "cancelled": int(status == "cancelled"),
-                    "reported": int(usage is not None),
-                    "input_cached": int(getattr(usage, "input_cached", 0) or 0),
-                    "input_other": int(getattr(usage, "input_other", 0) or 0),
-                    "output": int(getattr(usage, "output", 0) or 0),
-                    "system_chars": system_chars,
-                    "prompt_chars": prompt_chars,
-                    "seconds": round(time.monotonic() - started, 3),
-                }
             )
-            if len(self.pending) > 512:
-                self.pending.pop(0)
-                self.dropped += 1
-            if self.on_record is not None:
-                self.on_record()
+            if role == "system":
+                system_chars += length
+            else:
+                prompt_chars += length
+        self.pending.append(
+            {
+                "bucket": int(time.time() // 3600) * 3600,
+                "stage": stage,
+                "provider": str(provider_id or kwargs.get("chat_provider_id") or ""),
+                "model": str(model or ""),
+                "calls": 1,
+                "successes": int(status == "success"),
+                "errors": int(status == "error"),
+                "cancelled": int(status == "cancelled"),
+                "reported": int(usage is not None),
+                "input_cached": int(getattr(usage, "input_cached", 0) or 0),
+                "input_other": int(getattr(usage, "input_other", 0) or 0),
+                "output": int(getattr(usage, "output", 0) or 0),
+                "system_chars": system_chars,
+                "prompt_chars": prompt_chars,
+                "seconds": round(time.monotonic() - started, 3),
+            }
+        )
+        if len(self.pending) > 512:
+            self.pending.pop(0)
+            self.dropped += 1
+        if self.on_record is not None:
+            self.on_record()
 
     async def flush(self):
         async with self.lock:

@@ -372,6 +372,15 @@ function bindHistoryRestore(root = document) {
     if (await confirmAction("恢复这个版本的人格底稿和学习状态？当前版本也会自动保留。")) await mutate("restore", {id:Number(button.dataset.restore)}, button.dataset.restoreScope);
   };
 }
+function renderModelUsage() {
+  const usage = data.auxiliary_usage;
+  if (!usage) return "";
+  const rows = usage.rows || [];
+  const sum = key => rows.reduce((total, row) => total + Number(row[key] || 0), 0);
+  const stages = {native_reply:"回复正文",planner:"聊天规划",reply_split:"语义断句",emoji_select:"表情选择",person_profile:"人物画像",memory_summary:"记忆整理"};
+  return `<details class="card"><summary>最近 24 小时正文与辅助用量 · ${sum("calls")} 次 · 输入 ${(sum("input_cached") + sum("input_other")).toLocaleString()} / 输出 ${sum("output").toLocaleString()} token</summary><p class="muted">${sum("reported")} 次返回 token 用量。未报告的调用只计次数；输入包含缓存 token。正文按每次实际传输统计，包含工具循环和备用模型。Jev 独立接口与嵌入请求另计。</p>${rows.map(row => `<p><strong>${escape(stages[row.stage] || row.stage)}</strong> · ${Number(row.calls)} 次 · 输入 ${(Number(row.input_cached) + Number(row.input_other)).toLocaleString()} / 输出 ${Number(row.output).toLocaleString()} · 错误 ${Number(row.errors)} / 取消 ${Number(row.cancelled)}<br><small class="muted">${escape(row.provider || "未返回模型配置")} · ${escape(row.model || "未返回实际模型名")}</small></p>`).join("") || '<p class="muted">还没有调用记录。</p>'}<p class="muted">本次加载已接入 ${Number(usage.native_bound || 0)} 轮原生正文${usage.native_unavailable ? `，${Number(usage.native_unavailable)} 轮宿主未提供可接入的运行器` : ""}。${usage.pending ? `待入库 ${Number(usage.pending)} 条。` : ""}${usage.dropped ? `队列溢出丢弃 ${Number(usage.dropped)} 条。` : ""}</p></details>`;
+}
+
 function renderHistory() {
   const expanded = new Set([...document.querySelectorAll("details[data-review-run][open]")].map(node => node.dataset.reviewRun));
   const legacyKeys = {learning:"runs", participation:"decisions", replies:"turn_traces", applications:"applications", versions:"revisions"};
@@ -380,7 +389,7 @@ function renderHistory() {
   const counts = page?.counts || Object.fromEntries(Object.entries(legacyKeys).map(([key,value]) => [key,(data[value] || []).length]));
   const total = page?.total ?? items.length, offset = page?.offset ?? 0;
   const descriptions = {learning:"成功批次才消耗素材；失败批次保留素材。展开一条记录查看自检与原因。", participation:`${data.settings?.participation_mode === "off" ? "自主参与已关闭。" : data.settings?.participation_mode === "observe" ? "当前仅记录判断，不主动回复。" : "当前允许自主参与，冷却与限额仍有效。"}交给宿主不保证模型生成或平台送达。`, replies:"发送阶段不等于平台送达；缓存仅指情境筛选和重排序，不代表提供商 KV 命中。", applications:"记录进入宿主发送阶段的习惯引用，不推断满意度或实际送达。", versions:"共用与当前会话的版本分别恢复；只恢复底稿和条目，不恢复原始素材。"};
-  $("#content").innerHTML = `<section class="history-workspace"><header class="history-heading"><div><h2>学习与参与</h2><p class="muted">按类型查看，展开单条详情。</p></div><button id="history-latest" type="button" class="tonal">查看最新</button></header><nav class="history-categories" aria-label="记录类型">${Object.entries(historySections).map(([key,label]) => `<button type="button" data-history-section="${key}" aria-pressed="${key === historySection}">${label}<span>${counts[key] || 0}</span></button>`).join("")}</nav><div class="history-filter"><p>${descriptions[historySection]}</p><label>状态<select id="history-status"><option value="all">全部状态</option>${Object.entries(historyStatuses[historySection]).map(([key,label]) => `<option value="${key}" ${historyStatus === key ? "selected" : ""}>${label}</option>`).join("")}</select></label></div><div class="history-records">${items.length ? items.map(row => {
+  $("#content").innerHTML = `${renderModelUsage()}<section class="history-workspace"><header class="history-heading"><div><h2>学习与参与</h2><p class="muted">按类型查看，展开单条详情。</p></div><button id="history-latest" type="button" class="tonal">查看最新</button></header><nav class="history-categories" aria-label="记录类型">${Object.entries(historySections).map(([key,label]) => `<button type="button" data-history-section="${key}" aria-pressed="${key === historySection}">${label}<span>${counts[key] || 0}</span></button>`).join("")}</nav><div class="history-filter"><p>${descriptions[historySection]}</p><label>状态<select id="history-status"><option value="all">全部状态</option>${Object.entries(historyStatuses[historySection]).map(([key,label]) => `<option value="${key}" ${historyStatus === key ? "selected" : ""}>${label}</option>`).join("")}</select></label></div><div class="history-records">${items.length ? items.map(row => {
     const state = historySection === "participation" ? row.outcome : row.status;
     const label = historyStatuses[historySection][state] || (historySection === "versions" ? "版本" : historySection === "applications" ? "引用" : state || "记录");
     const tone = ["error","cancelled","empty_response"].includes(state) ? "error" : ["running","waiting"].includes(state) ? "pending" : ["success","admitted","send_hook"].includes(state) ? "success" : "";

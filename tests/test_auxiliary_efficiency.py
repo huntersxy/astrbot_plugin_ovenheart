@@ -21,6 +21,116 @@ from tests.test_runtime import event, sources
 pytest_plugins = ["tests.test_participation", "tests.test_retrieval"]
 
 
+@pytest.mark.parametrize("streaming", [False, True])
+async def test_native_body_accounts_each_tool_and_fallback_transport(
+    participant, streaming
+):
+    from unittest.mock import MagicMock
+
+    from astrbot.api.provider import ProviderRequest
+    from astrbot.core.agent.hooks import BaseAgentRunHooks
+    from astrbot.core.agent.run_context import ContextWrapper
+    from astrbot.core.agent.runners.tool_loop_agent_runner import ToolLoopAgentRunner
+    from astrbot.core.agent.tool import FunctionTool, ToolSet
+    from astrbot.core.pipeline.process_stage.follow_up import (
+        register_active_runner,
+        unregister_active_runner,
+    )
+    from astrbot.core.provider.entities import LLMResponse
+    from astrbot.core.provider.provider import Provider
+    from mcp.types import CallToolResult, TextContent
+
+    incoming = event("native-metering")
+    primary, backup = MagicMock(spec=Provider), MagicMock(spec=Provider)
+    primary.provider_config = {"id": "primary"}
+    backup.provider_config = {"id": "backup"}
+    primary.text_chat = AsyncMock(side_effect=RuntimeError("transport failed"))
+
+    async def failed(**kwargs):
+        raise RuntimeError("transport failed")
+        yield  # This is the provider's async-generator transport contract.
+
+    primary.text_chat_stream = failed
+    responses = [
+        LLMResponse(
+            role="assistant",
+            tools_call_name=["lookup"],
+            tools_call_args=[{}],
+            tools_call_ids=["lookup-1"],
+        ),
+        LLMResponse(role="assistant", completion_text="找到了"),
+    ]
+    for response in responses:
+        response.usage = TokenUsage(input_cached=10, input_other=3, output=2)
+        response.raw_completion = {"model": "actual-backup"}
+    backup.text_chat = AsyncMock(side_effect=responses)
+    pending = iter(responses)
+
+    async def streamed(**kwargs):
+        yield LLMResponse(role="assistant", completion_text="片段", is_chunk=True)
+        yield next(pending)
+
+    backup.text_chat_stream = streamed
+    transports = (
+        primary.text_chat,
+        backup.text_chat,
+        primary.text_chat_stream,
+        backup.text_chat_stream,
+    )
+    executed = []
+
+    async def execute(tool, run_context, **kwargs):
+        executed.append(tool.name)
+        yield CallToolResult(content=[TextContent(type="text", text="文件已找到")])
+
+    class Hooks(BaseAgentRunHooks):
+        async def on_agent_begin(self, run_context):
+            await participant.meter_native_reply(incoming, run_context)
+            await participant.meter_native_reply(incoming, run_context)
+
+    runner = ToolLoopAgentRunner()
+    await runner.reset(
+        provider=primary,
+        fallback_providers=[backup],
+        request=ProviderRequest(
+            prompt="查文件",
+            func_tool=ToolSet(
+                [FunctionTool(name="lookup", description="查找", parameters={})]
+            ),
+        ),
+        run_context=ContextWrapper(context=SimpleNamespace(event=incoming)),
+        tool_executor=SimpleNamespace(execute=execute),
+        agent_hooks=Hooks(),
+        streaming=streaming,
+    )
+    register_active_runner(incoming.unified_msg_origin, runner)
+    try:
+        async for _ in runner.step_until_done(max_step=4):
+            pass
+    finally:
+        unregister_active_runner(incoming.unified_msg_origin, runner)
+    assert runner.get_final_llm_resp().completion_text == "找到了"
+    assert executed == ["lookup"]
+    assert participant.auxiliary.native_bound == 1
+    assert transports == (
+        primary.text_chat,
+        backup.text_chat,
+        primary.text_chat_stream,
+        backup.text_chat_stream,
+    )
+    await participant.auxiliary.flush()
+    rows = [
+        row
+        for row in await participant.store.call("auxiliary_usage")
+        if row["stage"] == "native_reply"
+    ]
+    assert sum(row["calls"] for row in rows) == 3
+    assert sum(row["reported"] for row in rows) == 2
+    assert sum(row["errors"] for row in rows) == 1
+    assert sum(row["input_cached"] + row["input_other"] for row in rows) == 26
+    assert sum(row["output"] for row in rows) == 4
+
+
 def test_learning_passes_share_evidence_prefix_without_duplicating_system():
     system = "固定学习规则和输出格式。" * 100
     base = {

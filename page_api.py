@@ -115,6 +115,8 @@ class PageAPI:
                 "rows": await self.plugin.store.read("auxiliary_usage"),
                 "pending": len(self.plugin.auxiliary.pending),
                 "dropped": self.plugin.auxiliary.dropped,
+                "native_bound": self.plugin.auxiliary.native_bound,
+                "native_unavailable": self.plugin.auxiliary.native_unavailable,
                 "selector_backoff_skips": self.plugin.retriever.selector_backoff_skips,
             }
         return {"status": "ok", "data": state}
