@@ -23,7 +23,7 @@ async def test_light_views_select_scope_once_without_traits_or_history(
     monkeypatch.setattr(plugin.store, "_state_traits", traits)
     inventory = Mock(side_effect=AssertionError("Tool inventory loaded"))
     monkeypatch.setattr(plugin.page_api, "tool_inventory", inventory)
-    for view in ["profile", "summary"]:
+    for view in ["profile", "summary", "settings"]:
         data = (await api_call(plugin.page_api.state, query=f"view={view}"))["data"]
         assert data["scope"]["id"] == scope
         assert data["scope"]["profile"] == full["scope"]["profile"]

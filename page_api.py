@@ -102,7 +102,7 @@ class PageAPI:
                 },
             ),
         )
-        if view in {"full", "settings"}:
+        if view == "full":
             state["tools"] = self.tool_inventory()
         if view in {"full", "history"}:
             state["auxiliary_usage"] = {

@@ -36,7 +36,7 @@ function notify(message, error = false) {
 const readRequests = new Map();
 const viewCache = new Map();
 const localOperations = new Set();
-let loadVersion = 0, cacheEpoch = 0, editVersion = 0, pollTimer, pollErrors = 0;
+let loadVersion = 0, cacheEpoch = 0, editVersion = 0, pollTimer, pollErrors = 0, toolsCache;
 const viewKey = () => JSON.stringify([selectedScope, tab, libraryScope, category, status, libraryOffset, reviewFilter]);
 const viewName = () => ["library", "prompts"].includes(tab) ? "summary" : tab;
 
@@ -383,7 +383,8 @@ function renderSettings() {
 
 function renderAutonomousTools(settings) {
   const selected = {allowlist:new Set(settings.autonomous_tools || []), denylist:new Set(settings.autonomous_tool_denylist || [])};
-  let inventory = data.tools || {items:[], message:"暂时无法读取 AstrBot 工具列表，可刷新或手动补充名称。"};
+  if (!toolsCache && data.tools) toolsCache = {value:data.tools, at:Date.now()};
+  let inventory = toolsCache?.value || {items:[], message:"正在独立读取工具列表；其他设置可先编辑，已选名称会保留。"};
   let visible = [];
   const container = $("#autonomous-tool-picker");
   container.innerHTML = `<section class="tool-picker" aria-labelledby="tool-picker-title"><h3 id="tool-picker-title">自主回复可用工具</h3><div class="field"><label for="autonomous_tool_policy">工具名单模式</label><select id="autonomous_tool_policy" name="autonomous_tool_policy"><option value="allowlist">白名单：仅允许选中的工具</option><option value="denylist">黑名单：排除选中的工具</option></select><small id="tool-policy-help"></small></div><div class="tool-search-row"><div class="field"><label for="tool-search">搜索 AstrBot 当前工具</label><input id="tool-search" type="search" placeholder="工具名称或功能说明" autocomplete="off"></div><button type="button" id="tool-refresh" class="tonal">刷新工具</button></div><p id="tool-inventory-status" class="muted"></p><p id="tool-selection-count" class="muted" role="status" aria-live="polite"></p><div class="actions tool-bulk"><button type="button" id="tool-select-visible">选择搜索结果</button><button type="button" id="tool-clear-visible">取消搜索结果</button><button type="button" id="tool-clear-all">清空当前名单</button></div><div id="tool-choices" class="tool-choices" role="group" aria-label="自主工具名单"></div><details class="tool-manual"><summary>手动补充工具名称</summary><label for="tool-extra">工具名称</label><textarea id="tool-extra" placeholder="每行一个精确工具名称"></textarea><small>支持换行、空格和逗号。可添加到当前名单，或直接保存设置；尚未注册的名称也会保留。</small><button type="button" id="tool-add-names" class="tonal">添加到当前名单</button></details></section>`;
@@ -423,13 +424,16 @@ function renderAutonomousTools(settings) {
     refresh.disabled = true;
     try {
       const next = await api("tools");
+      const received = (next.items ? next : next.tools);
+      if (received) toolsCache = {value:received, at:Date.now()};
       if ($("#autonomous-tool-picker") !== container) return;
-      inventory = (next.items ? next : next.tools) || {items:[], message:"暂时无法读取工具列表，已选名称仍保留。"};
+      inventory = received || {items:[], message:"暂时无法读取工具列表，已选名称仍保留。"};
       renderChoices();
     } catch (error) { notify(error.message || "工具列表刷新失败，已选名称仍保留。", true); }
     finally { refresh.disabled = false; }
   };
   renderChoices();
+  if (!toolsCache || Date.now() - toolsCache.at >= 30000) Promise.resolve().then(() => { if ($("#autonomous-tool-picker") === container) return refresh.onclick(); });
   return () => {
     for (const name of $("#tool-extra").value.split(/[\s,，;；]+/).filter(Boolean)) selected[policy.value || "allowlist"].add(name);
     if (Object.values(selected).some(names => names.size > 500 || [...names].some(name => name.length > 256))) {

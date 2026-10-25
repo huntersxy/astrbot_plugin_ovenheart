@@ -145,3 +145,18 @@ test('save in another view does not abandon a pending navigation',async()=>{
  assert.equal(f.run('tab'),'history');
  assert.ok(f.element('#content').innerHTML.includes('修改前的版本'));
 });
+
+test('settings renders before the slow tool inventory and keeps edits during lazy load',async()=>{
+ const f=fixture();
+ f.run(`delete data.tools;toolsCache=undefined;globalThis.toolReads=0;bridge.apiGet=(endpoint)=>{if(endpoint==='tools'){toolReads++;return new Promise(resolve=>globalThis.toolsDone=resolve);}return Promise.resolve(data);};`);
+ await f.nav.find(n=>n.dataset.tab==='settings').onclick();
+ assert.ok(f.element('#content').innerHTML.includes('settings-form'));
+ assert.equal(f.run('pending'),false);
+ assert.equal(f.run('toolReads'),1);
+ f.element('#tool-extra').value='my_custom_tool';f.element('#tool-add-names').onclick();
+ f.run(`toolsDone({items:[{name:'registered_tool',description:'注册工具',active:true}]});`);
+ await new Promise(resolve=>setImmediate(resolve));
+ assert.ok(f.element('#tool-choices').innerHTML.includes('my_custom_tool'));
+ assert.ok(f.element('#tool-choices').innerHTML.includes('registered_tool'));
+ assert.equal(f.run('dirty'),true);
+});
