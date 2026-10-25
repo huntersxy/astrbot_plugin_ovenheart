@@ -25,6 +25,7 @@ DEFAULTS = {
     "memory_enabled": True,
     "native_memory_enabled": True,
     "memory_summary_enabled": True,
+    "memory_feedback_enabled": True,
     "memory_summary_min_messages": 12,
     "memory_summary_interval": 600,
     "memory_summary_provider_id": "",

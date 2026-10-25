@@ -158,55 +158,86 @@ class ConversationContext:
             lower = max(
                 lower, float(conversation.created_at or 0) if conversation else 0
             )
-        rows = await manager.get(
-            event.get_platform_id(), event.unified_msg_origin, page_size=80
-        )
+        return await self.history(event, lower, event.created_at, limit=CONTEXT_COUNT)
+
+    async def history(self, event, lower, upper, *, limit=80, limit_mode="latest"):
+        """Read the host's existing transcript in the requested time window."""
+        manager = getattr(self.plugin.context, "message_history_manager", None)
+        if manager is None:
+            return []
         seed = []
-        for row in rows:
-            at = row.created_at
-            created = (
-                at.replace(tzinfo=timezone.utc) if at.tzinfo is None else at
-            ).timestamp()
-            if not lower <= created < event.created_at:
-                continue
-            content = row.content
-            if isinstance(content, str):
-                content = json.loads(content)
-            if not isinstance(content, dict) or content.get("type") not in (
-                "user",
-                "bot",
-            ):
-                continue
-            parts = content.get("message", [])
-            text = " ".join(
-                p.get("text")
-                or (
-                    "@" + str(p.get("name") or p.get("user_id", ""))
-                    if p.get("type") == "at"
-                    else ""
+        page, page_size = 1, min(400, max(80, limit * 2))
+        while True:
+            history_rows = await manager.get(
+                event.get_platform_id(),
+                event.unified_msg_origin,
+                page=page,
+                page_size=page_size,
+            )
+            if not history_rows:
+                break
+            for row in history_rows:
+                at = row.created_at
+                created = (
+                    at.replace(tzinfo=timezone.utc) if at.tzinfo is None else at
+                ).timestamp()
+                if not lower <= created <= upper:
+                    continue
+                content = row.content
+                if isinstance(content, str):
+                    content = json.loads(content)
+                if not isinstance(content, dict) or content.get("type") not in (
+                    "user",
+                    "bot",
+                ):
+                    continue
+                parts = content.get("message", [])
+                text = " ".join(
+                    p.get("text")
+                    or (
+                        "@" + str(p.get("name") or p.get("user_id", ""))
+                        if p.get("type") == "at"
+                        else ""
+                    )
+                    for p in parts
                 )
-                for p in parts
+                if not text.strip() or text.startswith("[QQ 平台事件|"):
+                    continue
+                seed.append(
+                    {
+                        "source": f"platform:{row.id}",
+                        "message_id": "",
+                        "sender": row.sender_name or row.sender_id or "",
+                        "sender_id": row.sender_id or "",
+                        "self": content["type"] == "bot",
+                        "text": text[:4000],
+                        "time": created,
+                        "reply_to": next(
+                            (p for p in parts if p.get("type") == "reply"), None
+                        ),
+                        "media": [],
+                        "image_refs": [],
+                        "restored": True,
+                    }
+                )
+            oldest = min(
+                (
+                    r.created_at.replace(tzinfo=timezone.utc)
+                    if r.created_at.tzinfo is None
+                    else r.created_at
+                ).timestamp()
+                for r in history_rows
             )
-            if not text.strip() or text.startswith("[QQ 平台事件|"):
-                continue
-            seed.append(
-                {
-                    "source": f"platform:{row.id}",
-                    "message_id": "",
-                    "sender": row.sender_name or row.sender_id or "",
-                    "sender_id": row.sender_id or "",
-                    "self": content["type"] == "bot",
-                    "text": text[:4000],
-                    "time": created,
-                    "reply_to": next(
-                        (p for p in parts if p.get("type") == "reply"), None
-                    ),
-                    "media": [],
-                    "image_refs": [],
-                    "restored": True,
-                }
-            )
-        return seed[-CONTEXT_COUNT:]
+            if (
+                len(history_rows) < page_size
+                or oldest < lower
+                or limit_mode == "latest"
+                and len(seed) >= limit
+            ):
+                break
+            page += 1
+        seed.sort(key=lambda row: row["time"])
+        return seed[-limit:] if limit_mode == "latest" else seed[:limit]
 
     def _publish(self, scope, state):
         windows = self.plugin.participation.windows

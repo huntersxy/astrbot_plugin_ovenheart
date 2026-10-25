@@ -10,6 +10,7 @@ import time
 import weakref
 from collections import OrderedDict
 from contextlib import asynccontextmanager
+from types import SimpleNamespace
 
 import jsonschema
 from astrbot.api import logger
@@ -111,6 +112,28 @@ def native_provenance(evidence, previous=()):
     }
 
 
+class NativeMemoryIntegration:
+    feedback_correction_paragraph_hard_filter_enabled = True
+
+    def __init__(self, plugin):
+        self.plugin = plugin
+
+    @property
+    def feedback_correction_enabled(self):
+        settings = self.plugin.settings
+        return all(
+            settings[k]
+            for k in (
+                "enabled",
+                "apply_enabled",
+                "learning_enabled",
+                "memory_enabled",
+                "native_memory_enabled",
+                "memory_feedback_enabled",
+            )
+        )
+
+
 class RoomState:
     """Bind one native scope to one active SDK-owned storage/runtime."""
 
@@ -122,6 +145,10 @@ class RoomState:
         self.embedding = None
         self.embedding_key = None
         self.event_ref = lambda: None
+        self.identity = None
+        self.session = SimpleNamespace(
+            session_id=path.name, group_id="", user_id="", self_id=""
+        )
         self.operation = None
         self.revision = None
         self.foreground = set()
@@ -132,7 +159,6 @@ class RoomState:
 
     async def initialize(self):
         from .native_memory_kernel import NativeMemoryKernel
-        from .vendor.maibot.amemorix.sdk_host import bind_native
 
         key = self.embedding.get_embedding_configuration_key()
         if self.kernel is not None and self.embedding_key == key:
@@ -144,26 +170,25 @@ class RoomState:
                 await asyncio.wait_for(self.embedding._detect_dimension(), 1.5)
             except Exception:
                 pass  # The SDK can still start with real metadata/sparse fallback.
-        with bind_native(data_root=self.path, embedding=self.embedding):
-            kernel = NativeMemoryKernel(
-                plugin_root=self.path,
-                config={
-                    "storage": {"data_dir": str(self.path)},
-                    "embedding": {"dimension": self.embedding.dimension or 1024},
-                    "image_memory": {"enabled": False},
-                    "retrieval": {
-                        "vector_pools": {"mode": "dual"},
-                        "relation_vectorization": {"enabled": True},
-                    },
+        kernel = NativeMemoryKernel(
+            plugin_root=self.path,
+            config={
+                "storage": {"data_dir": str(self.path)},
+                "embedding": {"dimension": self.embedding.dimension or 1024},
+                "image_memory": {"enabled": False},
+                "retrieval": {
+                    "vector_pools": {"mode": "dual"},
+                    "relation_vectorization": {"enabled": True},
                 },
-            )
-            kernel._runtime_writer_lock.acquire()
-            try:
-                self._backup_legacy_storage()
-                await kernel.initialize()
-            except BaseException:
-                kernel._runtime_writer_lock.release()
-                raise
+            },
+        )
+        kernel._runtime_writer_lock.acquire()
+        try:
+            self._backup_legacy_storage()
+            await kernel.initialize()
+        except BaseException:
+            kernel._runtime_writer_lock.release()
+            raise
         self.kernel = kernel
         self.embedding_key = key
         self.metadata = kernel.metadata_store
@@ -245,7 +270,7 @@ class RoomState:
     async def _backfill(self):
         await self.kernel._run_paragraph_backfill_once(limit=32, trigger="native_chat")
 
-    async def search(self, query, top_k):
+    async def search(self, query, top_k, feedback_source=""):
         if not self.metadata.count_paragraphs():
             return []
         try:
@@ -261,6 +286,18 @@ class RoomState:
             KernelSearchRequest(query=query, chat_id=self.path.name, limit=top_k)
         )
         found = response["hits"]
+        if feedback_source and found:
+            query_id = hashlib.sha256(
+                json.dumps(
+                    [self.path.name, feedback_source, query, [h["hash"] for h in found]]
+                ).encode()
+            ).hexdigest()
+            await self.kernel.enqueue_feedback_task(
+                query_tool_id="native:" + query_id,
+                session_id=self.path.name,
+                structured_content=response
+                | {"query": query, "chat_id": self.path.name},
+            )
         result = []
         for item in found:
             row = (
@@ -710,6 +747,48 @@ class RoomMemory:
         self.thread = None
         self.closing = False
 
+    def observe(self, event, scope):
+        """Retain native authorization fields, without message/media/history data."""
+        from astrbot.core.platform.astr_message_event import AstrMessageEvent
+        from astrbot.core.platform.astrbot_message import (
+            AstrBotMessage,
+            Group,
+            MessageMember,
+        )
+
+        state = self.rooms.get(scope)
+        settings = self.plugin.settings
+        if (
+            state is None
+            or event.get_sender_id() in settings["blocked_senders"]
+            or (
+                settings["target_senders"]
+                and event.get_sender_id() not in settings["target_senders"]
+            )
+        ):
+            return
+        message = AstrBotMessage()
+        message.type = event.get_message_type()
+        message.self_id = event.get_self_id()
+        message.sender = MessageMember(event.get_sender_id(), event.get_sender_name())
+        message.group = (
+            Group(event.get_group_id(), event.message_obj.group.group_name)
+            if event.message_obj.group
+            else None
+        )
+        message.message_id = ""
+        message.message = []
+        message.message_str = ""
+        message.raw_message = None
+        identity = AstrMessageEvent("", message, event.platform_meta, event.session_id)
+        identity.unified_msg_origin = event.unified_msg_origin
+        # Background work uses current room permissions, never an old one-off
+        # admin wake's whitelist bypass. This object is not dispatched as input.
+        state.identity = identity
+        state.session.group_id = event.get_group_id()
+        state.session.user_id = event.get_sender_id()
+        state.session.self_id = event.get_self_id()
+
     async def execute(self, state, operation, args):
         """Run upstream async work off-host and acknowledge cancellation cleanup."""
         if self.loop is None:
@@ -732,6 +811,7 @@ class RoomMemory:
         async def run():
             from .vendor.maibot.amemorix import host as memory_host
             from .vendor.maibot.amemorix.sdk_host import bind_native
+            from .vendor.maibot.amemorix.summary_host import bind_chat_reader
 
             async def native_generate(request):
                 future = asyncio.run_coroutine_threadsafe(
@@ -739,9 +819,29 @@ class RoomMemory:
                 )
                 return await asyncio.wrap_future(future)
 
+            def native_messages(**options):
+                future = asyncio.run_coroutine_threadsafe(
+                    self.messages(state, **options), host
+                )
+                try:
+                    return future.result(timeout=10)
+                except BaseException:
+                    future.cancel()
+                    raise
+
             with (
-                bind_native(data_root=state.path, embedding=state.embedding),
-                memory_host.bind(None, native_generate),
+                bind_native(
+                    data_root=state.path,
+                    embedding=state.embedding,
+                    session=state.session,
+                    generate=native_generate,
+                ),
+                memory_host.bind(
+                    None,
+                    native_generate,
+                    integration=NativeMemoryIntegration(self.plugin),
+                ),
+                bind_chat_reader(native_messages, lambda: state.session.self_id),
             ):
                 if operation != "close":
                     await state.initialize()
@@ -763,7 +863,7 @@ class RoomMemory:
 
     async def generate(self, state, request):
         """Use current native permissions and accounting for SDK background models."""
-        event = state.event_ref()
+        event = state.identity or state.event_ref()
         revision = self.plugin.settings_revision
         if event is None:
             raise ValueError("该记忆会话没有可用的原生消息来源。")
@@ -780,17 +880,118 @@ class RoomMemory:
             )
         )
         response = await self.plugin.auxiliary.generate(
-            "memory_episode"
+            "memory_feedback"
+            if "feedback" in request.request_type.lower()
+            else "memory_episode"
             if "episode" in request.request_type.lower()
             else "memory_maintenance",
             chat_provider_id=provider,
             prompt=request.prompt,
+            **(
+                {"temperature": request.temperature}
+                if request.temperature is not None
+                else {}
+            ),
+            **(
+                {"max_tokens": request.max_tokens}
+                if request.max_tokens is not None
+                else {}
+            ),
         )
         if revision != self.plugin.settings_revision or not await self.permitted(
             event, scope, persona, learning=True
         ):
             raise ValueError("模型生成期间记忆来源或学习权限已改变。")
         return response.completion_text
+
+    async def messages(
+        self,
+        state,
+        *,
+        chat_id,
+        start_time,
+        end_time,
+        limit,
+        limit_mode,
+        filter_mai,
+        filter_command,
+    ):
+        event = state.identity or state.event_ref()
+        revision = self.plugin.settings_revision
+        if event is None or chat_id != state.path.name:
+            raise ValueError("后台记忆消息缺少真实会话身份或请求了其他会话。")
+        scope, persona, _ = await self.plugin.resolve_scope(event)
+        if scope != chat_id or not await self.permitted(
+            event, scope, persona, learning=True
+        ):
+            raise ValueError("后台记忆消息来源或学习权限已撤销。")
+        limit = min(1000, max(1, int(limit)))
+        if self.plugin.conversation.active(event):
+            window = self.plugin.participation.windows.get(scope)
+            rows = (
+                list(window["messages"])
+                if window
+                and await self.plugin.conversation.valid(event, scope, window["epoch"])
+                else []
+            )
+        elif getattr(self.plugin.context, "message_history_manager", None) is not None:
+            cid = (
+                await self.plugin.context.conversation_manager.get_curr_conversation_id(
+                    event.unified_msg_origin
+                )
+            )
+            conversation = (
+                await self.plugin.context.conversation_manager.get_conversation(
+                    event.unified_msg_origin, cid
+                )
+                if cid
+                else None
+            )
+            lower = max(
+                start_time, float(conversation.created_at or 0) if conversation else 0
+            )
+            rows = await self.plugin.conversation.history(
+                event, lower, end_time, limit=limit, limit_mode=limit_mode
+            )
+        else:
+            rows = [
+                {
+                    "source": r["source_id"],
+                    "sender_id": r["sender"],
+                    "text": r["text"],
+                    "time": r["created"],
+                    "self": False,
+                }
+                for r in await self.plugin.store.call("room_memory_inputs", scope)
+            ]
+        settings = self.plugin.settings
+        result = [
+            {
+                "source_id": r["source"],
+                "sender": r["sender_id"],
+                "text": r["text"],
+                "created": r["time"],
+                "self": r.get("self", False),
+                "command": r["text"].lstrip().startswith("/"),
+            }
+            for r in rows
+            if start_time <= r["time"] <= end_time
+            and not (filter_mai and r.get("self"))
+            and not (filter_command and r["text"].lstrip().startswith("/"))
+            and (
+                r.get("self")
+                or r["sender_id"] not in settings["blocked_senders"]
+                and (
+                    not settings["target_senders"]
+                    or r["sender_id"] in settings["target_senders"]
+                )
+            )
+        ]
+        if revision != self.plugin.settings_revision or not await self.permitted(
+            event, scope, persona, learning=True
+        ):
+            raise ValueError("读取后台记忆消息期间权限已改变。")
+        return result[-limit:] if limit_mode == "latest" else result[:limit]
 
     async def permitted(self, event, scope, persona, learning=False):
         s = self.plugin.settings
@@ -928,6 +1129,7 @@ class RoomMemory:
             state.revision = revision
             if event is not None:
                 state.event_ref = weakref.ref(event)
+                self.observe(event, scope)
             state.operation = operation
             if operation == "consolidate":
                 state.foreground_ready.clear()
@@ -946,6 +1148,7 @@ class RoomMemory:
             "search",
             query[:2400],
             self.plugin.settings["memory_top_k"],
+            event_source(event),
             event=event,
         )
         if revision != self.plugin.settings_revision or not await self.permitted(

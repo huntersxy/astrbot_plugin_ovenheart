@@ -80,7 +80,7 @@ class MemoryConsolidation:
             return
         messages = await self.inputs(scope)
         status = await self.plugin.room_memory.call(
-            scope, "summary_status", [m["source_id"] for m in messages]
+            scope, "summary_status", [m["source_id"] for m in messages], event=event
         )
         if (
             time.time() - status["attempted"]

@@ -1070,6 +1070,7 @@ class PersonaPlugin(Star):
             )
         if context_only:
             return
+        self.room_memory.observe(event, scope)
         await self.person_memory.observe(event, scope, persona)
         await self.memory_consolidation.observe(event, scope, persona)
         self.events[scope] = event

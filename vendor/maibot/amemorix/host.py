@@ -25,13 +25,16 @@ class PersonInfo(SQLModel, table=True):
 
 
 _binding = ContextVar("ovenheart_amemorix_host")
-global_config = SimpleNamespace(
-    a_memorix=SimpleNamespace(
-        integration=SimpleNamespace(
-            feedback_correction_paragraph_hard_filter_enabled=True,
-        )
-    )
-)
+_integration = ContextVar("ovenheart_amemorix_integration", default=SimpleNamespace(feedback_correction_paragraph_hard_filter_enabled=True))
+
+
+class NativeGlobalConfig:
+    @property
+    def a_memorix(self):
+        return SimpleNamespace(integration=_integration.get())
+
+
+global_config = NativeGlobalConfig()
 
 
 def get_logger(name):
@@ -39,12 +42,15 @@ def get_logger(name):
 
 
 @contextmanager
-def bind(engine, generate=None, model_name="native"):
+def bind(engine, generate=None, model_name="native", *, integration=None):
     token = _binding.set((engine, generate, model_name))
+    integration_token = _integration.set(integration) if integration is not None else None
     try:
         yield
     finally:
         _binding.reset(token)
+        if integration_token is not None:
+            _integration.reset(integration_token)
 
 
 @contextmanager

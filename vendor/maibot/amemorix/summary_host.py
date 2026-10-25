@@ -7,7 +7,17 @@ from types import SimpleNamespace
 
 from . import host
 
-_chat = ContextVar("ovenheart_summary_chat")
+_chat = ContextVar("ovenheart_summary_chat", default=None)
+_reader = ContextVar("ovenheart_native_chat_reader", default=None)
+
+
+@contextmanager
+def bind_chat_reader(reader, bot_name):
+    token = _reader.set((reader, bot_name))
+    try:
+        yield
+    finally:
+        _reader.reset(token)
 
 
 @contextmanager
@@ -29,7 +39,9 @@ def load_prompt(name, locale="zh-CN", **values):
 class NativeConfig:
     @property
     def bot(self):
-        return SimpleNamespace(nickname=_chat.get()[1])
+        snapshot = _chat.get()
+        live = _reader.get()
+        return SimpleNamespace(nickname=snapshot[1] if snapshot else live[1]() if live else "")
 
     @property
     def personality(self):
@@ -61,9 +73,14 @@ class NativeModelConfig:
 config_manager = NativeModelConfig()
 
 
-def get_messages_by_time_in_chat(*, chat_id, start_time, end_time, limit, limit_mode):
-    rows = [m for m in _chat.get()[0] if start_time <= m["created"] <= end_time]
-    return [SimpleNamespace(message_id=m["source_id"], timestamp=m["created"], sender=m["sender"], text=m["text"]) for m in rows[-limit:]]
+def get_messages_by_time_in_chat(*, chat_id, start_time, end_time, limit, limit_mode, filter_mai=False, filter_command=False):
+    snapshot, live = _chat.get(), _reader.get()
+    # Feedback always reads current authorized input, including when a SDK
+    # worker was restarted inside a request's temporary summary snapshot.
+    rows = live[0](chat_id=chat_id, start_time=start_time, end_time=end_time, limit=limit, limit_mode=limit_mode, filter_mai=filter_mai, filter_command=filter_command) if live and (snapshot is None or filter_mai or filter_command) else snapshot[0] if snapshot else []
+    rows = [m for m in rows if start_time <= m["created"] <= end_time and not (filter_mai and m.get("self")) and not (filter_command and m.get("command"))]
+    rows = rows[-limit:] if limit_mode == "latest" else rows[:limit]
+    return [SimpleNamespace(message_id=m["source_id"], timestamp=m["created"], sender=m["sender"], text=m["text"], processed_plain_text=m["text"]) for m in rows]
 
 
 def build_readable_messages(messages):

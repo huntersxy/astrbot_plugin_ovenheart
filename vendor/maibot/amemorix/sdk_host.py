@@ -21,8 +21,8 @@ LLMServiceResult = host.LLMServiceResult
 
 
 @contextmanager
-def bind_native(*, data_root, embedding, session=None):
-    token = _native.set(SimpleNamespace(data_root=Path(data_root), embedding=embedding, session=session))
+def bind_native(*, data_root, embedding, session=None, generate=None):
+    token = _native.set(SimpleNamespace(data_root=Path(data_root), embedding=embedding, session=session, generate=generate))
     try:
         yield
     finally:
@@ -45,6 +45,9 @@ def get_available_models():
 
 
 async def generate(request):
+    native = _native.get(None)
+    if native is not None and native.generate is not None:
+        return LLMServiceResult(True, SimpleNamespace(response=await native.generate(request)))
     return await host.generate(request)
 
 
