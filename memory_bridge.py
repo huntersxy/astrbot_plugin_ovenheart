@@ -73,21 +73,15 @@ class MemoryBridge:
             (EventType.OnLLMRequestEvent, "handle_memory_recall"),
             (EventType.OnLLMResponseEvent, "handle_memory_reflection"),
         ):
-            matches = [
-                entry
-                for entry in star_handlers_registry.get_handlers_by_event_type(
-                    event_type, only_activated=False
-                )
-                if entry.handler_name == name
-                and (
-                    getattr(entry.handler, "__self__", None) is plugin
-                    or (
-                        isinstance(entry.handler, partial)
-                        and bool(entry.handler.args)
-                        and entry.handler.args[0] is plugin
-                    )
-                )
-            ]
+            matches = []
+            for entry in star_handlers_registry.get_handlers_by_event_type(
+                event_type, only_activated=False
+            ):
+                if entry.handler_name != name:
+                    continue
+                original = self.original_hook(entry.handler, plugin)
+                if original is not None:
+                    matches.append((entry, original))
             if len(matches) != 1:
                 self.binding_diagnostics = [
                     {
@@ -108,8 +102,7 @@ class MemoryBridge:
                 return False
             selected.append(matches[0])
         self._owner = plugin
-        for entry in selected:
-            original = entry.handler
+        for entry, original in selected:
 
             async def routed(event, *args, _original=original, _owner=plugin, **kwargs):
                 await self._dispatch(_owner, _original, event, *args, **kwargs)
@@ -117,6 +110,25 @@ class MemoryBridge:
             entry.handler = routed
             self._hooks.append((entry, original, routed))
         return True
+
+    @staticmethod
+    def original_hook(handler, plugin):
+        """Recover our abandoned wrappers only when the native owner still matches."""
+        while (
+            getattr(handler, "__module__", None) == __name__
+            and getattr(handler, "__name__", None) == "routed"
+        ):
+            defaults = handler.__kwdefaults__ or {}
+            if defaults.get("_owner") is not plugin:
+                return None
+            handler = defaults.get("_original")
+        if getattr(handler, "__self__", None) is plugin or (
+            isinstance(handler, partial)
+            and bool(handler.args)
+            and handler.args[0] is plugin
+        ):
+            return handler
+        return None
 
     def clear_reply_source(self, event):
         """Release one completed reply before routing the next planner target."""

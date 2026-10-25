@@ -241,6 +241,35 @@ async def test_upstream_reload_reattaches_without_changing_class_methods(native_
     assert len(plugin.memory._hooks) == 2
 
 
+async def test_recover_abandoned_own_hooks_without_stacking_or_using_stale_owner(
+    native_memory,
+):
+    from astrbot_plugin_ovenheart.memory_bridge import MemoryBridge
+
+    plugin, owner, metadata, entries = native_memory
+    previous = MemoryBridge(plugin.context)
+    assert previous.install()
+    originals = [item[1] for item in previous._hooks]
+    abandoned = [entry.handler for entry in entries]
+    assert plugin.memory.install()
+    assert [item[1] for item in plugin.memory._hooks] == originals
+    incoming = event("recovered-hook")
+    await entries[0].handler(incoming, object())
+    await entries[1].handler(incoming, object())
+    assert len(owner.calls) == 2
+    previous.disconnect()
+    assert plugin.memory.status()["reply_source_binding"]
+    plugin.memory.disconnect()
+    assert [entry.handler for entry in entries] == originals
+    for entry, wrapper in zip(entries, abandoned, strict=True):
+        entry.handler = wrapper
+    metadata.star_cls = object()
+    assert not plugin.memory.install()
+    assert [entry.handler for entry in entries] == abandoned
+    metadata.star_cls = owner
+    assert plugin.memory.install()
+
+
 async def test_unsupported_hook_shape_cancels_cross_message_admission(native_memory):
     plugin, owner, _, entries = native_memory
     plugin.settings.update(
