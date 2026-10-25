@@ -655,7 +655,8 @@ class PageAPI:
             )
             response = await asyncio.wait_for(
                 self.plugin.track(
-                    self.plugin.context.llm_generate(
+                    self.plugin.auxiliary.generate(
+                        "model_preview",
                         chat_provider_id=provider_id,
                         prompt=query,
                         system_prompt=host_prompt + ("\n\n" + system if system else ""),
@@ -696,10 +697,21 @@ class PageAPI:
                 raise ModelPreviewError(
                     "设置、人格或选中习惯已改变，旧预览已取消，请重新生成。"
                 )
+            if getattr(response, "role", "") == "err":
+                raise ModelPreviewError(
+                    "模型返回错误，示例未生成；请检查该聊天模型的连接与配置。"
+                )
             reply = (response.completion_text or "").strip()
             if not reply:
                 raise ModelPreviewError("模型没有生成文字，请重试或检查模型输出上限。")
             seconds = round(time.monotonic() - started, 2)
+            raw = getattr(response, "raw_completion", None)
+            model = (
+                raw.get("model", "")
+                if isinstance(raw, dict)
+                else getattr(raw, "model", "")
+            )
+            usage = getattr(response, "usage", None)
             self.plugin.debug(
                 "model_preview",
                 scope=scope,
@@ -715,6 +727,15 @@ class PageAPI:
                 "status": "ok",
                 "data": {
                     "reply": reply,
+                    "provider_id": provider_id,
+                    "model": str(model or ""),
+                    "usage": {
+                        "input_cached": usage.input_cached,
+                        "input_other": usage.input_other,
+                        "output": usage.output,
+                    }
+                    if usage is not None
+                    else None,
                     "seconds": seconds,
                     "selected_ids": included,
                     "retrieval": selection["message"],

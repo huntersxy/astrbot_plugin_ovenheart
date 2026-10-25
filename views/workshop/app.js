@@ -210,7 +210,7 @@ function renderProfile() {
       const result = await api("preview/model", {scope, query});
       if (tab !== "profile" || selectedScope !== scope || $("#model-preview-result") !== output) return;
       output.hidden = false;
-      $("#model-preview-meta").textContent = `模型示例 · 用时 ${result.seconds} 秒 · ${result.selected_ids.length ? "表达参考 " + result.selected_ids.map(id => "#" + id).join("、") : "沿用人格底稿"}。${result.retrieval || ""}`;
+      $("#model-preview-meta").textContent = `${result.model || result.provider_id || "模型示例"} · 用时 ${result.seconds} 秒${result.usage ? ` · 输入 ${Number(result.usage.input_cached) + Number(result.usage.input_other)} / 输出 ${Number(result.usage.output)} token` : " · 未返回 token 用量"} · ${result.selected_ids.length ? "表达参考 " + result.selected_ids.map(id => "#" + id).join("、") : "沿用人格底稿"}。${result.retrieval || ""}`;
       $("#model-preview-text").textContent = result.reply;
     } finally { button.textContent = "生成示例回复"; }
   }, event, {local:"preview-model", selector:"#model-preview"});

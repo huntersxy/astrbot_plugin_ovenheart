@@ -12,6 +12,46 @@ from tests.test_runtime import api_call, sources  # noqa: E402
 pytest_plugins = ["tests.test_runtime"]
 
 
+@pytest.mark.parametrize("role", ["assistant", "err"])
+async def test_preview_reports_and_accounts_actual_model_without_exposing_errors(
+    plugin, role
+):
+    from astrbot.core.provider.entities import TokenUsage
+
+    scope = await sources(plugin)
+    plugin.settings["selection_mode"] = "lexical"
+    plugin.context.llm_generate.side_effect = None
+    plugin.context.llm_generate.return_value = SimpleNamespace(
+        role=role,
+        completion_text="正文" if role == "assistant" else "PRIVATE_PROVIDER_ERROR",
+        raw_completion={"model": "actual-reply-model"},
+        usage=TokenUsage(input_cached=4, input_other=7, output=3),
+    )
+    result = await api_call(
+        plugin.page_api.model_preview, {"scope": scope, "query": "你好"}
+    )
+    if role == "assistant":
+        assert result["data"]["model"] == "actual-reply-model"
+        assert result["data"]["usage"] == {
+            "input_cached": 4,
+            "input_other": 7,
+            "output": 3,
+        }
+        assert result["data"]["provider_id"]
+    else:
+        assert result["status"] == "error"
+        assert "PRIVATE_PROVIDER_ERROR" not in str(result)
+    await plugin.auxiliary.flush()
+    row = next(
+        row
+        for row in await plugin.store.call("auxiliary_usage")
+        if row["stage"] == "model_preview"
+    )
+    assert row["calls"] == 1 and row["reported"] == 1
+    assert row["model"] == "actual-reply-model"
+    assert row["errors"] == int(role == "err")
+
+
 @pytest.mark.parametrize("delivery", ["system", "dual", "cached"])
 async def test_model_preview_uses_live_delivery_parts_without_writes_or_tools(
     plugin, delivery
