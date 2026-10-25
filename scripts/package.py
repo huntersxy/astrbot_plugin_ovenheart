@@ -30,6 +30,7 @@ files = [
         "page_api.py",
         "participation.py",
         "prompts.py",
+        "reply_payload.py",
         "retrieval.py",
         "settings.py",
         "store.py",
