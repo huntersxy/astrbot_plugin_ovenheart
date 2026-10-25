@@ -258,7 +258,12 @@ async def test_foreground_write_and_read_keep_both_sets_of_graph_data(
     assert (await writer)["stored"]
     state = p.room_memory.rooms[scope]
     assert state.metadata.count_paragraphs() == 2
-    assert state.graph.num_nodes == 3
+    assert state.graph.num_nodes == 2 and state.graph.num_edges == 1
+    # SDK graph projection contains relations; standalone summary entities
+    # remain stored and retrievable without requiring an isolated graph node.
+    assert state.metadata._conn.execute(
+        "SELECT 1 FROM entities WHERE name='书店'"
+    ).fetchone()
     assert any(
         "图书馆" in m["content"]
         for m in await p.room_memory.search(incoming, scope, persona, "图书馆")
@@ -331,7 +336,7 @@ async def test_summary_uses_recovered_vector_pools_after_foreground_writes(
     await p.capture(incoming)
     await asyncio.wait_for(started.wait(), 5)
     state = p.room_memory.rooms[scope]
-    previous_pool = state.paragraph_vectors
+    assert state.paragraph_vectors is not None
     try:
         await p.room_memory.search(incoming, scope, persona, "TRANSIENT")
         assert state.paragraph_vectors is None
@@ -356,7 +361,8 @@ async def test_summary_uses_recovered_vector_pools_after_foreground_writes(
             ),
             2,
         )
-        assert saved["stored"] and state.paragraph_vectors is not previous_pool
+        assert saved["stored"]
+        assert state.paragraph_vectors is state.kernel.paragraph_vector_store
     finally:
         release.set()
         await drain(p)

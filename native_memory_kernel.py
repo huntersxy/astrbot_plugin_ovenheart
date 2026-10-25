@@ -19,3 +19,16 @@ class NativeMemoryKernel(SDKMemoryKernel):
     def __init__(self, *, plugin_root, config=None):
         super().__init__(plugin_root=plugin_root, config=config)
         self._correction_admin_service = NativeCorrectionService(self)
+
+    async def ingest_text(self, **values):
+        metadata = values.get("metadata") or {}
+        if values["source_type"] == "chat_summary" and metadata.get("evidence"):
+            # The original summary facade passes participants inside metadata;
+            # the SDK normalizes that field from its explicit argument instead.
+            if values.get("participants") is None:
+                values["participants"] = metadata.get("participants", [])
+            values["relations"] = [
+                row | {"metadata": metadata | (row.get("metadata") or {})}
+                for row in values.get("relations") or []
+            ]
+        return await super().ingest_text(**values)

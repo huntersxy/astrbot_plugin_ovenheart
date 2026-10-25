@@ -188,6 +188,7 @@ class MemoryConsolidation:
                     generate,
                     str(event.get_self_id()),
                     str(model),
+                    event=event,
                 ),
                 timeout=180,
             )

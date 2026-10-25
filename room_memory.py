@@ -7,6 +7,7 @@ import hashlib
 import json
 import threading
 import time
+import weakref
 from collections import OrderedDict
 from contextlib import asynccontextmanager
 
@@ -80,16 +81,62 @@ def native_provenance(evidence, previous=()):
 
 
 class RoomState:
-    """Keep upstream stores together; the native runtime owns their worker loop."""
+    """Bind one native scope to one active SDK-owned storage/runtime."""
 
     def __init__(self, path, lock):
-        from .vendor.maibot.amemorix.retrieval import SparseBM25Index
-        from .vendor.maibot.amemorix.storage import GraphStore, MetadataStore
-
         self.path = path
         self.lock = lock
-        self.metadata = MetadataStore(path / "metadata")
-        self.metadata.connect()
+        self.kernel = None
+        self.metadata = self.graph = None
+        self.embedding = None
+        self.embedding_key = None
+        self.event_ref = lambda: None
+        self.operation = None
+        self.revision = None
+        self.foreground = set()
+        self.active_foreground = set()
+        self.foreground_lock = asyncio.Lock()
+        self.foreground_ready = asyncio.Event()
+        self.model_waiting = False
+
+    async def initialize(self):
+        from .native_memory_kernel import NativeMemoryKernel
+        from .vendor.maibot.amemorix.sdk_host import bind_native
+
+        key = self.embedding.get_embedding_configuration_key()
+        if self.kernel is not None and self.embedding_key == key:
+            return
+        if self.kernel is not None:
+            await self.kernel.shutdown()
+        if self.embedding.available:
+            try:
+                await asyncio.wait_for(self.embedding._detect_dimension(), 1.5)
+            except Exception:
+                pass  # The SDK can still start with real metadata/sparse fallback.
+        with bind_native(data_root=self.path, embedding=self.embedding):
+            kernel = NativeMemoryKernel(
+                plugin_root=self.path,
+                config={
+                    "storage": {"data_dir": str(self.path)},
+                    "embedding": {"dimension": self.embedding.dimension or 1024},
+                    "image_memory": {"enabled": False},
+                    "retrieval": {
+                        "vector_pools": {"mode": "dual"},
+                        "relation_vectorization": {"enabled": True},
+                    },
+                },
+            )
+            kernel._runtime_writer_lock.acquire()
+            try:
+                self._backup_legacy_storage()
+                await kernel.initialize()
+            except BaseException:
+                kernel._runtime_writer_lock.release()
+                raise
+        self.kernel = kernel
+        self.embedding_key = key
+        self.metadata = kernel.metadata_store
+        self.graph = kernel.graph_store
         self.metadata._conn.executescript("""
             CREATE TABLE IF NOT EXISTS ovenheart_summary_processed (
                 source_id TEXT PRIMARY KEY, created REAL NOT NULL
@@ -99,127 +146,73 @@ class RoomState:
             );
             INSERT OR IGNORE INTO ovenheart_summary_runtime VALUES (1,0);
         """)
-        (path / "graph").mkdir(parents=True, exist_ok=True)
-        self.graph = GraphStore(data_dir=path / "graph")
-        if self.graph.has_data():
-            self.graph.load()
-        self.sparse = SparseBM25Index(self.metadata)
-        self.paragraph_vectors = None
-        self.graph_vectors = None
-        self.vector_space = ""
-        self.fingerprint = None
-        self.embedding = None
-        self.operation = None
-        self.revision = None
-        self.foreground = set()
-        self.active_foreground = set()
-        self.foreground_lock = asyncio.Lock()
-        self.foreground_ready = asyncio.Event()
-        self.model_waiting = False
+        # These databases already belong to exactly one native room/persona.
+        # Earlier development notes used a generic source; retain all evidence
+        # while bringing that source into the SDK's actual chat filter.
+        with self.metadata.transaction():
+            self.metadata._conn.execute(
+                "UPDATE paragraphs SET source=? WHERE source='chat_summary:astrbot'",
+                ("chat_summary:" + self.path.name,),
+            )
+        (self.path / ".native_sdk_owner").write_text(
+            "SDKMemoryKernel\n", encoding="utf-8"
+        )
+
+    def _backup_legacy_storage(self):
+        import shutil
+        import sqlite3
+
+        source = self.path / "metadata" / "metadata.db"
+        backup = self.path / "native-kernel-backup" / "metadata.db"
+        if (
+            not source.exists()
+            or backup.exists()
+            or (self.path / ".native_sdk_owner").exists()
+        ):
+            return
+        backup.parent.mkdir(parents=True, exist_ok=True)
+        original = sqlite3.connect(source)
+        snapshot = sqlite3.connect(backup)
+        try:
+            original.backup(snapshot)
+        finally:
+            snapshot.close()
+            original.close()
+        graph = self.path / "graph"
+        if graph.exists():
+            shutil.copytree(graph, backup.parent / "graph", dirs_exist_ok=True)
+
+    @property
+    def paragraph_vectors(self):
+        if self.kernel is None or self.kernel._is_embedding_degraded():
+            return None
+        return self.kernel.paragraph_vector_store
+
+    @property
+    def graph_vectors(self):
+        if self.kernel is None or self.kernel._is_embedding_degraded():
+            return None
+        return self.kernel.graph_vector_store
+
+    @property
+    def vector_space(self):
+        space = self.kernel._active_vector_space_id
+        return "spaces/" + space if space else ""
 
     def _retriever(self):
-        from .vendor.maibot.amemorix.retrieval import (
-            DualPathRetriever,
-            DualPathRetrieverConfig,
-        )
-
-        return DualPathRetriever(
-            vector_store=self.paragraph_vectors,
-            paragraph_vector_store=self.paragraph_vectors,
-            graph_vector_store=self.graph_vectors,
-            graph_store=self.graph,
-            metadata_store=self.metadata,
-            embedding_manager=self.embedding if self.paragraph_vectors else None,
-            sparse_index=self.sparse,
-            config=DualPathRetrieverConfig(),
-        )
+        return self.kernel.retriever
 
     async def _prepare_vectors(self, text):
-        from .vendor.maibot.amemorix.storage import VectorStore
-
         if not self.embedding.available:
-            self.paragraph_vectors = self.graph_vectors = None
             return False
-        await self.embedding.encode(text)
-        fingerprint = self.embedding.get_embedding_fingerprint(
-            dimension=self.embedding.dimension
+        await self.kernel._recover_embedding_once(sample_text=text)
+        return (
+            self.kernel._dual_vector_pools_enabled()
+            and not self.kernel._is_embedding_degraded()
         )
-        space = fingerprint["hash"].removeprefix("sha256:")
-        if self.vector_space == space and self.paragraph_vectors is not None:
-            return True
-        self.fingerprint = fingerprint
-        stores = []
-        for pool in ("paragraphs", "graph"):
-            directory = self.path / "vectors" / space / pool
-            store = VectorStore(self.embedding.dimension, data_dir=directory)
-            if store.has_data():
-                store.load(expected_embedding_fingerprint=fingerprint)
-                store.warmup_index()
-            stores.append(store)
-        self.paragraph_vectors, self.graph_vectors = stores
-        self.vector_space = space
-        # The metadata/evidence remain primary; only derived jobs are reset when
-        # a provider space changes. Old vector directories remain recoverable.
-        with self.metadata.transaction():
-            for row in self.metadata._conn.execute(
-                "SELECT hash FROM paragraphs WHERE is_deleted=0"
-            ):
-                if row[0] not in self.paragraph_vectors:
-                    self.metadata.enqueue_paragraph_vector_backfill(row[0])
-                    self.metadata._conn.execute(
-                        "UPDATE paragraph_vector_backfill SET status='pending',retry_count=0 WHERE paragraph_hash=?",
-                        (row[0],),
-                    )
-        return True
 
     async def _backfill(self):
-        import numpy as np
-
-        from .vendor.maibot.amemorix.utils.relation_write_service import (
-            RelationWriteService,
-        )
-
-        batch = self.metadata.fetch_paragraph_vector_backfill_batch(limit=32)
-        rows = [self.metadata.get_paragraph(item["paragraph_hash"]) for item in batch]
-        rows = [r for r in rows if r and not r.get("is_deleted")]
-        if rows:
-            vectors = await self.embedding.encode_batch([r["content"] for r in rows])
-            self.paragraph_vectors.add(np.asarray(vectors), [r["hash"] for r in rows])
-            self.metadata.mark_paragraph_vector_backfill_done([r["hash"] for r in rows])
-        writer = RelationWriteService(
-            self.metadata,
-            self.graph,
-            self.paragraph_vectors,
-            self.embedding,
-            graph_vector_store=self.graph_vectors,
-            use_typed_relation_ids=True,
-        )
-        relations = [
-            r
-            for r in self.metadata.get_relations(include_inactive=False)
-            if "relation:" + r["hash"] not in self.graph_vectors
-        ][:32]
-        for relation in relations:
-            await writer.ensure_relation_vector(
-                hash_value=relation["hash"],
-                subject=relation["subject"],
-                predicate=relation["predicate"],
-                obj=relation["object"],
-                typed_id=True,
-            )
-        # Entity vectors are separate graph seeds, never mixed into paragraph IDs.
-        entities = [
-            dict(r)
-            for r in self.metadata._conn.execute("SELECT hash,name FROM entities")
-            if "entity:" + r["hash"] not in self.graph_vectors
-        ][:64]
-        if entities:
-            vectors = await self.embedding.encode_batch([r["name"] for r in entities])
-            self.graph_vectors.add(
-                np.asarray(vectors), ["entity:" + r["hash"] for r in entities]
-            )
-        self.paragraph_vectors.save(embedding_fingerprint=self.fingerprint)
-        self.graph_vectors.save(embedding_fingerprint=self.fingerprint)
+        await self.kernel._run_paragraph_backfill_once(limit=32, trigger="native_chat")
 
     async def search(self, query, top_k):
         if not self.metadata.count_paragraphs():
@@ -231,22 +224,26 @@ class RoomState:
             logger.warning(
                 "记忆向量通道暂不可用，使用原版稀疏/图检索 (%s)", type(exc).__name__
             )
-            self.paragraph_vectors = self.graph_vectors = None
-        found = await self._retriever().retrieve(query, top_k=top_k)
+        from .vendor.maibot.amemorix.runtime.models import KernelSearchRequest
+
+        response = await self.kernel.search_memory(
+            KernelSearchRequest(query=query, chat_id=self.path.name, limit=top_k)
+        )
+        found = response["hits"]
         result = []
         for item in found:
             row = (
-                self.metadata.get_paragraph(item.hash_value)
-                if item.result_type == "paragraph"
-                else self.metadata.get_relation(item.hash_value)
+                self.metadata.get_paragraph(item["hash"])
+                if item["type"] == "paragraph"
+                else self.metadata.get_relation(item["hash"])
             ) or {}
             source = row.get("metadata") or {}
             result.append(
                 {
-                    "id": item.hash_value,
-                    "content": item.content[:800],
-                    "score": item.score,
-                    "type": item.result_type,
+                    "id": item["hash"],
+                    "content": item["content"][:800],
+                    "score": item.get("score", 0),
+                    "type": item["type"],
                     "backend": "amemorix",
                     "metadata": {
                         "source_type": source.get("source_type", ""),
@@ -255,7 +252,7 @@ class RoomState:
                             {**entry, "quote": entry["quote"][:160]}
                             for entry in source.get("evidence", [])[:4]
                         ],
-                        "time_meta": item.metadata.get("time_meta", {}),
+                        "time_meta": item.get("metadata", {}).get("time_meta", {}),
                     },
                 }
             )
@@ -297,53 +294,44 @@ class RoomState:
 
     async def write(self, content, evidence, relations):
         from .vendor.maibot.amemorix.utils.hash import compute_hash, normalize_text
-        from .vendor.maibot.amemorix.utils.relation_write_service import (
-            RelationWriteService,
-        )
 
-        # Participants are provenance, not claims that every fact belongs to
-        # every participant. Only the person-fact lane assigns person_ids.
-        previous = (
-            self.metadata.get_paragraph(compute_hash(normalize_text(content))) or {}
+        paragraph = compute_hash(normalize_text(content))
+        previous = self.metadata.get_paragraph(paragraph) or {}
+        metadata = native_provenance(
+            evidence, (previous.get("metadata") or {}).get("evidence", [])
         )
-        previous_metadata = previous.get("metadata") or {}
-        metadata = native_provenance(evidence, previous_metadata.get("evidence", []))
-        paragraph = self.metadata.add_paragraph(
-            content,
-            source="chat_summary:" + self.path.name,
-            metadata=metadata,
-            time_meta={
-                "event_time_start": min(e["created"] for e in evidence),
-                "event_time_end": max(e["created"] for e in evidence),
-            },
-        )
-        self.metadata.enqueue_paragraph_vector_backfill(paragraph)
-        writer = RelationWriteService(self.metadata, self.graph, None, None)
-        for relation in relations:
-            for name in (relation["subject"], relation["object"]):
-                self.metadata.add_entity(name, source_paragraph=paragraph)
-            await writer.upsert_relation_with_vector(
-                relation["subject"],
-                relation["predicate"],
-                relation["object"],
-                source_paragraph=paragraph,
-                metadata=metadata,
-                write_vector=False,
-            )
-        self.graph.save()
-        vector_written = False
         try:
-            if await asyncio.wait_for(self._prepare_vectors(content), 1.5):
-                await asyncio.wait_for(self._backfill(), 1.5)
-                vector_written = paragraph in self.paragraph_vectors
-        except Exception as exc:
-            self.metadata.mark_paragraph_vector_backfill_failed(
-                paragraph, type(exc).__name__
-            )
+            await asyncio.wait_for(self._prepare_vectors(content), 1.5)
+        except Exception:
+            pass  # The original SDK preserves metadata and queues vector recovery.
+        await self.kernel.ingest_text(
+            external_id="note:"
+            + compute_hash(
+                json.dumps(
+                    [paragraph, metadata["evidence"], relations],
+                    sort_keys=True,
+                    ensure_ascii=False,
+                )
+            ),
+            source_type="chat_summary",
+            chat_id=self.path.name,
+            text=content,
+            participants=metadata["participants"],
+            metadata=metadata,
+            time_start=min(e["created"] for e in evidence),
+            time_end=max(e["created"] for e in evidence),
+            entities=list(
+                dict.fromkeys(
+                    name for r in relations for name in (r["subject"], r["object"])
+                )
+            ),
+            relations=[r | {"metadata": metadata} for r in relations],
+        )
         return {
             "id": paragraph,
             "stored": True,
-            "vector_written": vector_written,
+            "vector_written": self.paragraph_vectors is not None
+            and paragraph in self.paragraph_vectors,
             "backfill": self.metadata.get_paragraph_vector_backfill_status_counts(),
         }
 
@@ -386,7 +374,7 @@ class RoomState:
         self.metadata._conn.commit()
 
     async def consolidate(self, scope, messages, generate, bot_name, model_name):
-        from .memory_summary import NativeEpisodeRuntime, NativeSummaryImporter
+        from .memory_summary import NativeSummaryImporter
         from .vendor.maibot.amemorix import host
         from .vendor.maibot.amemorix.summary_host import bind_chat
         from .vendor.maibot.amemorix.utils.relation_write_service import (
@@ -409,7 +397,7 @@ class RoomState:
                         self._prepare_vectors(messages[-1]["text"]), 1.5
                     )
                 except Exception:
-                    self.paragraph_vectors = self.graph_vectors = None
+                    pass
                 metadata["external_id"] = (
                     "summary:"
                     + hashlib.sha256(
@@ -424,6 +412,7 @@ class RoomState:
                     {
                         "native_preflight": preflight,
                         "native_state": self,
+                        "plugin_instance": self.kernel._runtime_facade,
                         "graph_vector_store": self.graph_vectors,
                         "relation_write_service": RelationWriteService(
                             self.metadata, self.graph, None, None
@@ -432,24 +421,34 @@ class RoomState:
                         "summarization": {"model_name": ["auto"]},
                     },
                 )
-                imported = await importer.import_from_stream(
-                    scope,
+                self.kernel.summary_importer = importer
+                imported = await self.kernel.summarize_chat_stream(
+                    chat_id=scope,
                     context_length=len(messages),
                     include_personality=False,
                     time_end=max(m["created"] for m in messages),
                     metadata=metadata,
                 )
-                if not imported.success:
-                    raise RuntimeError("原版摘要导入未完成：" + imported.detail[:200])
+                if not imported["success"]:
+                    raise RuntimeError(
+                        "原版摘要导入未完成：" + imported["detail"][:200]
+                    )
                 with self.metadata.transaction():
                     self.metadata._conn.executemany(
                         "INSERT OR IGNORE INTO ovenheart_summary_processed VALUES (?,?)",
                         [(m["source_id"], m["created"]) for m in messages],
                     )
                 result.update(
-                    summary_id=imported.paragraph_hash, skipped=imported.skipped
+                    summary_id=next(iter(imported.get("stored_ids", [])), ""),
+                    skipped=bool(imported.get("skipped_ids")),
                 )
-            episodes = await NativeEpisodeRuntime(self).rebuild()
+            episodes = (
+                await self.kernel._ingest_service.process_episode_source_rebuild_batch(
+                    limit=1,
+                    max_wait_seconds=0,
+                    lease_seconds=180,
+                )
+            )
             result.update(
                 episodes=episodes["episode_count"], episode_failures=episodes["failed"]
             )
@@ -470,9 +469,10 @@ class RoomState:
             if not self.metadata.is_episode_source_query_blocked(row.get("source", ""))
         ]
 
-    def close(self):
-        self.sparse.unload()
-        self.metadata.close()
+    async def close(self):
+        if self.kernel is not None:
+            await self.kernel.shutdown()
+            self.kernel = None
 
 
 class RoomMemory:
@@ -504,8 +504,26 @@ class RoomMemory:
             else:
                 result.set_result(task.result())
 
+        async def run():
+            from .vendor.maibot.amemorix import host as memory_host
+            from .vendor.maibot.amemorix.sdk_host import bind_native
+
+            async def native_generate(request):
+                future = asyncio.run_coroutine_threadsafe(
+                    self.generate(state, request), host
+                )
+                return await asyncio.wrap_future(future)
+
+            with (
+                bind_native(data_root=state.path, embedding=state.embedding),
+                memory_host.bind(None, native_generate),
+            ):
+                if operation != "close":
+                    await state.initialize()
+                return await getattr(state, operation)(*args)
+
         def start():
-            task = self.loop.create_task(getattr(state, operation)(*args))
+            task = self.loop.create_task(run())
             task.add_done_callback(lambda done: host.call_soon_threadsafe(finish, done))
             host.call_soon_threadsafe(started.set_result, task)
 
@@ -517,6 +535,37 @@ class RoomMemory:
             self.loop.call_soon_threadsafe(task.cancel)
             await asyncio.gather(result, return_exceptions=True)
             raise
+
+    async def generate(self, state, request):
+        """Use current native permissions and accounting for SDK background models."""
+        event = state.event_ref()
+        revision = self.plugin.settings_revision
+        if event is None:
+            raise ValueError("该记忆会话没有可用的原生消息来源。")
+        scope, persona, _ = await self.plugin.resolve_scope(event)
+        if scope != state.path.name or not await self.permitted(
+            event, scope, persona, learning=True
+        ):
+            raise ValueError("当前记忆来源或学习权限已撤销。")
+        provider = (
+            self.plugin.settings["memory_summary_provider_id"]
+            or self.plugin.settings["provider_id"]
+            or await self.plugin.context.get_current_chat_provider_id(
+                event.unified_msg_origin
+            )
+        )
+        response = await self.plugin.auxiliary.generate(
+            "memory_episode"
+            if "episode" in request.request_type.lower()
+            else "memory_maintenance",
+            chat_provider_id=provider,
+            prompt=request.prompt,
+        )
+        if revision != self.plugin.settings_revision or not await self.permitted(
+            event, scope, persona, learning=True
+        ):
+            raise ValueError("模型生成期间记忆来源或学习权限已改变。")
+        return response.completion_text
 
     async def permitted(self, event, scope, persona, learning=False):
         s = self.plugin.settings
@@ -579,7 +628,7 @@ class RoomMemory:
             finally:
                 state.active_foreground.discard(task)
 
-    async def call(self, scope, operation, *args):
+    async def call(self, scope, operation, *args, event=None):
         from .memory_embedding import EmbeddingAPIAdapter
 
         revision = self.plugin.settings_revision
@@ -620,7 +669,7 @@ class RoomMemory:
                     )
                     if candidate is None:
                         raise RuntimeError("记忆工作队列繁忙。")
-                    await asyncio.to_thread(self.rooms.pop(candidate).close)
+                    await self.execute(self.rooms.pop(candidate), "close", ())
                     self.locks.pop(candidate, None)
                 creating = asyncio.create_task(
                     asyncio.to_thread(RoomState, self.directory / scope, lock)
@@ -645,8 +694,15 @@ class RoomMemory:
                 self.plugin.settings["embedding_provider_id"],
                 asyncio.get_running_loop(),
             )
-            state.embedding = embedding
+            if (
+                state.embedding is None
+                or state.embedding.get_embedding_configuration_key()
+                != embedding.get_embedding_configuration_key()
+            ):
+                state.embedding = embedding
             state.revision = revision
+            if event is not None:
+                state.event_ref = weakref.ref(event)
             state.operation = operation
             if operation == "consolidate":
                 state.foreground_ready.clear()
@@ -661,7 +717,11 @@ class RoomMemory:
         if not query.strip() or not await self.permitted(event, scope, persona):
             return []
         result = await self.call(
-            scope, "search", query[:2400], self.plugin.settings["memory_top_k"]
+            scope,
+            "search",
+            query[:2400],
+            self.plugin.settings["memory_top_k"],
+            event=event,
         )
         if revision != self.plugin.settings_revision or not await self.permitted(
             event, scope, persona
@@ -727,7 +787,12 @@ class RoomMemory:
         ):
             raise ValueError("记忆来源、配置或权限已经改变。")
         return await self.call(
-            scope, "write", payload["content"], evidence, payload["relations"]
+            scope,
+            "write",
+            payload["content"],
+            evidence,
+            payload["relations"],
+            event=event,
         )
 
     async def close(self):
@@ -740,7 +805,7 @@ class RoomMemory:
                         await asyncio.gather(
                             *tuple(state.foreground), return_exceptions=True
                         )
-                    await asyncio.to_thread(state.close)
+                    await self.execute(state, "close", ())
         self.rooms.clear()
         self.locks.clear()
         if self.loop is not None:
