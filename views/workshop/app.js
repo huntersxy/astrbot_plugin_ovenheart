@@ -379,7 +379,7 @@ function renderModelUsage() {
   if (!usage) return "";
   const rows = usage.rows || [];
   const sum = key => rows.reduce((total, row) => total + Number(row[key] || 0), 0);
-  const stages = {native_reply:"回复正文",planner:"聊天规划",reply_split:"语义断句",emoji_select:"表情选择",person_profile:"人物画像",memory_summary:"记忆整理"};
+  const stages = {native_reply:"回复正文",planner:"聊天规划",reply_split:"语义断句",emoji_select:"表情选择",person_profile:"人物画像",person_memory:"人物记忆",person_memory_repair:"记忆校验纠正",memory_summary:"记忆整理"};
   return `<details class="card"><summary>最近 24 小时正文与辅助用量 · ${sum("calls")} 次 · 输入 ${(sum("input_cached") + sum("input_other")).toLocaleString()} / 输出 ${sum("output").toLocaleString()} token</summary><p class="muted">${sum("reported")} 次返回 token 用量。未报告的调用只计次数；输入包含缓存 token。正文按每次实际传输统计，包含工具循环和备用模型。Jev 独立接口与嵌入请求另计。</p>${rows.map(row => `<p><strong>${escape(stages[row.stage] || row.stage)}</strong> · ${Number(row.calls)} 次 · 输入 ${(Number(row.input_cached) + Number(row.input_other)).toLocaleString()} / 输出 ${Number(row.output).toLocaleString()} · 错误 ${Number(row.errors)} / 取消 ${Number(row.cancelled)}<br><small class="muted">${escape(row.provider || "未返回模型配置")} · ${escape(row.model || "未返回实际模型名")}</small></p>`).join("") || '<p class="muted">还没有调用记录。</p>'}<p class="muted">本次加载已接入 ${Number(usage.native_bound || 0)} 轮原生正文${usage.native_unavailable ? `，${Number(usage.native_unavailable)} 轮宿主未提供可接入的运行器` : ""}。${usage.pending ? `待入库 ${Number(usage.pending)} 条。` : ""}${usage.dropped ? `队列溢出丢弃 ${Number(usage.dropped)} 条。` : ""}</p></details>`;
 }
 

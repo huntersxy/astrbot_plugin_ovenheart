@@ -108,6 +108,45 @@ async def test_actual_upstream_conflict_and_explicit_correction(person):
     assert corrected["facts"][0]["status"] == "active"
 
 
+async def test_repeated_fact_keeps_ledger_cardinality_and_adds_new_evidence(person):
+    first = await source(person, "likes-first", "我喜欢苹果。")
+    original = fact("likes-first", "喜欢苹果", "喜欢苹果", key="favorite_food")
+    original["cardinality"] = "set"
+    saved = await remember(person, first, original)
+    second = await source(person, "likes-again", "我确实喜欢苹果。")
+    result = await remember(
+        person,
+        second,
+        fact("likes-again", "喜欢苹果", "喜欢苹果", key="ＦＡＶＯＲＩＴＥ_ＦＯＯＤ"),
+    )
+    assert result["facts"][0]["claim_id"] == saved["facts"][0]["claim_id"]
+    claims = await person.person_memory.call("claims", result["person_id"])
+    assert len(claims) == 1 and claims[0]["cardinality"] == "set"
+    assert {e["metadata"]["source_id"] for e in result["facts"][0]["evidence"]} == {
+        "likes-first",
+        "likes-again",
+    }
+
+
+async def test_correction_keeps_existing_attribute_type_and_normalizes_key(person):
+    old = await source(person, "old-job", "我是学生。")
+    saved = await remember(person, old, fact("old-job", "我是学生", "职业：学生"))
+    current = await source(person, "new-job", "我现在是程序员，不是学生。")
+    corrected = fact(
+        "new-job",
+        "现在是程序员",
+        "职业：程序员",
+        key="ＯＣＣＵＰＡＴＩＯＮ",
+        corrects=[saved["facts"][0]["claim_id"]],
+    )
+    corrected["cardinality"] = "set"
+    result = await remember(person, current, corrected)
+    assert "职业：程序员" in result["profile_text"]
+    assert "职业：学生" not in result["profile_text"]
+    claims = await person.person_memory.call("claims", result["person_id"])
+    assert len(claims) == 1 and claims[0]["cardinality"] == "single"
+
+
 async def test_unattributed_or_fabricated_evidence_cannot_write_any_part(person):
     original = await source(person, "own", "我喜欢简洁的回答。")
     valid = fact(
@@ -253,6 +292,45 @@ async def test_background_extraction_uses_actual_retained_inputs_and_updates_cur
     assert not person.person_memory.busy
 
 
+async def test_background_extraction_repairs_evidence_once_before_writing(
+    person, caplog
+):
+    import json
+
+    person.settings["person_memory_min_messages"] = 1
+    person.context.llm_generate.side_effect = [
+        SimpleNamespace(
+            completion_text=json.dumps(
+                {
+                    "facts": [
+                        fact(
+                            "repair-source", "private-invalid-model-quote", "职业：医生"
+                        )
+                    ]
+                }
+            )
+        ),
+        SimpleNamespace(
+            completion_text=json.dumps(
+                {"facts": [fact("repair-source", "我是学生", "职业：学生")]}
+            )
+        ),
+    ]
+    incoming, scope, persona, _ = await source(person, "repair-source", "我是学生。")
+    await asyncio.wait_for(asyncio.gather(*person.person_memory.busy.values()), 5)
+    result = await person.person_memory.query(incoming, scope, persona, "alice")
+    assert (
+        "职业：学生" in result["profile_text"] and "医生" not in result["profile_text"]
+    )
+    assert await person.person_memory.call("processed", result["person_id"]) == {
+        "repair-source"
+    }
+    assert person.context.llm_generate.await_count == 2
+    request = json.loads(person.context.llm_generate.call_args.kwargs["prompt"])
+    assert "原文证据" in request["validation_error"]
+    assert "private-invalid-model-quote" not in caplog.text
+
+
 async def test_profile_is_injected_into_native_reply_as_temporary_reference(person):
     original = await source(person, "profile-input", "我不喜欢被叫宝宝。")
     await remember(
@@ -328,6 +406,7 @@ async def test_failed_extraction_keeps_existing_facts_and_retries_inputs(person)
     result = await person.person_memory.query(incoming, scope, persona, "alice")
     assert result["facts"][0]["value_text"] == "职业：学生"
     assert await person.person_memory.call("processed", result["person_id"]) == set()
+    assert person.context.llm_generate.await_count == 2
 
 
 def test_fact_machine_and_profile_algorithms_match_the_pinned_source():
