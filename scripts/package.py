@@ -30,6 +30,7 @@ files = [
         "outgoing_media.py",
         "oven_multi.py",
         "page_api.py",
+        "runtime_diagnostics.py",
         "participation.py",
         "prompts.py",
         "reply_payload.py",

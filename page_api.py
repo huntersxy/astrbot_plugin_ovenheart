@@ -73,7 +73,7 @@ class PageAPI:
                     for row in await asyncio.wait_for(asyncio.wrap_future(snapshot), 0.5)
                 )
             except TimeoutError:
-                paths.append({"loop": "memory", "busy": True})
+                paths.append({"loop": "memory", "busy": True, "await_path": []})
         return {
             "status": "ok",
             "data": paths,
