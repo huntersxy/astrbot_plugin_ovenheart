@@ -18,7 +18,11 @@ def await_path(current):
             getattr(current, "cr_await", None)
             or getattr(current, "ag_await", None)
             or next(
-                (item for item in gc.get_referents(current) if hasattr(item, "ag_frame")),
+                (
+                    item
+                    for item in gc.get_referents(current)
+                    if hasattr(item, "ag_frame")
+                ),
                 None,
             )
         )

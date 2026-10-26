@@ -16,8 +16,8 @@ _retrieval_deadline = ContextVar("ovenheart_memory_embedding_deadline", default=
 
 
 @contextmanager
-def retrieval_embedding_budget(seconds):
-    """Leave time for the SDK's sparse fallback after slow vector requests."""
+def embedding_budget(seconds):
+    """Bound foreground waits and serialized writes, preserving SDK fallback."""
     budget = SimpleNamespace(deadline=time.monotonic() + seconds)
     token = _retrieval_deadline.set(budget)
     try:
@@ -122,7 +122,7 @@ class EmbeddingAPIAdapter:
             deadline = budget.deadline if budget is not None else None
             remaining = deadline - time.monotonic() if deadline is not None else None
             if remaining is not None and remaining <= 0:
-                raise TimeoutError("本轮记忆嵌入预算已耗尽，使用稀疏检索。")
+                raise TimeoutError("本次记忆嵌入预算已耗尽，保留文字记忆与待回填向量。")
             work = asyncio.run_coroutine_threadsafe(self._request(batch), self.loop)
             vectors = await asyncio.wait_for(asyncio.wrap_future(work), remaining)
             self.dimension = int(vectors.shape[1])

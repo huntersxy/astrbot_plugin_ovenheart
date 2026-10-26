@@ -1156,7 +1156,7 @@ class RoomMemory:
                 result.set_result(task.result())
 
         async def run():
-            from .memory_embedding import retrieval_embedding_budget
+            from .memory_embedding import embedding_budget
             from .vendor.maibot.amemorix import host as memory_host
             from .vendor.maibot.amemorix.sdk_host import bind_native
             from .vendor.maibot.amemorix.summary_host import bind_chat_reader
@@ -1194,11 +1194,7 @@ class RoomMemory:
             ):
                 if operation != "close":
                     await state.initialize()
-                with (
-                    retrieval_embedding_budget(1.5)
-                    if operation == "search"
-                    else nullcontext()
-                ):
+                with embedding_budget(1.5) if operation == "search" else nullcontext():
                     return await getattr(state, operation)(*args)
 
         def start():

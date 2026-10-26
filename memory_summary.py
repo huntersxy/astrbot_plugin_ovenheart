@@ -1,5 +1,6 @@
 """Run the original summary and episode services inside an initialized room."""
 
+from .memory_embedding import embedding_budget
 from .room_memory import native_provenance
 from .vendor.maibot.amemorix.utils.hash import compute_hash, normalize_text
 from .vendor.maibot.amemorix.utils.summary_importer import SummaryImporter
@@ -33,11 +34,14 @@ class NativeSummaryImporter(SummaryImporter):
                 (previous.get("metadata") or {}).get("evidence", []),
             )
         )
-        return await super()._execute_import(
-            summary,
-            entities,
-            relations,
-            stream_id,
-            time_meta=time_meta,
-            metadata=metadata,
-        )
+        # Import owns the room queue after the text model returns. Let the SDK
+        # retain metadata and enqueue slow vectors instead of blocking recall.
+        with embedding_budget(1.5):
+            return await super()._execute_import(
+                summary,
+                entities,
+                relations,
+                stream_id,
+                time_meta=time_meta,
+                metadata=metadata,
+            )

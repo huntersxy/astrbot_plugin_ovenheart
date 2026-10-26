@@ -160,6 +160,53 @@ async def test_existing_memory_is_readable_while_summary_model_is_waiting(consol
         await drain(p)
 
 
+async def test_existing_memory_is_readable_while_summary_embedding_is_waiting(
+    consolidator,
+):
+    p = consolidator
+    started, release = asyncio.Event(), asyncio.Event()
+
+    class DelayedSummaryEmbedding(SyntheticEmbedding):
+        async def get_embeddings(self, texts):
+            if "群友周日一起去图书馆。" in texts:
+                started.set()
+                await release.wait()
+            return await super().get_embeddings(texts)
+
+    embedding = DelayedSummaryEmbedding()
+    p.settings["embedding_provider_id"] = "semantic"
+    p.context.get_provider_by_id = lambda _: embedding
+    p.context.llm_generate.side_effect = [summary(), episode()]
+    _, scope, persona = await capture(p)
+    p.context.llm_generate.side_effect = [
+        summary(
+            source="s2",
+            quote="周日一起去图书馆",
+            text="群友周日一起去图书馆。",
+            entities=["图书馆"],
+        ),
+        episode(),
+    ]
+    incoming = event("s2", text="周日一起去图书馆")
+    await p.capture(incoming)
+    await asyncio.wait_for(started.wait(), 5)
+    try:
+        found = await asyncio.wait_for(
+            p.room_memory.search(incoming, scope, persona, "书店"), 4.5
+        )
+        assert any("书店" in row["content"] for row in found)
+        assert not release.is_set()
+    finally:
+        release.set()
+        await drain(p)
+    state = p.room_memory.rooms[scope]
+    assert state.metadata.count_paragraphs() == 2
+    assert (await p.room_memory.call(scope, "summary_status"))["processed"] == {
+        "s1",
+        "s2",
+    }
+
+
 async def test_foreground_memory_and_image_ingest_during_sdk_episode_model(
     consolidator,
 ):
