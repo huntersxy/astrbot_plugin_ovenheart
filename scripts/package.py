@@ -83,6 +83,7 @@ files.extend(root / path for path in (
     "docs/design/legacy-memory-import.md",
     "docs/design/native-memory-kernel.md",
     "docs/design/maibot-parity.md",
+    "docs/design/multiturn-comparison.md",
     "docs/evaluation/jev-review-2026-10-25.md", "docs/evaluation/jev-cases.json",
     "docs/evaluation/jev-benchmark-2026-10-25.json",
 ))
