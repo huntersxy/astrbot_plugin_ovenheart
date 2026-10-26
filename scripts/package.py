@@ -88,7 +88,7 @@ files.extend(root / path for path in (
 ))
 files.extend(
     root / "docs/assets" / name
-    for name in ("profile.jpg", "library-triage-v0.56-desktop.jpg")
+    for name in ("profile.jpg", "library-triage-v0.56-desktop.jpg", "memory-console-v0.68-desktop.png")
 )
 with ZipFile(destination, "w", compression=ZIP_DEFLATED) as archive:
     for path in sorted(files):

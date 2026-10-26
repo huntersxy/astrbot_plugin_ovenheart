@@ -1,6 +1,8 @@
 {
   "metadata": {
-    "display_name": "OvenHeart"
+    "display_name": "OvenHeart",
+    "short_desc": "Learn speech habits, plan conversations and manage native memory while preserving your persona.",
+    "desc": "Personality learning, conversation planning and native memory for AstrBot. Learn evidence-backed expressions and local vocabulary, use person and image memory, and manage records, corrections, recovery and native memory bundles in the workshop."
   },
   "views": {
     "workshop": {
