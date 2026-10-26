@@ -15,8 +15,42 @@ from astrbot.core.message.components import Image
 
 from .participation import event_source
 from .vendor.maibot.amemorix.image.asset_store import ImageAssetStore, InspectedImage
+from .vendor.maibot.amemorix.image.runtime import ImageMemoryRuntime
 
 image_job = ContextVar("ovenheart_image_job", default=False)
+
+
+def warn_failure(message, exc):
+    frame = exc.__traceback__
+    while frame.tb_next is not None:
+        frame = frame.tb_next
+    # Identify the failed constraint without logging image URLs or model payloads.
+    logger.warning(
+        "%s (%s; %s:%s)",
+        message,
+        type(exc).__name__,
+        frame.tb_frame.f_code.co_name,
+        frame.tb_lineno,
+    )
+
+
+def publish_image(runtime, image_bytes):
+    """Keep original GIF bytes; the native embedder converts only its model input."""
+    if not image_bytes.startswith((b"GIF87a", b"GIF89a")):
+        return ImageMemoryRuntime._publish_asset_only(runtime, image_bytes)
+    inspected = runtime.asset_store.inspect(image_bytes)
+    digest, storage_key = runtime.asset_store.publish(image_bytes, inspected)
+    with runtime.metadata_store.transaction(immediate=True) as database:
+        asset = runtime.metadata_store.upsert_image_asset(
+            content_hash=digest,
+            storage_key=storage_key,
+            mime_type=inspected.mime_type,
+            byte_size=inspected.byte_size,
+            width=inspected.width,
+            height=inspected.height,
+            conn=database,
+        )
+    return asset, inspected
 
 
 class NativeImageAssetStore(ImageAssetStore):
@@ -194,7 +228,7 @@ class ImageMemory:
         except asyncio.CancelledError:
             raise
         except Exception as exc:
-            logger.warning("图片记忆未写入完成 (%s)", type(exc).__name__)
+            warn_failure("图片记忆未写入完成", exc)
         finally:
             self.busy.pop(key, None)
 
@@ -351,4 +385,4 @@ class ImageMemory:
         except asyncio.CancelledError:
             raise
         except Exception as exc:
-            logger.warning("已发送图片暂未记入图片记忆 (%s)", type(exc).__name__)
+            warn_failure("已发送图片暂未记入图片记忆", exc)

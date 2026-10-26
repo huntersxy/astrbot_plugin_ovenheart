@@ -5,8 +5,28 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import time
+from contextlib import contextmanager
+from contextvars import ContextVar
+from types import SimpleNamespace
 
 import numpy as np
+
+_retrieval_deadline = ContextVar("ovenheart_memory_embedding_deadline", default=None)
+
+
+@contextmanager
+def retrieval_embedding_budget(seconds):
+    """Leave time for the SDK's sparse fallback after slow vector requests."""
+    budget = SimpleNamespace(deadline=time.monotonic() + seconds)
+    token = _retrieval_deadline.set(budget)
+    try:
+        yield
+    finally:
+        # SDK services can spawn background tasks that inherit this context.
+        # They must not retain an exhausted foreground budget after this read.
+        budget.deadline = None
+        _retrieval_deadline.reset(token)
 
 
 class EmbeddingAPIAdapter:
@@ -98,8 +118,13 @@ class EmbeddingAPIAdapter:
         missing = list(dict.fromkeys(text for text in values if text not in self.cache))
         for start in range(0, len(missing), self.batch_size):
             batch = missing[start : start + self.batch_size]
+            budget = _retrieval_deadline.get()
+            deadline = budget.deadline if budget is not None else None
+            remaining = deadline - time.monotonic() if deadline is not None else None
+            if remaining is not None and remaining <= 0:
+                raise TimeoutError("本轮记忆嵌入预算已耗尽，使用稀疏检索。")
             work = asyncio.run_coroutine_threadsafe(self._request(batch), self.loop)
-            vectors = await asyncio.wrap_future(work)
+            vectors = await asyncio.wait_for(asyncio.wrap_future(work), remaining)
             self.dimension = int(vectors.shape[1])
             self.cache.update(zip(batch, vectors, strict=True))
         result = np.asarray([self.cache[text] for text in values], dtype=np.float32)

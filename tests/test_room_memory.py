@@ -74,6 +74,8 @@ async def test_original_sparse_graph_search_retains_native_evidence(memories):
     assert result[0]["metadata"]["participants"] == ["alice"]
     state = memories.room_memory.rooms[scope]
     assert state.graph.num_nodes >= 2
+    assert state.metadata.is_paragraph_ngram_ready(n=2)
+    assert state.metadata.ngram_search_paragraphs(["ek", "ko", "o喜"], limit=5)
 
 
 async def test_original_dual_vector_pools_find_nonlexical_query_and_reload(memories):
@@ -203,6 +205,37 @@ async def test_learning_revocation_prevents_write_but_allows_existing_recall(mem
     with pytest.raises(ValueError, match="学习权限"):
         await memories.room_memory.remember(incoming, scope, persona, note(), messages)
     assert await memories.room_memory.search(incoming, scope, persona, "Neko")
+
+
+async def test_ready_vectors_with_slow_provider_still_return_sparse_memory(memories):
+    class IntermittentEmbedding(SyntheticEmbedding):
+        slow = False
+        cancelled = False
+
+        async def get_embeddings(self, texts):
+            if not self.slow:
+                return await super().get_embeddings(texts)
+            try:
+                await asyncio.Event().wait()
+            finally:
+                self.cancelled = True
+
+    embedding = IntermittentEmbedding()
+    memories.settings["embedding_provider_id"] = "semantic"
+    memories.context.get_provider_by_id = lambda _: embedding
+    incoming, scope, persona, messages = await material(memories)
+    saved = await memories.room_memory.remember(
+        incoming, scope, persona, note(), messages
+    )
+    state = memories.room_memory.rooms[scope]
+    space = state.vector_space
+    embedding.slow = True
+    found = await asyncio.wait_for(
+        memories.room_memory.search(incoming, scope, persona, "周末去看小猫"), 3.5
+    )
+    assert any(row["id"] == saved["id"] for row in found)
+    assert embedding.cancelled
+    assert state.vector_space == space and state.paragraph_vectors.num_vectors == 1
 
 
 async def test_embedding_model_change_rebuilds_from_metadata_without_crossing_spaces(

@@ -4,6 +4,7 @@ import asyncio
 import base64
 import io
 import sys
+from pathlib import Path
 from types import MethodType, SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -145,7 +146,7 @@ async def test_image_only_gif_exact_memory_and_scope_without_image_model(memorie
     assert first.get_extra("ovenheart_image_assets")[0]["asset_id"]
     second, _, _, messages = await capture(p, "gif-two", picture(fmt="GIF"))
     found = await p.image_memory.query(second, scope, persona, messages, "1", 0)
-    assert found["success"] and found["hits"][0]["match_kind"] == "exact_hash"
+    assert found["success"] and found["hits"][0]["match_kind"] == "exact_hash", found
     other, other_scope, other_persona, other_messages = await capture(
         p, "other-room", picture(fmt="GIF"), session="456"
     )
@@ -156,3 +157,24 @@ async def test_image_only_gif_exact_memory_and_scope_without_image_model(memorie
     assert not (
         await p.image_memory.query(other, other_scope, other_persona, messages, "1", 0)
     )["success"]
+
+
+async def test_animated_gif_keeps_original_bytes_and_exact_recall(memories):
+    output = io.BytesIO()
+    frames = [PILImage.new("RGB", (16, 16), color) for color in ("red", "blue")]
+    frames[0].save(
+        output, format="GIF", save_all=True, append_images=frames[1:], duration=100
+    )
+    payload = output.getvalue()
+    incoming, scope, persona, messages = await capture(memories, "animated", payload)
+    assets = incoming.get_extra("ovenheart_image_assets")
+    assert assets, "Animated GIF was rejected before its occurrence was stored"
+    stored = await memories.room_memory.call(
+        scope, "image_asset", assets[0]["asset_id"]
+    )
+    assert await asyncio.to_thread(Path(stored["path"]).read_bytes) == payload
+    incoming, _, _, messages = await capture(memories, "animated-again", payload)
+    found = await memories.image_memory.query(
+        incoming, scope, persona, messages, "1", 0
+    )
+    assert found["success"] and found["hits"][0]["match_kind"] == "exact_hash", found

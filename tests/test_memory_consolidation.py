@@ -160,6 +160,51 @@ async def test_existing_memory_is_readable_while_summary_model_is_waiting(consol
         await drain(p)
 
 
+async def test_foreground_memory_and_image_ingest_during_sdk_episode_model(
+    consolidator,
+):
+    from tests.test_image_memory import picture
+
+    p = consolidator
+    started, release = asyncio.Event(), asyncio.Event()
+
+    async def delayed(**kwargs):
+        if p.context.llm_generate.call_count == 1:
+            return summary()
+        started.set()
+        await release.wait()
+        return episode()
+
+    p.context.llm_generate.side_effect = delayed
+    incoming = event("s1", text="大家周六一起去书店")
+    await p.capture(incoming)
+    scope, persona, _ = await p.resolve_scope(incoming)
+    await asyncio.wait_for(started.wait(), 5)
+    try:
+        assert await asyncio.wait_for(
+            p.room_memory.search(incoming, scope, persona, "书店"), 1.5
+        )
+        saved = await asyncio.wait_for(
+            p.room_memory.call(
+                scope,
+                "image_ingest",
+                picture(),
+                "s1",
+                "s1",
+                0,
+                incoming.created_at,
+                "",
+                event=incoming,
+            ),
+            1.5,
+        )
+        assert saved["success"]
+        assert not release.is_set()
+    finally:
+        release.set()
+        await drain(p)
+
+
 async def test_cancelled_concurrent_read_does_not_cancel_the_background_model(
     consolidator,
 ):

@@ -79,6 +79,20 @@ class NativeMemoryKernel(SDKMemoryKernel):
         super().__init__(plugin_root=plugin_root, config=config)
         self._correction_admin_service = NativeCorrectionService(self)
 
+    async def initialize(self):
+        await super().initialize()
+        if self.sparse_index is None:
+            return
+        config = self.sparse_index.config
+        if (
+            config.enable_ngram_fallback_index
+            and not self.metadata_store.is_paragraph_ngram_ready(n=config.char_ngram_n)
+        ):
+            # Upstream warmup only checks readiness. Initialize existing rooms
+            # once; its normal paragraph writes maintain this index thereafter.
+            self.metadata_store.ensure_paragraph_ngram_schema()
+            self.metadata_store.ensure_paragraph_ngram_backfilled(n=config.char_ngram_n)
+
     def _refresh_runtime_dependents(self, *, preserve_managers=True):
         super()._refresh_runtime_dependents(preserve_managers=preserve_managers)
         if self.metadata_store is not None:

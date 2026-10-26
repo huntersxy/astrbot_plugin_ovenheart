@@ -9,7 +9,8 @@ import threading
 import time
 import weakref
 from collections import OrderedDict
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, nullcontext
+from functools import partial
 from types import SimpleNamespace
 
 import jsonschema
@@ -215,7 +216,10 @@ class RoomState:
         if self.kernel is not None and self.embedding_key == key:
             return
         if self.kernel is not None:
-            await self.kernel.shutdown()
+            previous = self.kernel
+            self.kernel = None
+            self.embedding_key = None
+            await previous.shutdown()
         if self.embedding.available:
             try:
                 await asyncio.wait_for(self.embedding._detect_dimension(), 1.5)
@@ -241,12 +245,19 @@ class RoomState:
             self._backup_legacy_storage()
             await kernel.initialize()
             if kernel.image_memory_runtime is not None:
-                from .image_memory import NativeImageAssetStore, image_job
+                from .image_memory import (
+                    NativeImageAssetStore,
+                    image_job,
+                    publish_image,
+                )
 
                 kernel.image_memory_runtime.asset_store = NativeImageAssetStore(
                     self.path / "images/assets",
                     max_bytes=10 * 1024 * 1024,
                     max_pixels=40_000_000,
+                )
+                kernel.image_memory_runtime._publish_asset_only = partial(
+                    publish_image, kernel.image_memory_runtime
                 )
                 process_jobs = kernel.image_memory_runtime.process_jobs_once
 
@@ -1144,6 +1155,7 @@ class RoomMemory:
                 result.set_result(task.result())
 
         async def run():
+            from .memory_embedding import retrieval_embedding_budget
             from .vendor.maibot.amemorix import host as memory_host
             from .vendor.maibot.amemorix.sdk_host import bind_native
             from .vendor.maibot.amemorix.summary_host import bind_chat_reader
@@ -1181,7 +1193,12 @@ class RoomMemory:
             ):
                 if operation != "close":
                     await state.initialize()
-                return await getattr(state, operation)(*args)
+                with (
+                    retrieval_embedding_budget(1.5)
+                    if operation == "search"
+                    else nullcontext()
+                ):
+                    return await getattr(state, operation)(*args)
 
         def start():
             task = self.loop.create_task(run())
@@ -1405,7 +1422,19 @@ class RoomMemory:
         if (
             state is not None
             and operation
-            in ("search", "write", "change", "person_context", "midterm_records")
+            in (
+                "search",
+                "write",
+                "change",
+                "person_context",
+                "midterm_records",
+                "image_ingest",
+                "image_description",
+                "image_content_description",
+                "image_search",
+                "image_asset",
+                "image_candidates",
+            )
             and state.operation == "consolidate"
             and state.revision == revision
             and state.embedding.provider is embedding.provider
@@ -1476,11 +1505,9 @@ class RoomMemory:
                 self.plugin.settings["image_embedding_provider_id"],
                 asyncio.get_running_loop(),
             )
-            state.image_enabled = self.plugin.settings["image_memory_enabled"] and (
-                state.image_enabled
-                or operation.startswith("image_")
-                or operation == "admin"
-            )
+            # Create the image runtime before lending the kernel to foreground
+            # work; its first image must not restart an active consolidation.
+            state.image_enabled = self.plugin.settings["image_memory_enabled"]
             if event is not None:
                 state.event_ref = weakref.ref(event)
                 self.observe(event, scope)
