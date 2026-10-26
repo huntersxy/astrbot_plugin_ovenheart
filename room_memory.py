@@ -192,6 +192,8 @@ class RoomState:
         self.image_embedding = None
         self.image_enabled = False
         self.embedding_key = None
+        self.initializing = None
+        self.initializing_key = None
         self.event_ref = lambda: None
         self.identity = None
         self.session = SimpleNamespace(
@@ -206,8 +208,6 @@ class RoomState:
         self.model_waiting = False
 
     async def initialize(self):
-        from .native_memory_kernel import NativeMemoryKernel
-
         key = (
             self.embedding.get_embedding_configuration_key(),
             id(self.embedding.provider),
@@ -215,25 +215,53 @@ class RoomState:
             self.image_embedding.key,
             id(self.image_embedding.provider) if self.image_enabled else None,
         )
+        if self.initializing is not None and self.initializing_key != key:
+            await self._stop_initializing()
         if self.kernel is not None and self.embedding_key == key:
             return
+        if self.initializing is None:
+            self.initializing_key = key
+            self.initializing = asyncio.create_task(
+                self._initialize(
+                    key, self.embedding, self.image_embedding, self.image_enabled
+                )
+            )
+            self.initializing.add_done_callback(self._initialization_finished)
+        # A reply deadline cancels its query, not the room's reusable warmup.
+        await asyncio.shield(self.initializing)
+
+    def _initialization_finished(self, task):
+        if self.initializing is task:
+            self.initializing = self.initializing_key = None
+        if not task.cancelled() and (error := task.exception()) is not None:
+            logger.warning(f"记忆后台预热未完成 ({type(error).__name__})")
+
+    async def _stop_initializing(self):
+        task = self.initializing
+        if task is not None:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+
+    async def _initialize(self, key, embedding, image_embedding, image_enabled):
+        from .native_memory_kernel import NativeMemoryKernel
+
         if self.kernel is not None:
             previous = self.kernel
             self.kernel = None
             self.embedding_key = None
             await previous.shutdown()
-        if self.embedding.available:
+        if embedding.available:
             try:
-                await asyncio.wait_for(self.embedding._detect_dimension(), 1.5)
+                await asyncio.wait_for(embedding._detect_dimension(), 1.5)
             except Exception:
                 pass  # The SDK can still start with real metadata/sparse fallback.
         kernel = NativeMemoryKernel(
             plugin_root=self.path,
             config={
                 "storage": {"data_dir": str(self.path)},
-                "embedding": {"dimension": self.embedding.dimension or 1024},
+                "embedding": {"dimension": embedding.dimension or 1024},
                 "image_memory": {
-                    "enabled": self.image_enabled,
+                    "enabled": image_enabled,
                     "preprocess_version": "gif_first_frame_v1",
                 },
                 "retrieval": {
@@ -265,7 +293,7 @@ class RoomState:
 
                 async def native_image_jobs():
                     future = asyncio.run_coroutine_threadsafe(
-                        self.image_embedding.allowed(True), self.image_embedding.loop
+                        image_embedding.allowed(True), image_embedding.loop
                     )
                     if not await asyncio.wrap_future(future):
                         return {"claimed": 0, "processed": 0, "status": "paused"}
@@ -277,7 +305,10 @@ class RoomState:
 
                 kernel.image_memory_runtime.process_jobs_once = native_image_jobs
         except BaseException:
-            kernel._runtime_writer_lock.release()
+            try:
+                await kernel.shutdown()
+            finally:
+                kernel._runtime_writer_lock.release()
             raise
         self.kernel = kernel
         self.embedding_key = key
@@ -1088,6 +1119,7 @@ class RoomState:
         ]
 
     async def close(self):
+        await self._stop_initializing()
         if self.kernel is not None:
             await self.kernel.shutdown()
             self.kernel = None

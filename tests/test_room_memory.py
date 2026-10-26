@@ -112,6 +112,61 @@ async def test_cold_room_warmup_does_not_block_existing_room_recall(
         await asyncio.wait_for(cold, 5)
 
 
+@pytest.mark.parametrize("close_during_warmup", [False, True])
+async def test_request_cancellation_keeps_one_warmup_until_reuse_or_close(
+    memories, monkeypatch, close_during_warmup
+):
+    from astrbot_plugin_ovenheart.vendor.maibot.amemorix.retrieval.sparse_bm25 import (
+        SparseBM25Index,
+    )
+
+    incoming, scope, _, _ = await material(memories)
+    started, release = threading.Event(), threading.Event()
+    warmup = SparseBM25Index.warmup
+    warmed = []
+
+    def slow_warmup(index):
+        warmed.append(index)
+        started.set()
+        release.wait(5)
+        return warmup(index)
+
+    monkeypatch.setattr(SparseBM25Index, "warmup", slow_warmup)
+    query = asyncio.create_task(
+        memories.room_memory.call(scope, "summary_status", event=incoming)
+    )
+    closing = None
+    try:
+        assert await asyncio.to_thread(started.wait, 3)
+        state = memories.room_memory.rooms[scope]
+        query.cancel()
+        done, _ = await asyncio.wait({query}, timeout=0.5)
+        assert query in done, "reply cancellation still waits for cold initialization"
+        with pytest.raises(asyncio.CancelledError):
+            await query
+        assert state.initializing is not None and not state.initializing.done()
+        if close_during_warmup:
+            closing = asyncio.create_task(memories.room_memory.close())
+            await asyncio.sleep(0.03)
+            assert not closing.done()
+        release.set()
+        if closing is not None:
+            await asyncio.wait_for(closing, 5)
+            assert state.kernel is None and state.initializing is None
+            assert not memories.room_memory.rooms and memories.room_memory.loop is None
+        else:
+            await asyncio.wait_for(
+                memories.room_memory.call(scope, "summary_status", event=incoming), 5
+            )
+            assert len(warmed) == 1
+            assert state.kernel is not None and state.kernel.is_runtime_ready()
+    finally:
+        release.set()
+        await asyncio.gather(query, return_exceptions=True)
+        if closing is not None:
+            await asyncio.gather(closing, return_exceptions=True)
+
+
 async def test_original_dual_vector_pools_find_nonlexical_query_and_reload(memories):
     memories.settings["embedding_provider_id"] = "semantic"
     memories.context.get_provider_by_id = lambda name: SyntheticEmbedding()
