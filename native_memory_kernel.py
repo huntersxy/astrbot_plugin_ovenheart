@@ -78,9 +78,23 @@ class NativeMemoryKernel(SDKMemoryKernel):
     def __init__(self, *, plugin_root, config=None):
         super().__init__(plugin_root=plugin_root, config=config)
         self._correction_admin_service = NativeCorrectionService(self)
+        self._scope_statistics_ready = False
 
     async def initialize(self):
         await super().initialize()
+        if not self._scope_statistics_ready:
+            # Without cardinality statistics SQLite expands every active entity
+            # against every allowed paragraph. Keep the original scoped query,
+            # and refresh its two tables once per runtime with bounded sampling.
+            with self.metadata_store.transaction() as db:
+                previous_limit = db.execute("PRAGMA analysis_limit").fetchone()[0]
+                try:
+                    db.execute("PRAGMA analysis_limit=400")
+                    db.execute("ANALYZE entities")
+                    db.execute("ANALYZE paragraph_entities")
+                finally:
+                    db.execute(f"PRAGMA analysis_limit={previous_limit}")
+            self._scope_statistics_ready = True
         if self.sparse_index is None:
             return
         config = self.sparse_index.config
@@ -109,12 +123,14 @@ class NativeMemoryKernel(SDKMemoryKernel):
         # independent SQLite connection. Release it after all workers stop.
         sparse = self.sparse_index
         await super().shutdown()
+        self._scope_statistics_ready = False
         if sparse is not None:
             sparse.unload()
 
     def close(self):
         sparse = self.sparse_index
         super().close()
+        self._scope_statistics_ready = False
         if sparse is not None:
             sparse.unload()
 

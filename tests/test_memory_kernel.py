@@ -99,6 +99,49 @@ async def test_original_kernel_dual_retrieval_and_chat_scope(native_kernel):
     assert not denied["hits"]
 
 
+async def test_dense_scope_links_keep_retrieval_within_sql_work_budget(native_kernel):
+    kernel = native_kernel
+    with kernel.metadata_store.transaction() as db:
+        db.executemany(
+            "INSERT INTO paragraphs(hash,content,source,metadata) VALUES (?,?,?,?)",
+            [
+                (f"p{i}", "scope fixture", "chat_summary:dense-room", "{}")
+                for i in range(1800)
+            ]
+            + [("foreign-p", "foreign fixture", "chat_summary:foreign-room", "{}")],
+        )
+        db.executemany(
+            "INSERT INTO entities(hash,name,is_deleted) VALUES (?,?,?)",
+            [(f"e{i}", f"entity-{i}", int(i == 2113)) for i in range(2115)],
+        )
+        db.executemany(
+            "INSERT INTO paragraph_entities(paragraph_hash,entity_hash) VALUES (?,?)",
+            [
+                (f"p{i}", f"e{(i * 13 + j) % 2114}")
+                for i in range(1800)
+                for j in range(13)
+            ]
+            + [("foreign-p", "e2114")],
+        )
+    await kernel.shutdown()
+    await kernel.initialize()
+    steps = 0
+
+    def work_budget():
+        nonlocal steps
+        steps += 1000
+        return steps > 1_000_000
+
+    db = kernel.metadata_store._conn
+    db.set_progress_handler(work_budget, 1000)
+    try:
+        scope = kernel._get_search_hit_service()._resolve_retrieval_scope("dense-room")
+    finally:
+        db.set_progress_handler(None, 0)
+    assert scope.paragraph_ids == {f"p{i}" for i in range(1800)}
+    assert scope.entity_ids == {f"e{i}" for i in range(2113)}
+
+
 async def test_original_kernel_delete_restore_and_relation_graph(native_kernel):
     kernel = native_kernel
     written = await seed(kernel)

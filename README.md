@@ -10,7 +10,7 @@ AstrBot 的人格学习、聊天规划与原生记忆插件。<br>
 从真实对话积累习惯，记住共同经历，由你管理它们如何生效。
 
 [![AstrBot](https://img.shields.io/badge/AstrBot-4.29.1%2B-49768b?style=flat-square)](https://github.com/AstrBotDevs/AstrBot)
-[![Version](https://img.shields.io/badge/version-0.68.3-49768b?style=flat-square)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.68.4-49768b?style=flat-square)](CHANGELOG.md)
 [![License](https://img.shields.io/badge/license-AGPL--3.0--or--later-68766b?style=flat-square)](LICENSE)
 
 [快速开始](#快速开始) · [记忆管理](#记忆管理) · [中文指南](docs/zh/README.md) · [English](docs/en/README.md) · [更新记录](CHANGELOG.md)
