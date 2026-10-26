@@ -457,7 +457,9 @@ def parse_candidates(
                 ],
             }
         )
-        examples = candidate.get("examples")
+        # Other categories never consume samples; discard that unused field
+        # instead of failing valid, evidence-checked traits and the whole batch.
+        examples = candidate.get("examples") if kind == "expression" else []
         if examples is None:
             examples = []  # Optional JSON null carries no sample or new evidence.
         if not isinstance(examples, list):
@@ -467,10 +469,6 @@ def parse_candidates(
         if len(examples) > 3:
             raise LearningFormatError(
                 "examples 最多三项，请只保留有原始证据的表达片段。"
-            )
-        if examples and kind != "expression":
-            raise LearningFormatError(
-                f"{kind} 类别不能提供非空 examples；只有 expression 可携带原话片段。"
             )
         result[-1]["examples"] = []
         for example in examples:

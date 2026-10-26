@@ -12,7 +12,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from astrbot.api import logger
-from astrbot.core.message.components import Image
+from astrbot.core.message.components import Image, Plain
 from astrbot.core.utils.media_utils import MediaResolver, file_uri_to_path, is_file_uri
 
 
@@ -122,9 +122,33 @@ class OutgoingMediaBridge:
             return
         original = event.send
 
+        def failed():
+            event.set_extra("ovenheart_text_delivery_incomplete", True)
+            event.set_extra(
+                "ovenheart_planner_receipt",
+                {
+                    "send_hook": False,
+                    "reply_text": "\n".join(
+                        event.get_extra("ovenheart_actual_text_segments", [])
+                    ),
+                    "delivery_uncertain": True,
+                    "delivery_status": "native send failed; platform delivery unverified",
+                },
+            )
+
         async def send(message):
-            result = await original(message)
+            text = any(
+                isinstance(part, Plain) and part.text.strip() for part in message.chain
+            )
+            try:
+                result = await original(message)
+            except Exception:
+                if text:
+                    failed()
+                raise
             if result is False:
+                if text:
+                    failed()
                 return result
             images = [
                 p for p in getattr(message, "chain", None) or [] if isinstance(p, Image)

@@ -43,7 +43,7 @@ async def test_disabled_review_leaves_whole_budget_for_extraction(plugin):
     assert timing["extraction_budget_seconds"] == timing["model_budget_seconds"] == 360
 
 
-async def test_non_expression_examples_get_one_targeted_repair_then_full_review(plugin):
+async def test_non_expression_examples_are_discarded_before_full_review(plugin):
     scope = await sources(plugin)
     plugin.settings["learning_review_enabled"] = True
     repairs = []
@@ -83,7 +83,7 @@ async def test_non_expression_examples_get_one_targeted_repair_then_full_review(
 
     plugin.context.llm_generate.side_effect = generate
     result = await plugin.learn(scope)
-    assert result["status"] == "success" and len(repairs) == len(reviews) == 1
+    assert result["status"] == "success" and not repairs and len(reviews) == 1
     state = await plugin.store.call("state", scope)
     assert state["scope"]["pending"] == 0
     assert all(

@@ -16,6 +16,7 @@ from types import SimpleNamespace
 import jsonschema
 from astrbot.api import logger
 
+from .native_context import conversation_metadata
 from .participation import event_source
 from .runtime_diagnostics import await_path
 from .settings import learning_blocked
@@ -578,6 +579,11 @@ class RoomState:
         return {"paragraphs": hits, "relations": edges, "episodes": episodes}
 
     async def midterm_records(self, cid, limit):
+        from .vendor.maibot.amemorix.utils.async_work import run_sync_work
+
+        return await run_sync_work(self._midterm_records, cid, limit)
+
+    def _midterm_records(self, cid, limit):
         rows = self.metadata._conn.execute(
             "SELECT hash,metadata FROM paragraphs WHERE source=? AND json_extract(metadata,'$.midterm.cid')=? ORDER BY created_at DESC",
             ("chat_summary:" + self.path.name, cid),
@@ -1291,8 +1297,10 @@ class RoomMemory:
                 )
             )
             conversation = (
-                await self.plugin.context.conversation_manager.get_conversation(
-                    event.unified_msg_origin, cid
+                await conversation_metadata(
+                    self.plugin.context.conversation_manager,
+                    event.unified_msg_origin,
+                    cid,
                 )
                 if cid
                 else None

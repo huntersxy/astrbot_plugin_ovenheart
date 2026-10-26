@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import weakref
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
@@ -18,6 +19,67 @@ from astrbot_plugin_ovenheart.main import ParticipationFilter
 from tests.test_runtime import event
 
 pytest_plugins = ["tests.test_participation"]
+
+
+async def test_completed_native_owner_releases_parked_reply_tool(native_planner):
+    plugin, provider = native_planner
+    provider.text_chat.side_effect = [
+        action("reply", msg_id="1", reply_reference="接住当前请求。")
+    ]
+    incoming = event("owner-finished", text="这个问题你怎么看")
+    held = {}
+
+    async def dispatch():
+        incoming.set_extra("ovenheart_native_task", weakref.ref(asyncio.current_task()))
+        held["replies"] = plugin.participate(incoming)
+        await anext(held["replies"])
+        held["session"] = next(iter(plugin.participation.planner.sessions.values()))
+
+    try:
+        await asyncio.create_task(dispatch())
+        await asyncio.sleep(0)
+        assert not plugin.participation.planner.sessions
+        assert held["session"].pending.cancelled()
+    finally:
+        if "replies" in held:
+            await held["replies"].aclose()
+
+
+@pytest.mark.parametrize("raises", [False, True])
+async def test_native_send_failure_does_not_acknowledge_success_or_retry(
+    native_planner, raises
+):
+    plugin, provider = native_planner
+    provider.text_chat.side_effect = [
+        action("reply", msg_id="1", reply_reference="回答这条请求。")
+    ]
+    incoming = event("failed-native-send", text="能帮我看看吗")
+    replies = plugin.participate(incoming)
+    await anext(replies)
+    original = (
+        AsyncMock(side_effect=RuntimeError("platform timeout"))
+        if raises
+        else AsyncMock(return_value=False)
+    )
+    incoming.send = original
+    plugin.outgoing_media.bind_event(incoming)
+    incoming.set_result(incoming.plain_result("这是回复正文"))
+    try:
+        if raises:
+            with pytest.raises(RuntimeError):
+                await incoming.send(incoming.get_result())
+        else:
+            assert await incoming.send(incoming.get_result()) is False
+        await plugin.record_delivery(incoming)
+        receipt = incoming.get_extra("ovenheart_planner_receipt")
+        assert not receipt["send_hook"] and receipt["delivery_uncertain"]
+        assert receipt["reply_text"] == ""
+        with pytest.raises(StopAsyncIteration):
+            await anext(replies)
+        assert original.await_count == 1
+        assert not plugin.participation.planner.sessions
+    finally:
+        await replies.aclose()
 
 
 def action(name, **arguments):

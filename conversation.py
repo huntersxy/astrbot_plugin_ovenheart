@@ -16,6 +16,7 @@ from astrbot.api import logger
 from astrbot.api.platform import MessageType
 from astrbot.core.message.components import At, Image, Plain, Reply
 
+from .native_context import conversation_metadata
 from .participation import event_source
 
 CONTEXT_COUNT = 40
@@ -150,10 +151,8 @@ class ConversationContext:
             return []
         lower = time.time() - self.plugin.settings["retention_days"] * 86400
         if cid:
-            conversation = (
-                await self.plugin.context.conversation_manager.get_conversation(
-                    event.unified_msg_origin, cid
-                )
+            conversation = await conversation_metadata(
+                self.plugin.context.conversation_manager, event.unified_msg_origin, cid
             )
             lower = max(
                 lower, float(conversation.created_at or 0) if conversation else 0
@@ -295,13 +294,16 @@ class ConversationContext:
             if requested and cid and requested != cid:
                 return None
             native = (
-                await self.plugin.context.conversation_manager.get_conversation(
-                    event.unified_msg_origin, cid
+                await conversation_metadata(
+                    self.plugin.context.conversation_manager,
+                    event.unified_msg_origin,
+                    cid,
+                    history_state=True,
                 )
                 if cid
                 else None
             )
-            native_seen = bool(json.loads(native.history or "[]")) if native else None
+            native_seen = native.has_history if native else None
             state = await self.plugin.store.call(
                 "chat_context", scope, cid, None, None, native_seen
             )

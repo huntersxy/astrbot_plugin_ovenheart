@@ -84,17 +84,10 @@ class NativeMemoryKernel(SDKMemoryKernel):
     async def initialize(self):
         await super().initialize()
         if not self._scope_statistics_ready:
-            # Without cardinality statistics SQLite expands every active entity
-            # against every allowed paragraph. Keep the original scoped query,
-            # and refresh its two tables once per runtime with bounded sampling.
-            with self.metadata_store.transaction() as db:
-                previous_limit = db.execute("PRAGMA analysis_limit").fetchone()[0]
-                try:
-                    db.execute("PRAGMA analysis_limit=400")
-                    db.execute("ANALYZE entities")
-                    db.execute("ANALYZE paragraph_entities")
-                finally:
-                    db.execute(f"PRAGMA analysis_limit={previous_limit}")
+            await run_sync_work(self._refresh_scope_statistics)
+            # ANALYZE ran on the worker's connection. Reload its statistics on
+            # the owning read connection without repeating table analysis.
+            self.metadata_store._conn.execute("ANALYZE sqlite_schema")
             self._scope_statistics_ready = True
         if self.sparse_index is None:
             return
@@ -110,6 +103,18 @@ class NativeMemoryKernel(SDKMemoryKernel):
                 self.metadata_store.ensure_paragraph_ngram_backfilled,
                 n=config.char_ngram_n,
             )
+
+    def _refresh_scope_statistics(self):
+        # These two tables need cardinality statistics to avoid a Cartesian
+        # expansion. Disk work must not stall other rooms on the memory loop.
+        with self.metadata_store.transaction() as db:
+            previous_limit = db.execute("PRAGMA analysis_limit").fetchone()[0]
+            try:
+                db.execute("PRAGMA analysis_limit=400")
+                db.execute("ANALYZE entities")
+                db.execute("ANALYZE paragraph_entities")
+            finally:
+                db.execute(f"PRAGMA analysis_limit={previous_limit}")
 
     def _refresh_runtime_dependents(self, *, preserve_managers=True):
         super()._refresh_runtime_dependents(preserve_managers=preserve_managers)

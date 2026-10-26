@@ -57,6 +57,7 @@ from .legacy_import import LivingMemoryImport
 from .memory_bridge import MemoryBridge
 from .memory_consolidation import MemoryConsolidation
 from .midterm import MidTermMemory
+from .native_context import conversation_metadata
 from .outgoing_media import OutgoingMediaBridge
 from .oven_multi import JEV_RULE, OvenMultiBridge
 from .oven_multi import reading as jev_reading
@@ -902,8 +903,8 @@ class PersonaPlugin(Star):
         if conversation is None:
             cid = await self.context.conversation_manager.get_curr_conversation_id(umo)
             if cid:
-                conversation = await self.context.conversation_manager.get_conversation(
-                    umo, cid
+                conversation = await conversation_metadata(
+                    self.context.conversation_manager, umo, cid
                 )
         (
             persona,
@@ -3009,6 +3010,7 @@ class PersonaPlugin(Star):
             event.set_extra(
                 "ovenheart_planner_receipt",
                 {
+                    **event.get_extra("ovenheart_planner_receipt", {}),
                     "send_hook": False,
                     "reply_text": "",
                     "delivery_status": "text send failed; no successful segment observed",
@@ -3159,10 +3161,13 @@ class PersonaPlugin(Star):
                 event.set_extra(
                     "ovenheart_planner_receipt",
                     {
+                        **receipt,
                         "send_hook": True,
-                        "reply_text": (
-                            receipt.get("reply_text", "") + "\n" + text
-                        ).strip()[:4000],
+                        "reply_text": text[:4000]
+                        if receipt.get("delivery_uncertain")
+                        else (receipt.get("reply_text", "") + "\n" + text).strip()[
+                            :4000
+                        ],
                         "target_sequence": plan["target_sequence"],
                         "partial_text": bool(
                             event.get_extra("ovenheart_text_delivery_incomplete")

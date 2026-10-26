@@ -1317,6 +1317,10 @@ class ParticipationController:
                 event.set_extra("ovenheart_planner_status", "session_missing")
             return None
         receipt = event.get_extra("ovenheart_planner_receipt")
+        if receipt and receipt.get("delivery_uncertain"):
+            event.set_extra("ovenheart_planner_status", "delivery_uncertain")
+            self.planner.forget(previous["scope"], session)
+            return None
         event.set_extra(
             "ovenheart_planner_status",
             {
