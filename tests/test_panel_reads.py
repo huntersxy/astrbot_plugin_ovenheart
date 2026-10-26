@@ -12,6 +12,36 @@ from tests.test_runtime import api_call, sources
 pytest_plugins = ["tests.test_runtime"]
 
 
+async def test_runtime_paths_follow_async_generators_without_exposing_locals(plugin):
+    gate = asyncio.Event()
+
+    async def stalled_stream():
+        private_message = "runtime-diagnostic-private-message"
+        await gate.wait()
+        yield private_message
+
+    async def consume():
+        async for _ in stalled_stream():
+            pass
+
+    tasks = [asyncio.create_task(consume()) for _ in range(2)]
+    try:
+        await asyncio.sleep(0)
+        result = await plugin.page_api.runtime()
+        matching = [
+            item
+            for item in result["data"]
+            if any(":stalled_stream" in frame for frame in item["await_path"])
+        ]
+        assert len(matching) == 1 and matching[0]["count"] == 2
+        assert any(":wait" in frame for frame in matching[0]["await_path"])
+        assert "runtime-diagnostic-private-message" not in json.dumps(result)
+    finally:
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+
 async def test_light_views_select_scope_once_without_traits_or_history(
     plugin, monkeypatch
 ):

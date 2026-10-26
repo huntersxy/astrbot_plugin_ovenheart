@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import gc
 import json
 import sqlite3
 import time
@@ -36,6 +37,7 @@ class PageAPI:
         """Register routes using the same plugin namespace as the Panel view."""
         for route, handler, method in (
             ("state", self.state, "GET"),
+            ("runtime", self.runtime, "GET"),
             ("memory", self.memory_panel.read, "GET"),
             ("memory/image", self.memory_panel.image, "GET"),
             ("memory/action", self.memory_panel.action, "POST"),
@@ -55,6 +57,48 @@ class PageAPI:
                 [method],
                 f"Persona workshop {route}",
             )
+
+    async def runtime(self):
+        """Group live await paths without exposing messages or frame locals."""
+        paths = {}
+        for task in asyncio.all_tasks():
+            if task is asyncio.current_task():
+                continue
+            current = task.get_coro()
+            chain = []
+            for _ in range(48):
+                frame = getattr(current, "cr_frame", None) or getattr(
+                    current, "ag_frame", None
+                )
+                if frame is not None:
+                    filename = frame.f_code.co_filename.replace("\\", "/")
+                    chain.append(
+                        f"{'/'.join(filename.split('/')[-4:])}:"
+                        f"{frame.f_lineno}:{frame.f_code.co_name}"
+                    )
+                current = (
+                    getattr(current, "cr_await", None)
+                    or getattr(current, "ag_await", None)
+                    or next(
+                        (
+                            item
+                            for item in gc.get_referents(current)
+                            if hasattr(item, "ag_frame")
+                        ),
+                        None,
+                    )
+                )
+                if current is None:
+                    break
+            key = tuple(chain)
+            paths[key] = paths.get(key, 0) + 1
+        return {
+            "status": "ok",
+            "data": [
+                {"count": count, "await_path": list(path)}
+                for path, count in sorted(paths.items(), key=lambda item: -item[1])
+            ],
+        }
 
     async def state(self):
         """Return current settings, integration status and selected scope data.
