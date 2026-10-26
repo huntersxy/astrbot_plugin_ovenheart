@@ -7,6 +7,7 @@ import gc
 import json
 import sqlite3
 import time
+from types import AsyncGeneratorType
 
 from astrbot.api import logger
 from astrbot.api.web import request
@@ -38,6 +39,7 @@ class PageAPI:
         for route, handler, method in (
             ("state", self.state, "GET"),
             ("runtime", self.runtime, "GET"),
+            ("runtime/generators", self.runtime_generators, "GET"),
             ("memory", self.memory_panel.read, "GET"),
             ("memory/image", self.memory_panel.image, "GET"),
             ("memory/action", self.memory_panel.action, "POST"),
@@ -99,6 +101,34 @@ class PageAPI:
                 for path, count in sorted(paths.items(), key=lambda item: -item[1])
             ],
         }
+
+    async def runtime_generators(self):
+        """Locate native pipelines suspended at a yield while holding resources."""
+        from astrbot.api.event import AstrMessageEvent
+
+        rows = []
+        for item in gc.get_objects():
+            if isinstance(item, AsyncGeneratorType):
+                frame = item.ag_frame
+                if frame is None:
+                    continue
+                event = frame.f_locals.get("event")
+                if not isinstance(event, AstrMessageEvent):
+                    continue
+                filename = frame.f_code.co_filename.replace("\\", "/")
+                rows.append(
+                    {
+                        "location": f"{'/'.join(filename.split('/')[-4:])}:"
+                        f"{frame.f_lineno}:{frame.f_code.co_name}",
+                        "awaiting": item.ag_await is not None,
+                        "trace_id": event.trace.trace_id,
+                        "stopped": event.is_stopped(),
+                        "preempted": bool(
+                            event.get_extra("ovenheart_priority_preempted")
+                        ),
+                    }
+                )
+        return {"status": "ok", "data": rows}
 
     async def state(self):
         """Return current settings, integration status and selected scope data.

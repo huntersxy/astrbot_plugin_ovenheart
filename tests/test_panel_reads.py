@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
-from tests.test_runtime import api_call, sources
+from tests.test_runtime import api_call, event, sources
 
 pytest_plugins = ["tests.test_runtime"]
 
@@ -40,6 +40,25 @@ async def test_runtime_paths_follow_async_generators_without_exposing_locals(plu
         for task in tasks:
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
+
+
+async def test_runtime_finds_pipeline_parked_at_yield(plugin):
+    source = event(text="private-dormant-generator-message")
+
+    async def parked_pipeline(event):
+        yield event.get_message_str()
+
+    pipeline = parked_pipeline(source)
+    try:
+        await anext(pipeline)
+        result = await plugin.page_api.runtime_generators()
+        row = next(
+            item for item in result["data"] if ":parked_pipeline" in item["location"]
+        )
+        assert not row["awaiting"] and row["trace_id"] == source.trace.trace_id
+        assert "private-dormant-generator-message" not in json.dumps(result)
+    finally:
+        await pipeline.aclose()
 
 
 async def test_light_views_select_scope_once_without_traits_or_history(
