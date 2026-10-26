@@ -15,6 +15,7 @@ from astrbot.core.star.session_plugin_manager import SessionPluginManager
 
 from . import prompts
 from .learning import build_guidance, build_guidance_parts, habit_text
+from .memory_panel import MemoryPanel
 from .native_context import native_time
 from .settings import PROFILE_DEFAULTS, SHARED_SCOPE, learning_blocked
 
@@ -29,11 +30,15 @@ class PageAPI:
     def __init__(self, plugin):
         self.plugin = plugin
         self.model_preview_running = False
+        self.memory_panel = MemoryPanel(plugin)
 
     def register(self):
         """Register routes using the same plugin namespace as the Panel view."""
         for route, handler, method in (
             ("state", self.state, "GET"),
+            ("memory", self.memory_panel.read, "GET"),
+            ("memory/image", self.memory_panel.image, "GET"),
+            ("memory/action", self.memory_panel.action, "POST"),
             ("library", self.library, "GET"),
             ("tools", self.tools, "GET"),
             ("history", self.history, "GET"),

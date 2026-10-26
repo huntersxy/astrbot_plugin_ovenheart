@@ -83,7 +83,7 @@ function updateHeader() {
   scopeSelect.innerHTML = data.scopes.length ? data.scopes.map(s => `<option value="${escape(s.id)}">${escape(s.label)} / ${escape(s.persona === "[%None]" ? "未设置人格" : s.persona)}</option>`).join("") : '<option value="">尚无学习会话</option>';
   scopeSelect.value = selectedScope;
   scopeSelect.disabled = !data.scopes.length;
-  $("#scope-label").textContent = data.settings.session_isolation ? "会话与人格" : "学习素材来源";
+  $("#scope-label").textContent = tab === "memory" || data.settings.session_isolation ? "会话与人格" : "学习素材来源";
   $("#session-status").textContent = data.scope ? `${data.scope.pending} 条待学素材，${data.active_count ?? data.traits.filter(t => t.status === "active").length} 条当前可用习惯已生效` : "收到有效聊天消息后，会话将自动出现在这里。";
   $("#memory-status").textContent = !data.settings.memory_enabled ? "记忆参考已关闭" : data.settings.native_memory_enabled ? "原生记忆已启用 · 按会话与人格隔离" : data.memory.message || "原生记忆未启用";
   $("#review-count").textContent = (data.review_count ?? data.scopes.reduce((sum, scope) => sum + scope.review_count, 0)) || "";
@@ -175,6 +175,7 @@ function render() {
   if (tab === "profile") renderProfile();
   else if (tab === "library") renderLibrary();
   else if (tab === "history") renderHistory();
+  else if (tab === "memory") renderMemory();
   else if (tab === "prompts") renderPrompts();
   else renderSettings();
 }
@@ -478,13 +479,22 @@ function bindSettingsTabs(active, memoryPage) {
   select(active);
 }
 
-function renderSettings() {
+function renderMemory() {
+  window.OvenHeartMemory.render({
+    root: $("#content"), data, api, escape, notify, confirmAction,
+    renderSettings: () => renderSettings("#memory-body"),
+    isDirty: () => dirty, editVersion: () => editVersion,
+    clearDirty: () => { dirty = false; },
+  });
+}
+
+function renderSettings(target = "#content") {
   const s = data.settings;
   const settingsRevision = data.settings_revision;
   const memoryPage = tab === "memory";
   const tabs = memoryPage ? {core:"通用与图片", background:"经历与人物", legacy:"旧库迁入"} : {learning:"学习与生效", participation:"群聊参与", expression:"表达与检索", maintenance:"调试与维护"};
   const active = memoryPage ? memorySection : settingsSection;
-  $("#content").innerHTML = `<div class="settings-heading"><h2>${memoryPage ? "记忆" : "设置"}</h2><p>${memoryPage ? "管理记忆能力、后台整理和旧库迁入。记忆始终按会话与人格隔离。" : "按用途调整学习与聊天方式。页内切换标签会保留未保存的修改。"}</p></div>
+  $(target).innerHTML = `<div class="settings-heading"><h2>${memoryPage ? "记忆设置" : "设置"}</h2><p>${memoryPage ? "管理记忆能力、后台整理和旧库迁入。记忆始终按会话与人格隔离。" : "按用途调整学习与聊天方式。页内切换标签会保留未保存的修改。"}</p></div>
     <form id="settings-form"><div class="settings-tabs" role="tablist" aria-label="${memoryPage ? "记忆分类" : "设置分类"}">${Object.entries(tabs).map(([key,label]) => `<button type="button" id="settings-tab-${key}" role="tab" aria-controls="settings-panel-${key}" aria-selected="${key === active}" tabindex="${key === active ? 0 : -1}" data-settings-tab="${key}">${label}</button>`).join("")}</div>
     ${memoryPage ? `<div class="settings-panel settings-grid" id="settings-panel-core" role="tabpanel" aria-labelledby="settings-tab-core" data-settings-panel="core">
 <section class="settings-group"><h2>通用与图片记忆</h2><p>按当前会话与人格保存、检索记忆，独立于旧记忆插件运行。</p>
@@ -745,7 +755,7 @@ async function mutate(action, payload = {}, scope = selectedScope, settingsRevis
 }
 
 function markDirty(event) {
-  if (event.target.id !== "tool-search" && event.target.closest("form") && event.target.closest("form").id !== "preview-form") { dirty = true; editVersion++; }
+  if (event.target.id !== "tool-search" && event.target.closest("form") && !["preview-form", "memory-search"].includes(event.target.closest("form").id)) { dirty = true; editVersion++; }
 }
 $("#content").addEventListener("input", markDirty);
 $("#content").addEventListener("change", markDirty);

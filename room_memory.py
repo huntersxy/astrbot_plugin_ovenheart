@@ -614,6 +614,11 @@ class RoomState:
             if (result := await self.image_asset(row["asset_id"]))["success"]
         ]
 
+    async def admin(self, operation, payload):
+        from .memory_panel import execute_admin
+
+        return await execute_admin(self, operation, payload)
+
     async def legacy_ingest(self, unit):
         from .vendor.maibot.amemorix.utils.hash import compute_hash, normalize_text
 
@@ -1437,7 +1442,7 @@ class RoomMemory:
                 asyncio.get_running_loop(),
             )
             state.image_enabled = self.plugin.settings["image_memory_enabled"] and (
-                state.image_enabled or operation.startswith("image_")
+                state.image_enabled or operation.startswith("image_") or operation == "admin"
             )
             if event is not None:
                 state.event_ref = weakref.ref(event)
