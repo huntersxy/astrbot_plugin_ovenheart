@@ -17,6 +17,7 @@ import jsonschema
 from astrbot.api import logger
 
 from .participation import event_source
+from .runtime_diagnostics import await_path
 from .settings import learning_blocked
 
 MEMORY_SCHEMA = {
@@ -1558,16 +1559,30 @@ class RoomMemory:
             or not self.plugin.settings["memory_enabled"]
         ):
             return []
+        task = asyncio.create_task(self.search(event, scope, persona, query))
         try:
-            return await asyncio.wait_for(
-                self.search(event, scope, persona, query),
-                self.plugin.settings["retrieval_timeout"],
+            done, _ = await asyncio.wait(
+                [task], timeout=self.plugin.settings["retrieval_timeout"]
             )
+            if not done:
+                state = self.rooms.get(scope)
+                logger.warning(
+                    "通用记忆检索超时：等待位置=%s，房间操作=%s，后台模型等待=%s",
+                    " -> ".join(await_path(task.get_coro())),
+                    state.operation if state else "initializing",
+                    state.model_waiting if state else False,
+                )
+                raise TimeoutError
+            return task.result()
         except Exception as exc:
             logger.warning(
                 "本轮通用记忆暂不可用，保留原生回复与现有回忆 (%s)", type(exc).__name__
             )
             return []
+        finally:
+            if not task.done():
+                task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
 
     async def remember(self, event, scope, persona, payload, messages):
         jsonschema.validate(payload, MEMORY_SCHEMA)

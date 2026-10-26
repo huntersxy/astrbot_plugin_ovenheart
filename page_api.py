@@ -19,6 +19,7 @@ from . import prompts
 from .learning import build_guidance, build_guidance_parts, habit_text
 from .memory_panel import MemoryPanel
 from .native_context import native_time
+from .runtime_diagnostics import runtime_paths
 from .settings import PROFILE_DEFAULTS, SHARED_SCOPE, learning_blocked
 
 
@@ -62,44 +63,20 @@ class PageAPI:
 
     async def runtime(self):
         """Group live await paths without exposing messages or frame locals."""
-        paths = {}
-        for task in asyncio.all_tasks():
-            if task is asyncio.current_task():
-                continue
-            current = task.get_coro()
-            chain = []
-            for _ in range(48):
-                frame = getattr(current, "cr_frame", None) or getattr(
-                    current, "ag_frame", None
+        paths = await runtime_paths()
+        loop = self.plugin.room_memory.loop
+        if loop is not None and loop.is_running():
+            snapshot = asyncio.run_coroutine_threadsafe(runtime_paths(), loop)
+            try:
+                paths.extend(
+                    row | {"loop": "memory"}
+                    for row in await asyncio.wait_for(asyncio.wrap_future(snapshot), 0.5)
                 )
-                if frame is not None:
-                    filename = frame.f_code.co_filename.replace("\\", "/")
-                    chain.append(
-                        f"{'/'.join(filename.split('/')[-4:])}:"
-                        f"{frame.f_lineno}:{frame.f_code.co_name}"
-                    )
-                current = (
-                    getattr(current, "cr_await", None)
-                    or getattr(current, "ag_await", None)
-                    or next(
-                        (
-                            item
-                            for item in gc.get_referents(current)
-                            if hasattr(item, "ag_frame")
-                        ),
-                        None,
-                    )
-                )
-                if current is None:
-                    break
-            key = tuple(chain)
-            paths[key] = paths.get(key, 0) + 1
+            except TimeoutError:
+                paths.append({"loop": "memory", "busy": True})
         return {
             "status": "ok",
-            "data": [
-                {"count": count, "await_path": list(path)}
-                for path, count in sorted(paths.items(), key=lambda item: -item[1])
-            ],
+            "data": paths,
         }
 
     async def runtime_generators(self):
