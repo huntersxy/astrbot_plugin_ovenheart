@@ -621,12 +621,17 @@ class PersonaPlugin(Star):
         """Initialize persistence and register native Panel endpoints."""
         global _active
         from .page_api import PageAPI
+        from .runtime_diagnostics import close_retired_turns, reclaim_memory
 
         legacy = self.context.get_registered_star("astrbot_plugin_persona")
         if legacy and getattr(legacy, "activated", False):
             raise ValueError(
                 "请先停用旧版 astrbot_plugin_persona，再启用烤箱之心，避免重复学习与回复。"
             )
+        self.retired_turn_cleanup = await close_retired_turns()
+        self.memory_reclaim = await asyncio.to_thread(
+            reclaim_memory, collect=bool(self.retired_turn_cleanup["retired_events"])
+        )
         schedule = await self.store.call(
             "initialize",
             self.store.path.parent.parent
@@ -4402,6 +4407,9 @@ class PersonaPlugin(Star):
         """Cancel plugin work and remove handlers that reference this instance."""
         global _active
         self.closing = True
+        from .runtime_diagnostics import close_retired_turns, reclaim_memory
+
+        await close_retired_turns()
         self.outgoing_media.disconnect()
         self.group_context.disconnect()
         self.memory.disconnect()
@@ -4433,3 +4441,4 @@ class PersonaPlugin(Star):
                 and getattr(api[1], "__self__", None) is getattr(self, "page_api", None)
             )
         ]
+        await asyncio.to_thread(reclaim_memory, collect=True)

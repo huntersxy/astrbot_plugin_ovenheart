@@ -84,6 +84,62 @@ async def test_reply_deadline_cancels_own_native_session_lock_waiter(native_plan
         pass
 
 
+async def test_retired_turn_cleanup_releases_its_native_lock_and_keeps_other_turns(
+    native_planner,
+):
+    from astrbot.core.utils.session_lock import session_lock_manager
+
+    from astrbot_plugin_ovenheart.runtime_diagnostics import close_retired_turns
+
+    plugin, provider = native_planner
+    provider.text_chat.side_effect = [
+        action("reply", msg_id="1", reply_reference="回应当前消息。")
+    ]
+    incoming = event("old-instance", text="retired-private-message")
+    other = event("unrelated-native", session="other-live-session")
+    entered, released, other_released = asyncio.Event(), asyncio.Event(), asyncio.Event()
+    held = {}
+
+    async def native_phase(event, released):
+        async with session_lock_manager.acquire_lock(event.unified_msg_origin):
+            try:
+                yield
+            finally:
+                released.set()
+
+    unrelated = native_phase(other, other_released)
+    await anext(unrelated)
+
+    async def abandoned_native_pipeline():
+        incoming.set_extra("ovenheart_native_task", weakref.ref(asyncio.current_task()))
+        held["plugin_generator"] = plugin.participate(incoming)
+        await anext(held["plugin_generator"])
+        held["native_generator"] = native_phase(incoming, released)
+        await anext(held["native_generator"])
+        entered.set()
+        # Simulate the host abandoning yielded generators on cancellation.
+        await asyncio.Event().wait()
+
+    owner = asyncio.create_task(abandoned_native_pipeline())
+    try:
+        await asyncio.wait_for(entered.wait(), 3)
+        plugin.closing = True
+        result = await close_retired_turns()
+        assert owner.cancelled() and released.is_set()
+        assert not other_released.is_set()
+        assert held["plugin_generator"].ag_frame is None
+        assert result["retired_events"] == 1 and result["cancelled_tasks"] == 1
+        assert result["closed_generators"] >= 2
+        async with session_lock_manager.acquire_lock(incoming.unified_msg_origin):
+            pass
+    finally:
+        owner.cancel()
+        await asyncio.gather(owner, return_exceptions=True)
+        for generator in held.values():
+            await generator.aclose()
+        await unrelated.aclose()
+
+
 @pytest.mark.parametrize("raises", [False, True])
 async def test_native_send_failure_does_not_acknowledge_success_or_retry(
     native_planner, raises

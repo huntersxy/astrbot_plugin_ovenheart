@@ -19,7 +19,7 @@ from . import prompts
 from .learning import build_guidance, build_guidance_parts, habit_text
 from .memory_panel import MemoryPanel
 from .native_context import native_time
-from .runtime_diagnostics import runtime_paths
+from .runtime_diagnostics import memory_snapshot, runtime_paths
 from .settings import PROFILE_DEFAULTS, SHARED_SCOPE, learning_blocked
 
 
@@ -41,6 +41,7 @@ class PageAPI:
             ("state", self.state, "GET"),
             ("runtime", self.runtime, "GET"),
             ("runtime/generators", self.runtime_generators, "GET"),
+            ("runtime/memory", self.runtime_memory, "GET"),
             ("memory", self.memory_panel.read, "GET"),
             ("memory/image", self.memory_panel.image, "GET"),
             ("memory/action", self.memory_panel.action, "POST"),
@@ -78,6 +79,14 @@ class PageAPI:
             "status": "ok",
             "data": paths,
         }
+
+    async def runtime_memory(self):
+        data = await asyncio.to_thread(memory_snapshot)
+        return {"status": "ok", "data": data | {
+            "retired_turn_cleanup": self.plugin.retired_turn_cleanup,
+            "last_reclaim": self.plugin.memory_reclaim,
+            "memory_rooms": len(self.plugin.room_memory.rooms),
+        }}
 
     async def runtime_generators(self):
         """Locate native pipelines suspended at a yield while holding resources."""

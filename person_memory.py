@@ -13,6 +13,7 @@ from sqlmodel import Session, create_engine
 
 from .learning import decode_model_object
 from .participation import event_source
+from .runtime_diagnostics import limit_metadata_cache
 from .settings import learning_blocked
 from .vendor.maibot.amemorix.host import PersonInfo, bind
 from .vendor.maibot.amemorix.storage.metadata_fact import _normalized_token
@@ -159,6 +160,7 @@ class PersonMemory:
     def _execute(self, operation, args):
         if self.engine is None:
             self.metadata.connect()
+            limit_metadata_cache(self.metadata)
             self.engine = create_engine("sqlite:///" + str(self.path / "metadata.db"))
             PersonInfo.__table__.create(self.engine, checkfirst=True)
             self.metadata._conn.executescript("""

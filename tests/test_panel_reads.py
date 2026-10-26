@@ -42,6 +42,16 @@ async def test_runtime_paths_follow_async_generators_without_exposing_locals(plu
         await asyncio.gather(*tasks, return_exceptions=True)
 
 
+async def test_memory_diagnostics_expose_counters_without_messages(plugin):
+    incoming = event("memory-diagnostic", text="private-memory-diagnostic-text")
+    await plugin.capture(incoming)
+    result = await plugin.page_api.runtime_memory()
+    assert result["status"] == "ok"
+    assert "allocator" in result["data"] and "process_kib" in result["data"]
+    assert "last_reclaim" in result["data"]
+    assert "private-memory-diagnostic-text" not in json.dumps(result)
+
+
 async def test_runtime_finds_pipeline_parked_at_yield(plugin):
     source = event(text="private-dormant-generator-message")
 
