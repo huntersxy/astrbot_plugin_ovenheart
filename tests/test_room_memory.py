@@ -1,6 +1,7 @@
 """Exercise original A_memorix retrieval, graph and Faiss against native sources."""
 
 import asyncio
+import threading
 
 import pytest
 
@@ -76,6 +77,39 @@ async def test_original_sparse_graph_search_retains_native_evidence(memories):
     assert state.graph.num_nodes >= 2
     assert state.metadata.is_paragraph_ngram_ready(n=2)
     assert state.metadata.ngram_search_paragraphs(["ek", "ko", "o喜"], limit=5)
+
+
+async def test_cold_room_warmup_does_not_block_existing_room_recall(
+    memories, monkeypatch
+):
+    from astrbot_plugin_ovenheart.vendor.maibot.amemorix.retrieval.sparse_bm25 import (
+        SparseBM25Index,
+    )
+
+    incoming, scope, persona, messages = await material(memories)
+    await memories.room_memory.remember(incoming, scope, persona, note(), messages)
+    other, other_scope, _, _ = await material(memories, session="cold-room")
+    started, release = threading.Event(), threading.Event()
+    warmup = SparseBM25Index.warmup
+
+    def slow_warmup(index):
+        started.set()
+        release.wait(3)
+        return warmup(index)
+
+    monkeypatch.setattr(SparseBM25Index, "warmup", slow_warmup)
+    cold = asyncio.create_task(
+        memories.room_memory.call(other_scope, "summary_status", event=other)
+    )
+    assert await asyncio.to_thread(started.wait, 3)
+    try:
+        assert await asyncio.wait_for(
+            memories.room_memory.search(incoming, scope, persona, "猫咪"), 1
+        )
+        assert not release.is_set()
+    finally:
+        release.set()
+        await asyncio.wait_for(cold, 5)
 
 
 async def test_original_dual_vector_pools_find_nonlexical_query_and_reload(memories):

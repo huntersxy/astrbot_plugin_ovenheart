@@ -7,6 +7,7 @@ from .vendor.maibot.amemorix.runtime.sdk_memory_kernel import SDKMemoryKernel
 from .vendor.maibot.amemorix.runtime.services.correction_admin_service import (
     MemoryCorrectionAdminService,
 )
+from .vendor.maibot.amemorix.utils.async_work import run_sync_work
 from .vendor.maibot.amemorix.utils.episode_retrieval_service import (
     EpisodeRetrievalService,
 )
@@ -105,7 +106,10 @@ class NativeMemoryKernel(SDKMemoryKernel):
             # Upstream warmup only checks readiness. Initialize existing rooms
             # once; its normal paragraph writes maintain this index thereafter.
             self.metadata_store.ensure_paragraph_ngram_schema()
-            self.metadata_store.ensure_paragraph_ngram_backfilled(n=config.char_ngram_n)
+            await run_sync_work(
+                self.metadata_store.ensure_paragraph_ngram_backfilled,
+                n=config.char_ngram_n,
+            )
 
     def _refresh_runtime_dependents(self, *, preserve_managers=True):
         super()._refresh_runtime_dependents(preserve_managers=preserve_managers)

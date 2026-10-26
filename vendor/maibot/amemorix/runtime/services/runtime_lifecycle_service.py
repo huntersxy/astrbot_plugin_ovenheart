@@ -220,7 +220,7 @@ class MemoryRuntimeLifecycleService(KernelServiceBase):
             )
             sparse_enabled = bool(getattr(self.sparse_index.config, "enabled", False))
             if sparse_enabled:
-                warmup_summary = self.sparse_index.warmup()
+                warmup_summary = await run_sync_work(self.sparse_index.warmup)
                 if not warmup_summary.get("ok"):
                     raise RuntimeError(str(warmup_summary.get("error", "sparse_warmup_failed")))
                 logger.info(
@@ -237,22 +237,27 @@ class MemoryRuntimeLifecycleService(KernelServiceBase):
 
         self._dual_vector_pools_ready = False
         try:
-            self.vector_store = self._make_vector_store(
+            self.vector_store = await run_sync_work(
+                self._make_vector_store,
                 self._vectors_root(),
                 dimension=provisional_dimension,
             )
-            self.paragraph_vector_store = self._make_vector_store(
+            self.paragraph_vector_store = await run_sync_work(
+                self._make_vector_store,
                 self._paragraph_vector_dir(),
                 dimension=provisional_dimension,
             )
-            self.graph_vector_store = self._make_vector_store(
+            self.graph_vector_store = await run_sync_work(
+                self._make_vector_store,
                 self._graph_vector_dir(),
                 dimension=provisional_dimension,
             )
             self._cleanup_stale_dual_vector_build_dirs()
             self._resume_vector_recovery_if_needed()
 
-            self._embedding_state_service._load_vector_stores_for_runtime()
+            await run_sync_work(
+                self._embedding_state_service._load_vector_stores_for_runtime
+            )
             self._set_runtime_capability("vector_read", True)
             self._set_runtime_capability("vector_write", True)
             if self._legacy_vector_view is None:

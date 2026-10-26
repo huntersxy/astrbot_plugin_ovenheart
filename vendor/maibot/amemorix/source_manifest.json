@@ -349,7 +349,7 @@
     "runtime/services/runtime_lifecycle_service.py": {
       "source": "src/A_memorix/core/runtime/services/runtime_lifecycle_service.py",
       "upstream_sha256": "d4212b36c784d004a3cf3e31fffff1aff8260727d7a1eb905a6dea1c91a6cc7e",
-      "ported_sha256": "17da8c3e568aaa55eaee5efdc46548b6f753109b3f32c5477e5bfc32e4c4afeb"
+      "ported_sha256": "d3a23e557aa5831d4863f37206dcef677e2fafa1e83d6f509f01db81badf43a5"
     },
     "image/embedder.py": {
       "source": "src/A_memorix/core/image/embedder.py",

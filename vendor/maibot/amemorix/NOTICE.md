@@ -56,3 +56,8 @@ a managed transaction to fix a reproduced database lock before graph persistence
 The original correction service is not modified. Kernel-level validation is not
 production takeover; the remaining native routing/migration work is documented
 in `docs/design/native-memory-kernel.md`.
+
+The AstrBot lifecycle adapter also sends sparse warmup, vector-store construction
+and vector loading through the original cancellation-aware `run_sync_work`
+boundary. The initialization order, algorithms and storage ownership remain the
+same; cold-room disk work no longer blocks other rooms on the memory event loop.

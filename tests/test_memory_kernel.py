@@ -284,6 +284,23 @@ def test_full_kernel_sources_match_the_pinned_algorithms():
         pytest.skip("pinned upstream checkout unavailable")
 
     class Algorithms(ast.NodeTransformer):
+        def visit_Await(self, node):
+            call = node.value
+            if (
+                self.filename == "runtime/services/runtime_lifecycle_service.py"
+                and isinstance(call, ast.Call)
+                and isinstance(call.func, ast.Name)
+                and call.func.id == "run_sync_work"
+                and call.args
+                and isinstance(call.args[0], ast.Attribute)
+                and call.args[0].attr
+                in {"warmup", "_make_vector_store", "_load_vector_stores_for_runtime"}
+            ):
+                return ast.Call(
+                    func=call.args[0], args=call.args[1:], keywords=call.keywords
+                )
+            return self.generic_visit(node)
+
         def visit_ImportFrom(self, node):
             return None
 
