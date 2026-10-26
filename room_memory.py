@@ -19,7 +19,7 @@ from astrbot.api import logger
 from .native_context import conversation_metadata
 from .participation import event_source
 from .runtime_diagnostics import await_path
-from .settings import learning_blocked
+from .settings import SHARED_SCOPE, learning_blocked
 
 MEMORY_SCHEMA = {
     "type": "object",
@@ -1394,10 +1394,9 @@ class RoomMemory:
             return False
         if (await self.plugin.resolve_scope(event))[:2] != (scope, persona):
             return False
-        state = await self.plugin.store.call(
-            "guidance", scope, not s["session_isolation"]
+        profile = await self.plugin.store.read(
+            "scope_profile", scope if s["session_isolation"] else SHARED_SCOPE
         )
-        profile = state.get("scope")
         if not profile or not profile["profile"]["apply_enabled"]:
             return False
         if learning and (

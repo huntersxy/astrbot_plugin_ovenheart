@@ -1450,10 +1450,10 @@ class PersonaPlugin(Star):
         ):
             return False
         scope, _, _ = await self.resolve_scope(event)
-        state = await self.store.call(
-            "guidance", scope, not self.settings["session_isolation"]
+        profile = await self.store.read(
+            "scope_profile", scope if self.settings["session_isolation"] else SHARED_SCOPE
         )
-        return not state["scope"] or bool(state["scope"]["profile"]["apply_enabled"])
+        return not profile or bool(profile["profile"]["apply_enabled"])
 
     def register_direct_request(self, event, scope: str, req=None):
         """Track a live native turn using metadata and weak references only.

@@ -1,6 +1,7 @@
 """Exercise transaction, review and rollback invariants using a real SQLite DB."""
 
 import asyncio
+import sqlite3
 
 import pytest
 
@@ -60,6 +61,31 @@ async def test_capture_deduplicates_and_separates_scope(store):
     await seed(store, "b" * 24)
     assert len(await store.call("batch", "a" * 24, 30)) == 3
     assert len(await store.call("batch", "b" * 24, 30)) == 3
+
+
+@pytest.mark.parametrize("operation", ["guidance", "scope_profile"])
+async def test_reply_reads_bypass_pending_writer_and_observe_committed_revocation(
+    store, operation
+):
+    scope = "a" * 24
+    await seed(store, scope)
+    writer = sqlite3.connect(store.path)
+    try:
+        writer.execute("BEGIN IMMEDIATE")
+        writer.execute(
+            "UPDATE scopes SET profile=json_set(profile,'$.apply_enabled',0) WHERE id=?",
+            (scope,),
+        )
+        async with store.lock:
+            snapshot = await asyncio.wait_for(store.call(operation, scope), 1)
+            profile = snapshot["scope"] if operation == "guidance" else snapshot
+            assert profile["profile"]["apply_enabled"]
+        writer.commit()
+        snapshot = await store.call(operation, scope)
+        profile = snapshot["scope"] if operation == "guidance" else snapshot
+        assert not profile["profile"]["apply_enabled"]
+    finally:
+        writer.close()
 
 
 async def test_failure_preserves_sources_and_success_consumes_only_snapshot(store):

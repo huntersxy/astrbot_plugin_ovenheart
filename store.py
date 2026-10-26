@@ -21,7 +21,7 @@ from .settings import (
 
 
 class Store:
-    """Serialize transactions and give every operation its own connection."""
+    """Serialize writes; serve reply/Panel reads from consistent WAL snapshots."""
 
     def __init__(self, path: Path):
         self.path = path
@@ -37,6 +37,8 @@ class Store:
         Returns:
             The result produced by the operation.
         """
+        if operation in {"guidance", "scope_profile"}:
+            return await self.read(operation, *args)
         async with self.lock:
             # Shield the worker so cancellation cannot release the lock mid-write.
             task = asyncio.create_task(
@@ -49,12 +51,13 @@ class Store:
                 raise
 
     async def read(self, operation: str, *args):
-        """Panel-only consistent WAL reads never queue behind the write lock."""
+        """Consistent WAL reads never queue behind the write lock."""
         if operation not in {
             "state",
             "library",
             "auxiliary_usage",
             "scope_profile",
+            "guidance",
             "panel_history",
             "history_detail",
         }:
