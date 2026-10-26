@@ -201,8 +201,17 @@ def parse_learning_review(text: str, count: int) -> dict[int, str | None]:
             raise LearningFormatError("自检返回重复或未知的候选编号。")
         verdicts[identifier] = None
     for row in data["flagged"]:
-        if not isinstance(row, dict) or set(row) != {"candidate_id", "reason"}:
-            raise LearningFormatError("自检标记必须包含 candidate_id 与 reason。")
+        if not isinstance(row, dict):
+            raise LearningFormatError("flagged 每项必须是包含 candidate_id 与 reason 的对象。")
+        missing = {"candidate_id", "reason"} - set(row)
+        if missing:
+            raise LearningFormatError(
+                "自检标记缺少字段：" + "、".join(sorted(missing)) + "。"
+            )
+        if set(row) != {"candidate_id", "reason"}:
+            raise LearningFormatError(
+                "自检标记含多余字段；每项只保留 candidate_id 与 reason，不能附带或改写候选内容。"
+            )
         identifier, reason = row["candidate_id"], row["reason"]
         if (
             type(identifier) is not int

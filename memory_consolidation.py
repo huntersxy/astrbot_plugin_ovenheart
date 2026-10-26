@@ -100,6 +100,7 @@ class MemoryConsolidation:
 
     async def consolidate(self, event, scope, persona, messages):
         revision = self.plugin.settings_revision
+        phase = "permissions"
         try:
             if not await self.permitted(event, scope, persona):
                 return
@@ -116,6 +117,7 @@ class MemoryConsolidation:
             host_loop = asyncio.get_running_loop()
 
             async def generate_native(request, metadata):
+                nonlocal phase
                 if (
                     revision != self.plugin.settings_revision
                     or not await self.permitted(event, scope, persona)
@@ -129,17 +131,20 @@ class MemoryConsolidation:
                         + json.dumps(SUMMARY_SCHEMA, ensure_ascii=False)
                     )
                 async with self.plugin.room_memory.model_window(scope):
+                    phase = "summary_model" if is_summary else "episode_model"
                     response = await self.plugin.auxiliary.generate(
                         "memory_summary" if is_summary else "memory_episode",
                         chat_provider_id=provider_id,
                         prompt=prompt,
                     )
+                phase = "validation"
                 if (
                     revision != self.plugin.settings_revision
                     or not await self.permitted(event, scope, persona)
                 ):
                     raise ValueError("摘要生成期间来源或学习权限已改变。")
                 if not is_summary:
+                    phase = "episode_write"
                     return response.completion_text
                 payload = decode_model_object(response.completion_text)
                 jsonschema.validate(payload, SUMMARY_SCHEMA)
@@ -171,6 +176,7 @@ class MemoryConsolidation:
                 metadata.update(
                     evidence=proofs, participants=sorted({m["sender"] for m in proofs})
                 )
+                phase = "summary_write"
                 return json.dumps(payload, ensure_ascii=False)
 
             async def generate(request, metadata):
@@ -179,6 +185,7 @@ class MemoryConsolidation:
                 )
                 return await asyncio.wrap_future(future)
 
+            phase = "queue_or_initialize"
             result = await asyncio.wait_for(
                 self.plugin.room_memory.call(
                     scope,
@@ -197,7 +204,9 @@ class MemoryConsolidation:
             raise
         except Exception as exc:
             logger.warning(
-                "群聊记忆整理未完成，保留原记忆与待处理素材 (%s)", type(exc).__name__
+                "群聊记忆整理未完成，保留已提交记忆与未处理素材 (%s, phase=%s)",
+                type(exc).__name__,
+                phase,
             )
         finally:
             self.busy.pop(scope, None)

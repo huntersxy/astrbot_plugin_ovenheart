@@ -3562,6 +3562,12 @@ class PersonaPlugin(Star):
             "learning_transfer_policy": LEARNING_TRANSFER_RULE,
             "memory_context": memories,
             "candidates": candidates,
+            "output_contract": {
+                "approved_ids": "整数候选编号数组",
+                "flagged": [{"candidate_id": "整数候选编号", "reason": "1到240字的具体问题"}],
+                "allowed_candidate_ids": list(range(1, len(candidates) + 1)),
+                "rules": "全部候选恰好分区一次；只输出上述两种结果字段，不输出候选内容或其他字段。",
+            },
         }
         for attempt in range(2):
             request_prompt = prompts.auxiliary_payload(system, payload)

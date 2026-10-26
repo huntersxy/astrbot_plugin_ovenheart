@@ -45,6 +45,45 @@ async def test_completed_native_owner_releases_parked_reply_tool(native_planner)
             await held["replies"].aclose()
 
 
+async def test_reply_deadline_cancels_own_native_session_lock_waiter(native_planner):
+    from astrbot.core.utils.session_lock import session_lock_manager
+
+    plugin, provider = native_planner
+    plugin.settings["planner_reply_timeout"] = 0.5
+    provider.text_chat.side_effect = [
+        action("reply", msg_id="1", reply_reference="处理当前问题。")
+    ]
+    incoming = event("queued-native-reply", text="请处理这个问题")
+    queued = asyncio.Event()
+
+    async def native_dispatch():
+        incoming.set_extra("ovenheart_native_task", weakref.ref(asyncio.current_task()))
+        replies = plugin.participate(incoming)
+        try:
+            await anext(replies)
+            queued.set()
+            async with session_lock_manager.acquire_lock(incoming.unified_msg_origin):
+                pytest.fail("timed-out reply entered a different request's lock")
+        finally:
+            await replies.aclose()
+
+    async with session_lock_manager.acquire_lock(incoming.unified_msg_origin):
+        native = asyncio.create_task(native_dispatch())
+        try:
+            await asyncio.wait_for(queued.wait(), 3)
+            with pytest.raises(asyncio.CancelledError):
+                await asyncio.wait_for(native, 2)
+            assert incoming.is_stopped()
+            assert incoming.get_extra("ovenheart_planner_status") == "reply_timeout"
+            assert not plugin.participation.planner.sessions
+            assert provider.text_chat.await_count == 1
+        finally:
+            native.cancel()
+            await asyncio.gather(native, return_exceptions=True)
+    async with session_lock_manager.acquire_lock(incoming.unified_msg_origin):
+        pass
+
+
 @pytest.mark.parametrize("raises", [False, True])
 async def test_native_send_failure_does_not_acknowledge_success_or_retry(
     native_planner, raises

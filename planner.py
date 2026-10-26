@@ -13,6 +13,7 @@ import weakref
 from uuid import uuid4
 
 import jsonschema
+from astrbot.api import logger
 from astrbot.core.agent.tool import FunctionTool, ToolSet
 
 from .learning import build_guidance
@@ -20,6 +21,7 @@ from .native_context import native_time
 from .participation import event_source, offered_messages, parse_plan, planner_message
 from .person_memory import FACTS_SCHEMA
 from .room_memory import CHANGE_SCHEMAS, MEMORY_SCHEMA
+from .runtime_diagnostics import await_path
 from .settings import SHARED_SCOPE
 
 PLANNER_SYSTEM = """你正在以当前人格参加真实聊天。你负责持续规划，正文由 reply 工具的回复器生成。
@@ -387,7 +389,33 @@ class PlannerSession:
         self.pending = asyncio.get_running_loop().create_future()
         self.trace(name, target=plan.get("target_sequence"))
         await self.actions.put(plan)
-        result = await self.pending
+        try:
+            result = (
+                await asyncio.wait_for(
+                    self.pending, self.settings["planner_reply_timeout"]
+                )
+                if plan["action"] == "reply"
+                else await self.pending
+            )
+        except asyncio.TimeoutError:
+            owner_ref = self.event.get_extra("ovenheart_native_task")
+            native = owner_ref() if callable(owner_ref) else None
+            waiting = " -> ".join(await_path(native.get_coro())) if native else "unknown"
+            logger.warning(
+                "原生回复回执超过 %s 秒，取消本轮且不自动重发；等待位置=%s",
+                self.settings["planner_reply_timeout"],
+                waiting,
+            )
+            self.event.set_extra("ovenheart_planner_status", "reply_timeout")
+            self.event.set_extra("agent_stop_requested", True)
+            self.event.stop_event()
+            if native is not None and native is not asyncio.current_task() and not native.done():
+                native.cancel()
+            self.owner.forget(self.scope, self)
+            raise
+        except asyncio.CancelledError:
+            self.owner.forget(self.scope, self)
+            raise
         return json.dumps(result, ensure_ascii=False)
 
     async def check_current(self):

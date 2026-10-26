@@ -9,6 +9,13 @@ import time
 from astrbot.api import logger
 from astrbot.core.agent.message import Message, TextPart
 
+BACKGROUND_MODEL_TIMEOUTS = {
+    "memory_summary": 60,
+    "memory_episode": 60,
+    "memory_feedback": 45,
+    "memory_maintenance": 45,
+}
+
 
 class AuxiliaryUsage:
     def __init__(self, context, store):
@@ -22,7 +29,12 @@ class AuxiliaryUsage:
         self.native_unavailable = 0
 
     async def generate(self, stage, **kwargs):
-        return await self.measure(stage, self.context.llm_generate, kwargs)
+        return await self.measure(
+            stage,
+            self.context.llm_generate,
+            kwargs,
+            timeout=BACKGROUND_MODEL_TIMEOUTS.get(stage),
+        )
 
     async def tool_loop(self, stage, **kwargs):
         """Meter each native transport call without changing the shared provider."""
@@ -34,12 +46,16 @@ class AuxiliaryUsage:
         )
         return await Context.tool_loop_agent(context, **kwargs)
 
-    async def measure(self, stage, invoke, kwargs, *, provider_id=None):
+    async def measure(self, stage, invoke, kwargs, *, provider_id=None, timeout=None):
         started = time.monotonic()
         response = None
         status = "error"
         try:
-            response = await invoke(**kwargs)
+            response = (
+                await invoke(**kwargs)
+                if timeout is None
+                else await asyncio.wait_for(invoke(**kwargs), timeout)
+            )
             status = "error" if getattr(response, "role", "") == "err" else "success"
             return response
         except asyncio.CancelledError:

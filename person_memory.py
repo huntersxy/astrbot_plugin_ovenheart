@@ -20,6 +20,9 @@ from .vendor.maibot.amemorix.storage.metadata_store import MetadataStore
 from .vendor.maibot.amemorix.utils.person_profile_service import PersonProfileService
 from .vendor.maibot.amemorix.utils.profile_text import build_profile_injection_text
 
+PERSON_MODEL_TIMEOUT = 60
+PERSON_REPAIR_RESERVE = 15
+
 SECTIONS = [
     "identity_settings",
     "relationship_settings",
@@ -480,9 +483,9 @@ class PersonMemory:
                 ],
                 "output_schema": FACTS_SCHEMA,
             }
-            deadline = time.monotonic() + 60
+            deadline = time.monotonic() + PERSON_MODEL_TIMEOUT
             for attempt in range(2):
-                phase, reason = ("model" if not attempt else "repair_model"), ""
+                phase = "model" if not attempt else "repair_model"
                 response = await asyncio.wait_for(
                     self.plugin.auxiliary.generate(
                         "person_memory" if not attempt else "person_memory_repair",
@@ -490,7 +493,11 @@ class PersonMemory:
                         system_prompt=EXTRACT_SYSTEM,
                         prompt=json.dumps(inputs, ensure_ascii=False),
                     ),
-                    timeout=max(0, deadline - time.monotonic()),
+                    timeout=max(
+                        0,
+                        deadline - time.monotonic()
+                        - (PERSON_REPAIR_RESERVE if not attempt else 0),
+                    ),
                 )
                 phase = "validation"
                 try:
@@ -502,6 +509,9 @@ class PersonMemory:
                     if attempt:
                         raise
                     inputs["validation_error"] = reason
+                    inputs["previous_output_as_untrusted_data"] = (
+                        response.completion_text or ""
+                    )[:12000]
                     inputs["correction_instruction"] = (
                         "上次结果未通过校验，请按上述错误重新提取完整 facts。"
                         "只用 messages 中的 source_id 和对应原文子串，不能编造证据或更正对象。"

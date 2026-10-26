@@ -346,3 +346,28 @@ async def test_real_learning_requests_keep_both_passes_and_same_system_prefix(pl
     assert a["observations"] == b["observations"]
     assert a["stage_instruction"] != b["stage_instruction"]
     assert all("task" not in p for p in [a, b])
+
+
+async def test_background_model_deadline_cancels_transport_without_affecting_reply(
+    plugin, monkeypatch
+):
+    from astrbot_plugin_ovenheart.auxiliary import BACKGROUND_MODEL_TIMEOUTS
+
+    cancelled = asyncio.Event()
+
+    async def slow(**kwargs):
+        try:
+            await asyncio.Event().wait()
+        finally:
+            cancelled.set()
+
+    monkeypatch.setitem(BACKGROUND_MODEL_TIMEOUTS, "memory_episode", 0.02)
+    plugin.context.llm_generate.side_effect = slow
+    with pytest.raises(asyncio.TimeoutError):
+        await plugin.auxiliary.generate("memory_episode", chat_provider_id="model")
+    assert cancelled.is_set()
+    assert plugin.auxiliary.pending[-1]["errors"] == 1
+    assert plugin.auxiliary.pending[-1]["cancelled"] == 0
+    plugin.context.llm_generate.side_effect = None
+    expected = plugin.context.llm_generate.return_value
+    assert await plugin.auxiliary.generate("native_reply", chat_provider_id="model") is expected

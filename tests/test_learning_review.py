@@ -40,6 +40,17 @@ def test_reviewer_must_partition_exact_candidates_without_rewriting(data):
         parse_learning_review(json.dumps(data), 2)
 
 
+def test_review_distinguishes_missing_fields_from_extra_content():
+    with pytest.raises(LearningFormatError, match="缺少字段：reason"):
+        parse_learning_review('{"approved_ids":[],"flagged":[{"candidate_id":1}]}', 1)
+    with pytest.raises(LearningFormatError, match="多余字段") as error:
+        parse_learning_review(
+            '{"approved_ids":[],"flagged":[{"candidate_id":1,"reason":"证据不足","private-model-field":"private-content"}]}',
+            1,
+        )
+    assert "private" not in str(error.value)
+
+
 def test_review_accepts_all_flagged_and_preserves_visible_reasons():
     result = parse_learning_review(
         '```json\n{"approved_ids":[],"flagged":[{"candidate_id":2,"reason":" 条件过度扩大 "},{"candidate_id":1,"reason":"人类身份不属于机器人"}]}\n```',

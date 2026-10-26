@@ -331,6 +331,7 @@ async def test_background_extraction_repairs_evidence_once_before_writing(
     assert person.context.llm_generate.await_count == 2
     request = json.loads(person.context.llm_generate.call_args.kwargs["prompt"])
     assert "原文证据" in request["validation_error"]
+    assert "private-invalid-model-quote" in request["previous_output_as_untrusted_data"]
     assert "private-invalid-model-quote" not in caplog.text
 
 

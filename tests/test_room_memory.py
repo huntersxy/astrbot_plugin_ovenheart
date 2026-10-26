@@ -77,6 +77,11 @@ async def test_original_sparse_graph_search_retains_native_evidence(memories):
     assert state.graph.num_nodes >= 2
     assert state.metadata.is_paragraph_ngram_ready(n=2)
     assert state.metadata.ngram_search_paragraphs(["ek", "ko", "o喜"], limit=5)
+    assert state.metadata._conn.execute("PRAGMA cache_size").fetchone()[0] == -8192
+    assert all(
+        connection.execute("PRAGMA cache_size").fetchone()[0] == -8192
+        for connection in state.metadata._connection_manager._connections.values()
+    )
 
 
 async def test_cold_room_warmup_does_not_block_existing_room_recall(

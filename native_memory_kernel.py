@@ -83,6 +83,23 @@ class NativeMemoryKernel(SDKMemoryKernel):
 
     async def initialize(self):
         await super().initialize()
+        manager = self.metadata_store._connection_manager
+        if not getattr(manager, "_ovenheart_cache_limited", False):
+            create = manager._create_connection
+
+            def create_connection():
+                connection = create()
+                connection.execute("PRAGMA cache_size=-8192")
+                return connection
+
+            # The SDK defaults to 64 MB per thread, multiplied by every room.
+            # Keep this instance's transaction/connection ownership unchanged.
+            with manager._lock:
+                manager._create_connection = create_connection
+                for connection in manager._connections.values():
+                    connection.execute("PRAGMA cache_size=-8192")
+                    connection.execute("PRAGMA shrink_memory")
+                manager._ovenheart_cache_limited = True
         if not self._scope_statistics_ready:
             await run_sync_work(self._refresh_scope_statistics)
             # ANALYZE ran on the worker's connection. Reload its statistics on

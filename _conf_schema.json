@@ -369,6 +369,12 @@
     "type": "int",
     "default": 20
   },
+  "planner_reply_timeout": {
+    "description": "原生回复回执等待上限（秒）",
+    "type": "int",
+    "default": 120,
+    "hint": "本插件规划的回复超过此时间时取消该轮及其原生排队任务，不自动重发；长任务可调高，范围30到600秒。"
+  },
   "planner_reply_threshold": {
     "description": "自主参与最低置信度",
     "type": "float",
