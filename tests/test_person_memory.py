@@ -288,6 +288,9 @@ async def test_background_extraction_uses_actual_retained_inputs_and_updates_cur
     progress = await person.person_memory.call("progress", result["person_id"])
     assert progress["last_message"] > 0
     assert person.context.llm_generate.await_count == 1
+    prompt = json.loads(person.context.llm_generate.call_args.kwargs["prompt"])
+    assert set(prompt["messages"][0]) == {"source_id", "text", "created"}
+    assert prompt["messages"][0]["source_id"] == "auto-self"
     await person.person_memory.observe(incoming, scope, persona)
     assert not person.person_memory.busy
 

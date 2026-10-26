@@ -278,12 +278,17 @@ class PersonMemory:
                 raise ValueError("人物事实的 key 和 value 不能为空白。")
             for evidence in fact["evidence"]:
                 source = sources.get(evidence["source_id"])
+                if source is None:
+                    raise ValueError(
+                        "人物事实的原文证据 source_id 不在本批作者来源中；须原样复制 messages[].source_id，不能使用内部编号或 claim_id。"
+                    )
                 if (
-                    source is None
-                    or not evidence["quote"].strip()
+                    not evidence["quote"].strip()
                     or evidence["quote"] not in source["text"]
                 ):
-                    raise ValueError("人物事实缺少对应作者的真实原文证据。")
+                    raise ValueError(
+                        "人物事实的原文证据 quote 不是对应 messages[].text 的原文子串；请直接复制，不要改写、省略或调整标点。"
+                    )
             if any(
                 c not in allowed
                 or allowed[c]["fact_key"] != _normalized_token(fact["key"])
@@ -453,8 +458,26 @@ class PersonMemory:
             )
             inputs = {
                 "person": event.get_sender_name(),
-                "messages": messages,
-                "existing_facts": claims,
+                "messages": [
+                    {key: message[key] for key in ("source_id", "text", "created")}
+                    for message in messages
+                ],
+                "existing_facts": [
+                    {
+                        key: claim[key]
+                        for key in (
+                            "claim_id",
+                            "fact_key",
+                            "value_text",
+                            "polarity",
+                            "cardinality",
+                            "stability",
+                            "profile_section",
+                            "status",
+                        )
+                    }
+                    for claim in claims
+                ],
                 "output_schema": FACTS_SCHEMA,
             }
             deadline = time.monotonic() + 60
