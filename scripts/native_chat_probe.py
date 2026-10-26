@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import hashlib
+import importlib
 import io
 import json
 import os
@@ -62,13 +63,22 @@ async def run(args, packet, report):
         cases_sha256=hashlib.sha256(args.cases.read_bytes()).hexdigest(),
         source_sha256={
             name: hashlib.sha256((ROOT / name).read_bytes()).hexdigest()
-            for name in ("main.py", "planner.py", "participation.py", "prompts.py")
+            for name in (
+                "main.py",
+                "planner.py",
+                "participation.py",
+                "prompts.py",
+                "native_memory_kernel.py",
+                "room_memory.py",
+                "memory_panel.py",
+            )
         },
         conditions={
             "explicit_group_wake_each_turn": True,
             "fresh_store_per_case": True,
             "learned_traits": [],
-            "memory_enabled": False,
+            "memory_enabled": args.memory,
+            "embedding_configured": False,
             "same_configured_model_for_planner_and_reply": True,
             "platform_transport": "loopback",
         },
@@ -157,10 +167,15 @@ async def run(args, packet, report):
                 planner_timeout=90,
                 planner_max_wait=1,
                 participation_mode="off",
-                learning_enabled=False,
-                memory_enabled=False,
-                native_memory_enabled=False,
+                learning_enabled=args.memory,
+                memory_enabled=args.memory,
+                native_memory_enabled=args.memory,
                 person_memory_enabled=False,
+                memory_summary_enabled=False,
+                memory_feedback_enabled=False,
+                midterm_memory_enabled=False,
+                image_memory_enabled=False,
+                embedding_provider_id="",
                 emoji_enabled=False,
                 selection_mode="lexical",
                 session_isolation=True,
@@ -215,7 +230,18 @@ async def run(args, packet, report):
             async def observed_transport(**kwargs):
                 tools = kwargs.get("func_tool")
                 stage = "planner" if tools and tools.get_tool("reply") else "replyer"
+                if kwargs.get("prompt"):
+                    stage = "memory_auxiliary"
                 serialized = "\n".join(request_texts(kwargs))
+                tool_results = []
+                for entry in kwargs.get("contexts") or []:
+                    item = (
+                        entry.model_dump(mode="json")
+                        if hasattr(entry, "model_dump")
+                        else entry
+                    )
+                    if isinstance(item, dict) and item.get("role") == "tool":
+                        tool_results.append(item)
                 row = {
                     "stage": stage,
                     "argument_types": {
@@ -227,9 +253,12 @@ async def run(args, packet, report):
                     "previous_replies_in_request": [
                         text in serialized for text in active["previous_replies"]
                     ],
+                    "tool_results": tool_results,
                 }
                 active["calls"].append(row)
-                if not row["query_in_request"] or not row["persona_in_request"]:
+                if stage != "memory_auxiliary" and (
+                    not row["query_in_request"] or not row["persona_in_request"]
+                ):
                     raise ValueError(
                         "Current synthetic input/persona missing from request"
                     )
@@ -298,6 +327,28 @@ async def run(args, packet, report):
                         planner_status=incoming.get_extra("ovenheart_planner_status"),
                     )
                     previous_replies.extend(active["replies"])
+                    if args.memory:
+                        scope = (await plugin.resolve_scope(incoming))[0]
+                        state = plugin.room_memory.rooms.get(scope)
+                        panel = importlib.import_module(
+                            type(plugin).__module__.rsplit(".", 1)[0] + ".memory_panel"
+                        )
+                        active["memory_records"] = (
+                            await asyncio.to_thread(
+                                panel.read_console,
+                                state.path,
+                                "records",
+                                "paragraph",
+                                "",
+                                0,
+                                False,
+                                "",
+                                None,
+                                None,
+                            )
+                            if state
+                            else {"available": False, "items": []}
+                        )
                     # Keep progress reviewable even if a later provider call fails.
                     args.output.write_text(
                         json.dumps(report, ensure_ascii=False, indent=2),
@@ -307,8 +358,13 @@ async def run(args, packet, report):
                         active["has_errors"]
                         or not active["calls"]
                         or any(
-                            not call["query_in_request"]
-                            or not call["persona_in_request"]
+                            (
+                                call["stage"] != "memory_auxiliary"
+                                and (
+                                    not call["query_in_request"]
+                                    or not call["persona_in_request"]
+                                )
+                            )
                             or call.get("role") not in ("assistant", "tool")
                             for call in active["calls"]
                         )
@@ -329,6 +385,11 @@ if __name__ == "__main__":
         "--cases", type=Path, default=ROOT / "scripts/chat_parity_cases.json"
     )
     parser.add_argument("--case")
+    parser.add_argument(
+        "--memory",
+        action="store_true",
+        help="Enable real scoped memory tools; keep automatic learning and consolidation off",
+    )
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--turn-timeout", type=int, default=240)
     args = parser.parse_args()

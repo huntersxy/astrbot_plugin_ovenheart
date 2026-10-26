@@ -1,13 +1,68 @@
 """AstrBot lifecycle boundaries around the original A_memorix SDK kernel."""
 
+import time
 from contextvars import ContextVar
 
 from .vendor.maibot.amemorix.runtime.sdk_memory_kernel import SDKMemoryKernel
 from .vendor.maibot.amemorix.runtime.services.correction_admin_service import (
     MemoryCorrectionAdminService,
 )
+from .vendor.maibot.amemorix.utils.episode_retrieval_service import (
+    EpisodeRetrievalService,
+)
+from .vendor.maibot.amemorix.utils.episode_service import EpisodeService
 
 correction_evidence = ContextVar("ovenheart_memory_correction_evidence", default=None)
+
+
+def effective_paragraphs(kernel, paragraphs):
+    now = time.time()
+    return kernel._get_search_hit_service()._filter_user_visible_hits(
+        [
+            paragraph | {"type": "paragraph"}
+            for paragraph in paragraphs
+            if not paragraph.get("is_deleted")
+            and (paragraph.get("expires_at") is None or paragraph["expires_at"] > now)
+        ]
+    )
+
+
+class NativeEpisodeService(EpisodeService):
+    def __init__(self, kernel, **kwargs):
+        super().__init__(**kwargs)
+        self.kernel = kernel
+
+    def group_paragraphs(self, paragraphs):
+        # Upstream's live-source query excludes deletion/stale relation marks,
+        # but includes superseded versions. Filter before grouping/fingerprinting.
+        return super().group_paragraphs(effective_paragraphs(self.kernel, paragraphs))
+
+
+class NativeEpisodeRetrievalService(EpisodeRetrievalService):
+    def __init__(self, kernel):
+        super().__init__(
+            metadata_store=kernel.metadata_store, retriever=kernel.retriever
+        )
+        self.kernel = kernel
+
+    async def query(self, *, include_paragraphs=False, **kwargs):
+        limit = kwargs.get("top_k", 5)
+        rows = await super().query(
+            include_paragraphs=True, **(kwargs | {"top_k": max(20, limit * 4)})
+        )
+        result = []
+        for row in rows:
+            paragraphs = effective_paragraphs(self.kernel, row["paragraphs"])
+            # A mixed summary can repeat invalid content even when one of its
+            # other paragraphs is still valid. Await the original rebuild.
+            if not paragraphs or len(paragraphs) != row["paragraph_count"]:
+                continue
+            if not include_paragraphs:
+                row.pop("paragraphs")
+            result.append(row)
+            if len(result) == limit:
+                break
+        return result
 
 
 class NativeCorrectionService(MemoryCorrectionAdminService):
@@ -23,6 +78,17 @@ class NativeMemoryKernel(SDKMemoryKernel):
     def __init__(self, *, plugin_root, config=None):
         super().__init__(plugin_root=plugin_root, config=config)
         self._correction_admin_service = NativeCorrectionService(self)
+
+    def _refresh_runtime_dependents(self, *, preserve_managers=True):
+        super()._refresh_runtime_dependents(preserve_managers=preserve_managers)
+        if self.metadata_store is not None:
+            self.episode_retriever = NativeEpisodeRetrievalService(self)
+            self.episode_service = NativeEpisodeService(
+                self,
+                metadata_store=self.metadata_store,
+                plugin_config=self._build_runtime_config(),
+                segmentation_service=self.episode_segmentation_service,
+            )
 
     async def shutdown(self):
         # Upstream drops its sparse index reference without unloading its

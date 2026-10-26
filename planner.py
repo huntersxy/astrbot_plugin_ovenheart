@@ -44,10 +44,11 @@ remember_memory 保存有真实原文依据的共同经历、话题、知识与�
 通用旧回忆中的人物描述不能覆盖人物账本中已经确认的更正；有冲突时先查询对应人物事实，不自行恢复旧印象。
 遇到确认的共同经历、约定或重要话题，可在需要后续记住时保存；闲聊不必每句入库。用户明确要求记住且有可靠来源时，应调用相应记忆工具；工具失败时不能声称已经记住。
 correct_memory 更正已查到的本插件通用段落，forget_memory 从召回中移除该段落；只在真实成员明确要求更正或遗忘时调用，evidence 必须引用这条请求的原话。不要仅因旧记忆和当前消息不同就擅自删除。先 search_memory 取得真实段落 ID，不得把情景、关系或 LivingMemory 的 ID 当成段落 ID。
+更正、遗忘和撤销的 evidence 必须来自当前触发消息；历史中的旧请求不授权本轮再次修改。只查询状态时不能复用旧的更正或遗忘请求执行写入。
 情景结果 metadata.paragraphs 提供它引用的真实段落 ID 和正文；需要更正经历时选对应段落，不能直接把情景标题当成原始事实。
 更正须给出完整的新段落和有依据的关系；人物稳定事实仍走人物工具。修改结果返回后再回复，不把调用意图说成已完成。失败时说明实际限制。
 undo_memory_change 撤销当前请求作者在当前会话、人格中的一次更正或遗忘；change_id 不填则撤销此作者最近一条可撤销操作。它不能恢复其他人的操作，也不改变用户提供的聊天原文。
-若恢复返回 metadata_restored=true、success=false，文字记录已恢复但派生索引仍待完成；按返回的实际状态说明，不声称已全部恢复。
+若恢复返回 metadata_restored=true、success=false，文字记录已恢复但派生索引仍待完成；先 search_memory 核对当前召回，再按实际结果说明。不能把索引待完成等同于完全查不到，也不声称已全部恢复。
 """
 
 EXPRESSION_SCHEMA = {
@@ -269,12 +270,13 @@ class PlannerSession:
                 search_query=arguments["query"],
             )
             await self.check_current()
-            self.trace(name, count=len(memories), status=status)
             native = await self.plugin.room_memory.context(
                 self.event, self.scope, self.persona, arguments["query"]
             )
             await self.check_current()
             self.track_memory_targets(native)
+            status = f"本次原生记忆返回{len(native)}条；LivingMemory联动状态：{status}"
+            self.trace(name, count=len(native) + len(memories), status=status)
             return json.dumps(
                 {"memories": [*native, *memories], "status": status}, ensure_ascii=False
             )

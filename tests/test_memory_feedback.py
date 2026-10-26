@@ -1,6 +1,7 @@
 """Drive original feedback jobs through live native messages and permissions."""
 
 import json
+import sqlite3
 import time
 from datetime import datetime, timezone
 from types import MethodType, SimpleNamespace
@@ -11,6 +12,37 @@ from tests.test_room_memory import material, note
 from tests.test_runtime import event
 
 pytest_plugins = ["tests.test_room_memory"]
+
+
+async def test_background_identity_does_not_create_chat_traces(
+    memories, tmp_path, monkeypatch
+):
+    from astrbot.core.utils import trace
+    from astrbot.core.utils.trace_store import TraceStore
+
+    store = TraceStore(tmp_path / "traces.db", {})
+    monkeypatch.setitem(trace.astrbot_config, "trace_enable", True)
+    monkeypatch.setattr(trace, "get_trace_store", lambda *_: store)
+    try:
+        incoming, scope, persona, messages = await material(memories)
+        incoming.role = "admin"
+        await memories.room_memory.remember(incoming, scope, persona, note(), messages)
+        for _ in range(20):
+            memories.room_memory.observe(incoming, scope)
+        identity = memories.room_memory.rooms[scope].identity
+        assert identity.role == "member"
+        assert await memories.resolve_scope(identity) == await memories.resolve_scope(
+            incoming
+        )
+        assert identity.get_message_str() == "" and identity.get_messages() == []
+        incoming.trace.record("pipeline_end", status="success")
+        assert store.flush()
+        with sqlite3.connect(store.path) as db:
+            assert db.execute(
+                "SELECT state,count(*) FROM traces GROUP BY state"
+            ).fetchall() == [("completed", 1)]
+    finally:
+        store.close()
 
 
 async def read_sdk_window(state, scope, start, end):

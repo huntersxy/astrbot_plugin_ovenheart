@@ -134,6 +134,49 @@ class NativeMemoryIntegration:
         )
 
 
+class MemoryIdentity:
+    """Permission/session data for background work, never a received event."""
+
+    def __init__(self, event, message):
+        self.message_obj = message
+        self.platform_meta = event.platform_meta
+        self.unified_msg_origin = event.unified_msg_origin
+        # A previous admin wake must not grant a permanent whitelist bypass.
+        self.role = "member"
+
+    def get_message_type(self):
+        return self.message_obj.type
+
+    def get_platform_name(self):
+        return self.platform_meta.name
+
+    def get_platform_id(self):
+        return self.platform_meta.id
+
+    def get_group_id(self):
+        return self.message_obj.group_id
+
+    def get_self_id(self):
+        return self.message_obj.self_id
+
+    def get_sender_id(self):
+        return self.message_obj.sender.user_id
+
+    def get_sender_name(self):
+        return self.message_obj.sender.nickname
+
+    def is_private_chat(self):
+        from astrbot.api.platform import MessageType
+
+        return self.get_message_type() == MessageType.FRIEND_MESSAGE
+
+    def get_message_str(self):
+        return ""
+
+    def get_messages(self):
+        return []
+
+
 class RoomState:
     """Bind one native scope to one active SDK-owned storage/runtime."""
 
@@ -891,7 +934,7 @@ class RoomState:
             "restored_ids": [memory_id] if metadata_restored else [],
             "metadata_restored": metadata_restored,
             "pending_derived_indexes": metadata_restored and not result["success"],
-            "message": "文字记忆已恢复，派生索引仍在恢复中，尚未全部完成。"
+            "message": "文字记忆已恢复，派生索引尚未全部恢复；请用 search_memory 核对当前能否召回，不能仅凭此状态判断查不到。"
             if metadata_restored and not result["success"]
             else "",
             "error": result.get("error", ""),
@@ -1017,14 +1060,9 @@ class RoomState:
         return result
 
     async def episodes(self, query, top_k):
-        from .vendor.maibot.amemorix.utils.episode_retrieval_service import (
-            EpisodeRetrievalService,
+        found = await self.kernel.episode_retriever.query(
+            query=query, top_k=top_k, include_paragraphs=True
         )
-
-        service = EpisodeRetrievalService(
-            metadata_store=self.metadata, retriever=self._retriever()
-        )
-        found = await service.query(query=query, top_k=top_k, include_paragraphs=True)
         return [
             row
             for row in found
@@ -1049,7 +1087,6 @@ class RoomMemory:
 
     def observe(self, event, scope):
         """Retain native authorization fields, without message/media/history data."""
-        from astrbot.core.platform.astr_message_event import AstrMessageEvent
         from astrbot.core.platform.astrbot_message import (
             AstrBotMessage,
             Group,
@@ -1080,11 +1117,9 @@ class RoomMemory:
         message.message = []
         message.message_str = ""
         message.raw_message = None
-        identity = AstrMessageEvent("", message, event.platform_meta, event.session_id)
-        identity.unified_msg_origin = event.unified_msg_origin
-        # Background work uses current room permissions, never an old one-off
-        # admin wake's whitelist bypass. This object is not dispatched as input.
-        state.identity = identity
+        # AstrMessageEvent's constructor starts a persisted message trace even
+        # when it is never dispatched. A plain identity must not use it.
+        state.identity = MemoryIdentity(event, message)
         state.session.group_id = event.get_group_id()
         state.session.user_id = event.get_sender_id()
         state.session.self_id = event.get_self_id()
@@ -1442,7 +1477,9 @@ class RoomMemory:
                 asyncio.get_running_loop(),
             )
             state.image_enabled = self.plugin.settings["image_memory_enabled"] and (
-                state.image_enabled or operation.startswith("image_") or operation == "admin"
+                state.image_enabled
+                or operation.startswith("image_")
+                or operation == "admin"
             )
             if event is not None:
                 state.event_ref = weakref.ref(event)
@@ -1524,6 +1561,10 @@ class RoomMemory:
         evidence = await self.verified_evidence(
             event, scope, persona, payload["evidence"], messages
         )
+        if evidence[0]["source_id"] != event_source(event):
+            raise ValueError(
+                "更正、遗忘和撤销需要引用当前消息的请求，不能沿用之前轮次的原话。"
+            )
         return await self.call(scope, "change", action, payload, evidence, event=event)
 
     async def verified_evidence(self, event, scope, persona, citations, messages):

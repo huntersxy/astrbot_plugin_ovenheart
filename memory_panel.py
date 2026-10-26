@@ -148,6 +148,9 @@ def record(row, kind):
         and item["status"] == "active"
     ):
         item["status"] = "expired"
+    valid_to = ((item.get("metadata") or {}).get("memory_change") or {}).get("valid_to")
+    if valid_to is not None and valid_to <= time.time() and item["status"] == "active":
+        item["status"] = "superseded"
     item["timestamp"] = item.get(SPECS[kind][3]) or item.get("created_at") or 0
     return item
 
@@ -209,6 +212,10 @@ def read_console(
                     clauses.append("COALESCE(is_deleted,0)=0")
                 if selected == "paragraph":
                     clauses.append("(expires_at IS NULL OR expires_at>?)")
+                    params.append(time.time())
+                    clauses.append(
+                        "(json_extract(metadata,'$.memory_change.valid_to') IS NULL OR json_extract(metadata,'$.memory_change.valid_to')>?)"
+                    )
                     params.append(time.time())
                 if selected == "relation":
                     clauses.append("COALESCE(is_inactive,0)=0")

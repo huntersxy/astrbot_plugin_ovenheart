@@ -177,9 +177,8 @@ async def test_cancelled_concurrent_read_does_not_cancel_the_background_model(
             return await super().get_embeddings(texts)
 
     p.settings["embedding_provider_id"] = "semantic"
-    p.context.get_provider_by_id = lambda key: (
-        DelayedQueryEmbedding() if key == "semantic" else None
-    )
+    embedding = DelayedQueryEmbedding()
+    p.context.get_provider_by_id = lambda key: embedding if key == "semantic" else None
     p.context.llm_generate.side_effect = [summary(), episode()]
     _, scope, persona = await capture(p)
     started, release = asyncio.Event(), asyncio.Event()
@@ -542,9 +541,8 @@ async def test_other_scope_does_not_receive_episodes_and_learning_pause_still_re
 async def test_summary_dual_vectors_persist_and_find_nonlexical_memory(consolidator):
     p = consolidator
     p.settings["embedding_provider_id"] = "semantic"
-    p.context.get_provider_by_id = lambda key: (
-        SyntheticEmbedding() if key == "semantic" else None
-    )
+    embedding = SyntheticEmbedding()
+    p.context.get_provider_by_id = lambda key: embedding if key == "semantic" else None
     p.context.llm_generate.side_effect = [
         summary(
             quote="Neko喜欢猫咪",
@@ -558,7 +556,8 @@ async def test_summary_dual_vectors_persist_and_find_nonlexical_memory(consolida
     assert state.paragraph_vectors.has_data() and state.graph_vectors.has_data()
     assert (
         state.paragraph_vectors.num_vectors == 1
-        and state.graph_vectors.num_vectors == 2
+        # The SDK also embeds the evidence's real participant (alice).
+        and state.graph_vectors.num_vectors == 3
     )
     await p.room_memory.close()
     p.room_memory = RoomMemory(p)

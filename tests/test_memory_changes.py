@@ -19,6 +19,120 @@ async def changed_source(plugin, source, text, **kwargs):
     return incoming, scope, persona, messages, [{"msg_id": "1", "quote": text}]
 
 
+async def test_superseded_paragraphs_leave_episode_recall_rebuild_and_active_console(
+    memories,
+):
+    from astrbot_plugin_ovenheart.memory_panel import read_console
+
+    plugin = memories
+    incoming, scope, persona, messages = await material(plugin)
+    old = (
+        await plugin.room_memory.remember(incoming, scope, persona, note(), messages)
+    )["id"]
+    state = plugin.room_memory.rooms[scope]
+    source = "chat_summary:" + scope
+    previous = state.metadata.upsert_episode(
+        {
+            "source": source,
+            "title": "周六小猫之约",
+            "summary": "Neko周六去看小猫。",
+            "evidence_ids": [old],
+            "participants": ["alice"],
+        }
+    )
+    state.metadata.bind_episode_paragraphs(previous["episode_id"], [old])
+    assert any(
+        row["id"] == previous["episode_id"]
+        for row in await plugin.room_memory.search(incoming, scope, persona, "小猫")
+    )
+    incoming, scope, persona, messages, evidence = await changed_source(
+        plugin, "correct-episode", "把看小猫的安排改为周日"
+    )
+    corrected = await plugin.room_memory.change(
+        incoming,
+        scope,
+        persona,
+        "correct_memory",
+        {
+            "memory_id": old,
+            "content": "Neko周日去看小猫。",
+            "relations": [],
+            "evidence": evidence,
+        },
+        messages,
+    )
+    assert corrected["success"]
+    new = corrected["new_ids"][0]
+    mixed = state.metadata.upsert_episode(
+        {
+            "source": source,
+            "title": "小猫的两次约定",
+            "summary": "周六和周日都去看小猫。",
+            "evidence_ids": [old, new],
+            "participants": ["alice"],
+        }
+    )
+    state.metadata.bind_episode_paragraphs(mixed["episode_id"], [old, new])
+    current = state.metadata.upsert_episode(
+        {
+            "source": source,
+            "title": "周日小猫之约",
+            "summary": "Neko周日去看小猫。",
+            "evidence_ids": [new],
+            "participants": ["alice"],
+        }
+    )
+    state.metadata.bind_episode_paragraphs(current["episode_id"], [new])
+    found = await plugin.room_memory.search(incoming, scope, persona, "小猫")
+    assert current["episode_id"] in {row["id"] for row in found}
+    assert not {old, previous["episode_id"], mixed["episode_id"]}.intersection(
+        row["id"] for row in found
+    )
+    groups = state.kernel.episode_service.group_paragraphs(
+        state.metadata.get_live_paragraphs_by_source(source)
+    )
+    assert {p["hash"] for group in groups for p in group["paragraphs"]} == {new}
+    assert {
+        row["id"]
+        for row in read_console(
+            state.path, "records", "paragraph", "", 0, False, "", None, None
+        )["items"]
+    } == {new}
+    history = read_console(
+        state.path, "records", "paragraph", "", 0, True, old, None, None
+    )
+    assert history["items"][0]["status"] == "superseded"
+
+
+async def test_status_query_cannot_reuse_an_earlier_forget_request(memories):
+    plugin = memories
+    incoming, scope, persona, messages = await material(plugin)
+    old = (
+        await plugin.room_memory.remember(incoming, scope, persona, note(), messages)
+    )["id"]
+    previous, scope, persona, previous_messages, evidence = await changed_source(
+        plugin, "earlier-forget", "忘掉看小猫的安排"
+    )
+    current, _, _, current_messages = await material(
+        plugin, "status-query", "那条记忆还在吗？"
+    )
+    current_messages[0]["sequence"] = 2
+    with pytest.raises(ValueError, match="当前消息"):
+        await plugin.room_memory.change(
+            current,
+            scope,
+            persona,
+            "forget_memory",
+            {"memory_id": old, "evidence": evidence},
+            [*previous_messages, *current_messages],
+        )
+    assert previous.get_message_str() == "忘掉看小猫的安排"
+    assert any(
+        row["id"] == old
+        for row in await plugin.room_memory.search(current, scope, persona, "小猫")
+    )
+
+
 async def test_correct_forget_and_author_undo_use_original_runtime_and_keep_proofs(
     memories,
 ):
