@@ -13,6 +13,7 @@ from astrbot.core.message.components import Image
 from astrbot.core.message.message_event_result import MessageChain
 from mcp.types import CallToolResult, ImageContent, TextContent
 
+from ..core.settings import SHARED_SCOPE
 from ..vendor.maibot.emoji_tiles import (
     EmojiSelectionResult,
     _calculate_grid_shape,
@@ -26,18 +27,30 @@ class EmojiActions:
     def __init__(self, plugin):
         self.plugin = plugin
 
-    async def show(self, session):
+    async def candidates(self, session, query=""):
+        local = await self.plugin.room_memory.call(
+            session.scope, "image_candidates", query, event=session.event
+        )
+        public = await self.plugin.room_memory.call(
+            SHARED_SCOPE, "image_candidates", query, event=session.event
+        )
+        seen = {item["asset"]["content_hash"] for item in local}
+        return [item | {"scope": session.scope} for item in local] + [
+            item | {"scope": SHARED_SCOPE}
+            for item in public
+            if item["asset"]["content_hash"] not in seen
+        ]
+
+    async def show(self, session, query=""):
         if not self.plugin.settings[
             "emoji_enabled"
         ] or not await self.plugin.image_memory.permitted(
             session.event, session.scope, session.persona
         ):
             return "当前表情选择未启用或无权访问。"
-        available = await self.plugin.room_memory.call(
-            session.scope, "image_candidates", event=session.event
-        )
+        available = await self.candidates(session, query)
         if not available:
-            return "当前会话尚无已识别的表情包；普通图片不能充当表情候选。"
+            return "公共图库与当前会话暂无可选表情；请在工坊的表情页上传或导入素材。普通图片不能充当表情候选。"
         selected = sample(available, min(6, len(available)))
         indices = [next(_indices) for _ in selected]
         captions, images = [], []
@@ -53,6 +66,7 @@ class EmojiActions:
             session.emojis[index] = {
                 "asset_id": item["asset"]["asset_id"],
                 "caption": caption,
+                "scope": item["scope"],
             }
             captions.append({"index": index, "description": caption[:500]})
             if self.plugin.settings["planner_visual_enabled"]:
@@ -89,7 +103,7 @@ class EmojiActions:
         ):
             return {"sent": False, "error": "当前表情发送权限已撤销。"}
         selected = await self.plugin.room_memory.call(
-            session.scope, "image_asset", choice["asset_id"], event=event
+            choice["scope"], "image_asset", choice["asset_id"], event=event
         )
         if not selected["success"]:
             return {"sent": False, "error": "选中的原始表情已删除或不可见。"}
@@ -144,9 +158,7 @@ class EmojiActions:
                 "success": False,
                 "error": "未配置表情选择视觉模型。请设置emoji_provider_id或宿主图片描述模型。",
             }
-        available = await self.plugin.room_memory.call(
-            session.scope, "image_candidates", event=session.event
-        )
+        available = await self.candidates(session)
         if not available:
             return {"success": False, "error": "当前会话没有可用表情包。"}
         selected = sample(available, min(6, len(available)))
@@ -217,6 +229,7 @@ class EmojiActions:
         session.emojis[index] = {
             "asset_id": chosen["asset"]["asset_id"],
             "caption": caption,
+            "scope": chosen["scope"],
         }
         return {
             "success": True,

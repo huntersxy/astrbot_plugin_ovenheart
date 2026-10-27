@@ -130,6 +130,7 @@ input[type="checkbox"]:disabled { opacity: .5; cursor: not-allowed; }
 .tabs [data-tab="profile"] { --icon: var(--i-user); }
 .tabs [data-tab="library"] { --icon: var(--i-book); }
 .tabs [data-tab="memory"] { --icon: var(--i-heart); }
+.tabs [data-tab="emojis"] { --icon: var(--i-spark); }
 .tabs [data-tab="history"] { --icon: var(--i-history); }
 .tabs [data-tab="settings"] { --icon: var(--i-sliders); }
 .tabs [data-tab="prompts"] { --icon: var(--i-terminal); }
@@ -340,6 +341,19 @@ summary:hover { color: var(--accent); }
 .memory-source > div { flex: 1 1 200px; min-width: 0; }
 .memory-source strong { font-size: 13px; overflow-wrap: anywhere; }
 .memory-source p { margin-top: 6px; font-size: 12px; }
+.emoji-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 24px; margin-top: 24px; }
+.emoji-item { min-width: 0; padding-bottom: 20px; border-bottom: 1px solid var(--line); }
+.emoji-picture { height: 180px; display: grid; place-items: center; background: var(--surface-2); border-radius: var(--r-md); margin-bottom: 16px; }
+.emoji-picture img { max-width: 100%; max-height: 180px; object-fit: contain; }
+.emoji-item textarea { min-height: 78px; margin-bottom: 12px; }
+.emoji-item .actions { flex-wrap: wrap; }
+.emoji-import, .emoji-settings { max-width: 760px; padding-top: 24px; }
+.emoji-import h3 { margin: 24px 0 8px; }
+.emoji-import p, .emoji-settings p { margin: 8px 0 20px; }
+.emoji-import form > *, .emoji-settings form > input { margin-bottom: 12px; }
+.emoji-switch { display: flex; align-items: flex-start; gap: 12px; margin: 24px 0; }
+.emoji-switch input { width: auto; margin: 4px 0 0; }
+.emoji-switch small { display: block; margin-top: 6px; color: var(--muted); font-weight: 400; }
 @media (max-width: 900px) {
   .memory-columns { grid-template-columns: 1fr; gap: 24px; }
   .memory-list { max-height: 440px; overflow-y: auto; }

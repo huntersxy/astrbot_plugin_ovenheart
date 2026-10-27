@@ -31,6 +31,30 @@ def judged_habits():
     }
 
 
+async def test_native_planned_reply_leaves_applicability_to_reply_model(
+    participant, retrieval
+):
+    retriever, _ = retrieval
+    retriever.contextual_ids = AsyncMock(
+        side_effect=AssertionError("extra selector call")
+    )
+    retriever.rerank_pool = AsyncMock(side_effect=AssertionError("extra reranker call"))
+    result = await retriever.select(
+        "scope-a",
+        TRAITS,
+        "今天心情不好",
+        participant.settings
+        | {"selection_mode": "contextual", "rerank_provider_id": "reranker"},
+        inline_selection=True,
+    )
+    assert result["mode"] == "contextual_inline"
+    assert result["selector_engine"] == "reply_model"
+    assert result["traits"] and len(result["traits"]) <= 4
+    assert "不代表已采用" in result["message"]
+    retriever.contextual_ids.assert_not_awaited()
+    retriever.rerank_pool.assert_not_awaited()
+
+
 async def test_typed_selection_skips_chat_and_rerank_and_preserves_no_selection(
     participant, retrieval
 ):

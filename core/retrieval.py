@@ -277,6 +277,7 @@ class HabitRetriever:
         expression_intent=None,
         record_status=True,
         contextual_judge=None,
+        inline_selection=False,
     ):
         """Recall, optionally rerank, then select habits within bounded deadlines.
 
@@ -299,6 +300,7 @@ class HabitRetriever:
             record_status: Whether this request may replace runtime status.
             contextual_judge: Optional typed judgment sharing reply planning with
                 habit applicability, without a separate chat-model generation.
+            inline_selection: Let the native reply model judge optional expressions.
 
         Returns:
             Habits, retrieval mode and a visible fallback explanation.
@@ -368,6 +370,7 @@ class HabitRetriever:
             and settings["selection_mode"] != "lexical"
             and settings["rerank_provider_id"]
             and contextual_judge is None
+            and not inline_selection
         ):
             try:
                 pool = await self.rerank_pool(
@@ -389,7 +392,17 @@ class HabitRetriever:
                 result["message"] += (
                     " 重排序不可用、超时或结果无效，保留召回顺序；请检查重排序提供商 ID。"
                 )
-        if settings["selection_mode"] == "contextual" and semantic and active:
+        if (
+            settings["selection_mode"] == "contextual"
+            and semantic
+            and active
+            and inline_selection
+        ):
+            result.update(
+                mode="contextual_inline",
+                message="由主回复模型结合本轮规划判断最多四条可选表达；提供候选不代表已采用，不另调用情境筛选模型。",
+            )
+        elif settings["selection_mode"] == "contextual" and semantic and active:
             # Keyword overlap cannot establish applicability after a failed selector.
             result["traits"] = []
             result["mode"] = "contextual_fallback"
@@ -453,13 +466,17 @@ class HabitRetriever:
                     # The actual reply model has the full conversational context.
                     # These are explicitly optional candidates, not asserted choices.
                     result.update(
-                        traits=[t for t in pool if t["kind"] == "expression"][
-                            : min(4, settings["max_traits"])
-                        ],
                         mode="contextual_inline",
                         selector_engine="reply_model",
                         message="快速判读暂不可用，由主回复模型结合完整上下文判断最多四条可选表达；提供候选不代表已采用。",
                     )
+        if result["mode"] == "contextual_inline":
+            result.update(
+                traits=[t for t in pool if t["kind"] == "expression"][
+                    : min(4, settings["max_traits"])
+                ],
+                selector_engine="reply_model",
+            )
         recent = {i for i in recent_expression_ids if type(i) is int}
         if recent and settings["selection_mode"] != "contextual":
             # Only rotate near-equivalent expressions inside the bounded pool.

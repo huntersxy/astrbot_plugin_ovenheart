@@ -16,6 +16,7 @@ from astrbot.core.star.session_llm_manager import SessionServiceManager
 from astrbot.core.star.session_plugin_manager import SessionPluginManager
 
 from ..chat.native_context import native_time
+from ..memory.emoji_panel import EmojiPanel
 from ..memory.memory_panel import MemoryPanel
 from . import prompts
 from .learning import build_guidance, build_guidance_parts, habit_text
@@ -34,6 +35,7 @@ class PageAPI:
         self.plugin = plugin
         self.model_preview_running = False
         self.memory_panel = MemoryPanel(plugin)
+        self.emoji_panel = EmojiPanel(plugin)
 
     def register(self):
         """Register routes using the same plugin namespace as the Panel view."""
@@ -45,6 +47,9 @@ class PageAPI:
             ("memory", self.memory_panel.read, "GET"),
             ("memory/image", self.memory_panel.image, "GET"),
             ("memory/action", self.memory_panel.action, "POST"),
+            ("emojis", self.emoji_panel.read, "GET"),
+            ("emojis/image", self.emoji_panel.image, "GET"),
+            ("emojis/action", self.emoji_panel.action, "POST"),
             ("library", self.library, "GET"),
             ("tools", self.tools, "GET"),
             ("history", self.history, "GET"),

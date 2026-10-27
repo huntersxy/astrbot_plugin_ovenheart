@@ -45,7 +45,7 @@ const viewCache = new Map();
 const localOperations = new Set();
 let loadVersion = 0, cacheEpoch = 0, editVersion = 0, pollTimer, pollErrors = 0, toolsCache;
 const viewKey = () => JSON.stringify([selectedScope, tab, ...(tab === "library" ? [libraryScope, category, status, libraryOffset, reviewFilter] : tab === "history" ? [historySection, historyStatus, historyOffset, historyAnchor] : [])]);
-const viewName = () => tab === "memory" ? "settings" : ["library", "prompts", "history"].includes(tab) ? "summary" : tab;
+const viewName = () => ["memory", "emojis"].includes(tab) ? "settings" : ["library", "prompts", "history"].includes(tab) ? "summary" : tab;
 
 function deadline(promise, milliseconds, message) {
   let timer;
@@ -82,7 +82,7 @@ function updateHeader() {
   scopeSelect.innerHTML = data.scopes.length ? data.scopes.map(s => `<option value="${escape(s.id)}">${escape(s.label)} / ${escape(s.persona === "[%None]" ? "未设置人格" : s.persona)}</option>`).join("") : '<option value="">尚无学习会话</option>';
   scopeSelect.value = selectedScope;
   scopeSelect.disabled = !data.scopes.length;
-  $("#scope-label").textContent = tab === "memory" || data.settings.session_isolation ? "会话与人格" : "学习素材来源";
+  $("#scope-label").textContent = ["memory", "emojis"].includes(tab) || data.settings.session_isolation ? "会话与人格" : "学习素材来源";
   $("#session-status").textContent = data.scope ? `${data.scope.pending} 条待学素材，${data.active_count ?? data.traits.filter(t => t.status === "active").length} 条当前可用习惯已生效` : "收到有效聊天消息后，会话将自动出现在这里。";
   $("#memory-status").textContent = !data.settings.memory_enabled ? "记忆参考已关闭" : data.settings.native_memory_enabled ? "原生记忆已启用 · 按会话与人格隔离" : "原生记忆未启用";
   $("#review-count").textContent = (data.review_count ?? data.scopes.reduce((sum, scope) => sum + scope.review_count, 0)) || "";
@@ -99,7 +99,7 @@ function rememberView() {
 function showView() {
   const cached = viewCache.get(viewKey());
   if (cached) data = cached.data;
-  if (cached || data && ["profile", "settings", "memory"].includes(tab) && (!selectedScope || data.scope?.id === selectedScope)) {
+  if (cached || data && ["profile", "settings", "memory", "emojis"].includes(tab) && (!selectedScope || data.scope?.id === selectedScope)) {
     render();
     updateHeader();
   } else {
@@ -141,7 +141,7 @@ async function load(renderContent = true) {
   }
   updateHeader();
   const promptsChanged = pageAtStart === "prompts" && data.prompts?.revision !== previousPromptsRevision;
-  if (!dirty && (renderContent || (["settings", "memory"].includes(tab) && data.settings_revision !== previousSettingsRevision) || promptsChanged)) render();
+  if (!dirty && (renderContent || (["settings", "memory", "emojis"].includes(tab) && data.settings_revision !== previousSettingsRevision) || promptsChanged)) render();
   rememberView();
 }
 
@@ -167,7 +167,7 @@ function renderNavigation() {
 function render() {
   renderNavigation();
   if (!data) return;
-  if (!data.scope && tab !== "settings" && tab !== "memory" && tab !== "library" && tab !== "prompts") {
+  if (!data.scope && tab !== "settings" && tab !== "memory" && tab !== "emojis" && tab !== "library" && tab !== "prompts") {
     $("#content").innerHTML = empty("从一段真实的对话开始", "在已启用的 AstrBot 会话中聊几句，工坊会自动积累文字素材。也可以先打开设置，选择学习对象与生效方式。");
     return;
   }
@@ -175,6 +175,7 @@ function render() {
   else if (tab === "library") renderLibrary();
   else if (tab === "history") renderHistory();
   else if (tab === "memory") renderMemory();
+  else if (tab === "emojis") window.OvenHeartEmojis.render({root:$("#content"),data,api,escape,notify,confirmAction,isDirty:()=>dirty,clearDirty:()=>{dirty=false;},saveSettings:(payload)=>mutate("settings",payload,selectedScope,data.settings_revision)});
   else if (tab === "prompts") renderPrompts();
   else renderSettings();
 }
@@ -548,9 +549,7 @@ function renderSettings(target = "#content") {
 </div>
 <div class="settings-panel settings-grid" id="settings-panel-expression" role="tabpanel" aria-labelledby="settings-tab-expression" data-settings-panel="expression">
 <section class="settings-group"><h2>表达与回复</h2><p>调整表情、回复节奏和本轮习惯的使用方式。</p>
-      ${switchField("emoji_enabled", "Planner表情动作", "查看本会话的表情候选，选择后随文字回复发送；真实发送结果回流后续规划。", s.emoji_enabled)}
-      ${field("emoji_provider_id", "独立表情选择模型 ID", s.emoji_provider_id ?? "", "使用支持图片的模型；留空使用视觉Planner或宿主图片描述模型。", {type:"text"})}
-      ${switchField("planner_visual_enabled", "Planner视觉候选拼图", "Planner模型支持图片输入时开启；否则使用已有描述选择。拼图只进入内部工具上下文。", s.planner_visual_enabled)}
+      <p class="muted">表情图库、导入与自动发送已集中到侧栏的“表情”页；本页管理文字分段和表达参考。</p>
       ${switchField("reply_rhythm_enabled", "分段回复与发送节奏", "首段直接发送，后续段落再模拟打字；支持普通模型回复与Planner正文。宿主开启分段时完全沿用宿主。", s.reply_rhythm_enabled)}
       <div class="field"><label for="reply_split_mode">断句方式</label><select id="reply_split_mode" name="reply_split_mode"><option value="rule" ${s.reply_split_mode !== "llm" ? "selected" : ""}>本地规则（推荐，无额外模型调用）</option><option value="llm" ${s.reply_split_mode === "llm" ? "selected" : ""}>模型语义（额外调用，最多等待设定秒数）</option></select><small>初次安装保持本地规则即可：按 AstrBot 分段词与换行切分，保留原文标点。代码、列表、括号和引号正文整条发送；流式与图文混排沿用原发送方式。</small></div>
       <div class="number-fields">${field("reply_split_max_messages", "每次正文最多分段数", s.reply_split_max_messages ?? 3, "超过时按原版规则合并", {type:"number",min:1,max:10})}${field("reply_typing_speed", "模拟打字时间倍率", s.reply_typing_speed ?? 0.25, "0关闭等待；首段不等待，后续每段最多5秒", {type:"number",min:0,max:3,step:0.05})}</div>
@@ -560,7 +559,7 @@ function renderSettings(target = "#content") {
       <div class="number-fields">${field("max_traits", "每次最多应用习惯", s.max_traits, "条；所有检索模式统一上限，可少选或不选", {type:"number", min:1, max:24})}${field("prompt_budget", "补充内容字数上限", s.prompt_budget, "字符；包含人工底稿", {type:"number", min:500, max:8000})}</div>
       <div class="number-fields">${field("reply_context_messages", "额外群聊消息上限", s.reply_context_messages, "条；0 不附带额外窗口", {type:"number", min:0, max:20})}${field("reply_context_budget", "额外群聊参考字符预算", s.reply_context_budget, "字符；含消息字段与引用，0 不附带窗口", {type:"number", min:0, max:24000})}</div><p class="muted">两项同时约束直接与自主回复的额外群聊窗口，优先保留最近消息；保留当前目标、必要引用、连续补充与宿主原生历史。不是整个请求的字数或 token 上限，自定义模板重复展开另计。</p>
       <div class="field"><label for="guidance_delivery">提示投递方式</label><select id="guidance_delivery" name="guidance_delivery"><option value="cached" ${s.guidance_delivery === "cached" ? "selected" : ""}>缓存友好（推荐）</option><option value="system" ${s.guidance_delivery === "system" ? "selected" : ""}>仅系统提示词</option><option value="dual" ${s.guidance_delivery === "dual" ? "selected" : ""}>系统与临时上下文（兼容模式）</option></select><small>默认缓存友好：稳定人格留在系统提示词，每轮习惯放在历史之后，避免改变已有前缀。缓存命中与计费取决于提供商。当接口不遵循 system 中的角色或语气时使用兼容模式。只附加已有角色资料与本轮选中习惯，不复制完整系统提示词。原生 Agent 保存历史时剔除临时内容；第三方运行器需自行支持。</small></div>
-      <div class="field"><label for="selection_mode">习惯检索方式</label><select id="selection_mode" name="selection_mode"><option value="contextual" ${s.selection_mode === "contextual" ? "selected" : ""}>按当前对话筛选</option><option value="hybrid" ${s.selection_mode === "hybrid" ? "selected" : ""}>语义与文字结合</option><option value="lexical" ${s.selection_mode === "lexical" ? "selected" : ""}>仅文字相关性</option></select><small>启用 Jev 时，一次快速结构化判读同时选择习惯、回应动作和篇幅，不再调用学习模型筛选或重排序。判读暂不可用时，由主回复模型判断最多四条可选表达；未启用 Jev 时保留原情境模型。允许不选；其他模式仅按相关性排序。</small></div>
+      <div class="field"><label for="selection_mode">习惯检索方式</label><select id="selection_mode" name="selection_mode"><option value="contextual" ${s.selection_mode === "contextual" ? "selected" : ""}>按当前对话筛选</option><option value="hybrid" ${s.selection_mode === "hybrid" ? "selected" : ""}>语义与文字结合</option><option value="lexical" ${s.selection_mode === "lexical" ? "selected" : ""}>仅文字相关性</option></select><small>启用 Jev 时，一次快速结构化判读同时选择习惯、回应动作和篇幅，不再调用学习模型筛选或重排序。判读暂不可用时，由主回复模型判断最多四条可选表达；原生Planner回复直接由正文模型判断表达候选，减少一次独立筛选；其他回复沿用配置的情境模型。允许不选；其他模式仅按相关性排序。</small></div>
       ${field("embedding_provider_id", "向量模型 ID", s.embedding_provider_id, "用于回复、参与判断和旧习惯对照，生效习惯会做有界后台预热。填写 AstrBot 的 embedding 提供商 ID；留空用文字检索。", {type:"text"})}
       ${field("rerank_provider_id", "重排序模型 ID", s.rerank_provider_id, "可选，填写 AstrBot 中已配置的 rerank 提供商 ID。只改变候选顺序，不能代替情境判断。", {type:"text"})}
       ${field("selector_timeout", "情境筛选等待上限", s.selector_timeout, "秒；异常时不选表达习惯，仍保留当前输入直接命中的本地词义。", {type:"number", min:3, max:30})}
@@ -576,11 +575,12 @@ function renderSettings(target = "#content") {
   bindSettingsTabs(active, memoryPage);
   const toolSelection = memoryPage ? () => ({}) : renderAutonomousTools(s);
   const updateSplitControls = () => {
+    if (!$("#reply_split_mode")) return;
     const semantic = $("#reply_split_mode").value === "llm";
     $("#field-reply_split_provider_id").disabled = !semantic;
     $("#field-reply_split_timeout").disabled = !semantic;
   };
-  $("#reply_split_mode").onchange = updateSplitControls;
+  if ($("#reply_split_mode")) $("#reply_split_mode").onchange = updateSplitControls;
   updateSplitControls();
   $("#settings-form").onsubmit = event => {
     event.preventDefault();

@@ -649,16 +649,17 @@ class RoomState:
             if key in result
         }
 
-    async def image_candidates(self):
+    async def image_candidates(self, query=""):
         rows = self.metadata._conn.execute(
             """
             SELECT o.asset_id, MAX(v.created_at) AS recent FROM image_occurrences o
             JOIN image_observations v ON v.occurrence_id=o.occurrence_id
             WHERE o.chat_id=? AND o.status='active' AND v.superseded_by=''
               AND json_extract(v.evidence_json,'$.is_emoji')=1
+              AND (?='' OR instr(lower(v.text),lower(?))>0)
             GROUP BY o.asset_id ORDER BY recent DESC LIMIT 64
         """,
-            (self.path.name,),
+            (self.path.name, query, query),
         ).fetchall()
         return [
             result
@@ -1337,6 +1338,7 @@ class RoomMemory:
             raise ValueError("记忆运行时正在关闭。")
         empty_reads = {
             "search": [],
+            "image_candidates": [],
             "person_context": {"paragraphs": [], "relations": [], "episodes": []},
             "midterm_records": {"cutoff": 0, "records": []},
         }

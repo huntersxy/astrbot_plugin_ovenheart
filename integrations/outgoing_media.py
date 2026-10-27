@@ -73,13 +73,15 @@ class OutgoingMediaBridge:
             return True
         self.disconnect()
         originals = {}
-        for name, args in (
-            ("_send_meme_image", ("event", "image")),
-            ("_on_decorating_result_impl", ("event",)),
+        for name, args, asynchronous in (
+            ("_send_meme_image", ("event", "image"), True),
+            ("_on_decorating_result_impl", ("event",), True),
+            ("_scope_allows_llm_origin", ("event",), False),
         ):
             method = getattr(owner, name, None)
             if (
-                not inspect.iscoroutinefunction(method)
+                not callable(method)
+                or inspect.iscoroutinefunction(method) != asynchronous
                 or getattr(method, "__self__", None) is not owner
                 or tuple(inspect.signature(method).parameters) != args
             ):
@@ -99,9 +101,26 @@ class OutgoingMediaBridge:
             await self.capture(event, [image], meme=True)
             return result
 
+        def allows(event):
+            plan = event.get_extra("ovenheart_decision") or {}
+            if plan.get("planner_session") and all(
+                self.plugin.settings[key]
+                for key in (
+                    "enabled",
+                    "apply_enabled",
+                    "emoji_enabled",
+                    "native_memory_enabled",
+                    "image_memory_enabled",
+                    "memory_enabled",
+                )
+            ):
+                return False
+            return originals["_scope_allows_llm_origin"](event)
+
         for name, wrapper in (
             ("_on_decorating_result_impl", decorate),
             ("_send_meme_image", send),
+            ("_scope_allows_llm_origin", allows),
         ):
             self._hooks.append(
                 (owner, name, owner.__dict__.get(name), wrapper, name in owner.__dict__)

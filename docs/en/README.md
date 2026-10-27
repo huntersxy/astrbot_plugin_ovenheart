@@ -19,6 +19,8 @@ Open **Persona Workshop** on the plugin card. It uses AstrBot authentication and
 - Review sourced facts, shared experiences, images and corrections in the Memory tab.
 - Enable observation before automatic group participation. Automatic participation is off by default.
 
+The dedicated **Emoji** tab includes a gallery, uploads/imports, and selection settings. Upload images with usage descriptions or copy existing meme_manager packs. Public library assets are shared with authorized chats; conversation candidates remain scoped. Native image storage handles content deduplication and preserves GIF originals. The planner can choose candidates by caption without another emotion-model call. Optional visual selection costs an additional model call. OvenHeart skips duplicate meme_manager selection for its own planner replies, while leaving its source and configuration intact.
+
 Reply splitting defaults to local rules using AstrBot’s split words and line breaks. No additional model is required. The first part sends without a typing delay; later parts use bounded typing intervals, with at most three messages by default. Optional semantic splitting uses a chat provider and a separate three-second timeout, falling back to local rules. Code, lists, bracketed or quoted content stay intact. Host segmentation takes precedence; streaming and mixed media keep their original delivery. Configure this under Settings → Expression & retrieval.
 
 Learning changes retrieval and prompt guidance, not model weights. Model calls may include relevant chat excerpts. Runtime data belongs in AstrBot's plugin data directory, not in the source tree.

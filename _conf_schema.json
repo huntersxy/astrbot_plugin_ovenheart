@@ -98,7 +98,7 @@
     "type": "bool",
     "description": "Planner表情动作",
     "default": true,
-    "hint": "Planner从当前会话已识别的表情包中选择，随文字回复后单独发送；自己的真实媒体发送进入后续规划。"
+    "hint": "在独立表情页管理公共图库与本会话候选。Planner按描述选择，随文字附图或单独发送；自己的规划回复不再重复调用meme_manager情感检索。"
   },
   "reply_rhythm_enabled": {
     "type": "bool",

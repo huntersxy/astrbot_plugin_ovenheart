@@ -213,6 +213,9 @@ def read_console(
                     + ")"
                 )
                 params.extend([query] * len(search))
+                if selected == "image":
+                    clauses[-1] = clauses[-1][:-1] + " OR EXISTS(SELECT 1 FROM image_occurrences o JOIN image_observations v ON v.occurrence_id=o.occurrence_id WHERE o.asset_id=image_assets.asset_id AND o.status='active' AND v.superseded_by='' AND instr(lower(v.text),lower(?))>0))"
+                    params.append(query)
             if not inactive:
                 if selected in {"paragraph", "entity"}:
                     clauses.append("COALESCE(is_deleted,0)=0")
@@ -229,6 +232,8 @@ def read_console(
                     clauses.append("status='active'")
                 if selected == "image":
                     clauses.append("status='active'")
+                    if view == "emojis":
+                        clauses.append("EXISTS(SELECT 1 FROM image_occurrences o JOIN image_observations v ON v.occurrence_id=o.occurrence_id WHERE o.asset_id=image_assets.asset_id AND o.status='active' AND v.superseded_by='' AND json_extract(v.evidence_json,'$.is_emoji')=1)")
             if selected == "profile":
                 clauses.append(
                     "profile_version=(SELECT MAX(p.profile_version) FROM person_profile_snapshots p WHERE p.person_id=person_profile_snapshots.person_id)"
@@ -298,6 +303,7 @@ def read_console(
             selected = {
                 "profiles": "profile",
                 "images": "image",
+                "emojis": "image",
                 "graph": "relation",
                 "delete": "delete",
             }.get(view, kind)
@@ -306,7 +312,7 @@ def read_console(
             )
             if view == "graph":
                 result["limit"] = 100
-            if view == "images":
+            if view in {"images", "emojis"}:
                 for item in result["items"]:
                     item["observations"] = [
                         dict(row)
@@ -547,6 +553,10 @@ async def execute_admin(state, operation, payload):
     identity = payload.get("id", "")
     actor = "astrbot_panel"
     reason = "Panel 管理员明确操作"
+    if operation.startswith("emoji_"):
+        from .emoji_panel import execute_emoji
+
+        return await execute_emoji(state, operation, payload)
     if operation == "import_livingmemory":
         from .livingmemory_import import import_records
 

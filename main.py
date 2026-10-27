@@ -1308,7 +1308,11 @@ class PersonaPlugin(Star):
         event.set_extra("ovenheart_reply_scope", plan["scope"])
         self.outgoing_media.bind_event(event)
         self.reply_rhythm.bind(event)
-        selection = await self.emoji_actions.select(session)
+        selection = (
+            {"success": True, "index": plan["attach_emoji"]}
+            if plan.get("attach_emoji") is not None
+            else await self.emoji_actions.select(session)
+        )
         if selection["success"] and await self.check_participation(event):
             result = await self.emoji_actions.send(event, session, selection["index"])
         else:
@@ -2570,14 +2574,21 @@ class PersonaPlugin(Star):
         query = ("\n".join(reversed(recent)) + "\n" + focus + goal).strip()
         settings = self.settings.copy()
         prompts_revision = self.prompts_revision
+        inline_selection = bool(
+            plan
+            and plan.get("planner_session")
+            and settings["selection_mode"] == "contextual"
+        )
         contextual_judge = (
             self.jev.select_habits
-            if settings["jev_enabled"] and settings["selection_mode"] == "contextual"
+            if settings["jev_enabled"]
+            and settings["selection_mode"] == "contextual"
+            and not inline_selection
             else None
         )
         retrieval_settings = (
             settings | {"retrieval_timeout": min(1.5, settings["retrieval_timeout"])}
-            if contextual_judge
+            if contextual_judge or inline_selection
             else settings
         )
         provider_id, identity = None, ""
@@ -2609,6 +2620,7 @@ class PersonaPlugin(Star):
                 recent_expression_ids=state.get("recent_expression_ids", []),
                 expression_intent=expression_intent,
                 contextual_judge=contextual_judge,
+                inline_selection=inline_selection,
             )
         )
         # wait_for waits for cancellation to finish. An optional selector whose

@@ -33,6 +33,9 @@ class MemeSender:
         self.sent = []
         self.fail = False
 
+    def _scope_allows_llm_origin(self, event):
+        return True
+
     async def _send_meme_image(self, event, image):
         if self.fail:
             raise OSError("platform send failed")
@@ -40,6 +43,25 @@ class MemeSender:
 
     async def _on_decorating_result_impl(self, event):
         event.set_extra("meme_manager_semantic_selected_ids", None)
+
+
+async def test_planner_owns_emoji_selection_without_changing_other_requests(
+    structured, tmp_path
+):
+    wake, _, sender, _, _ = await prepare(structured, tmp_path)
+    structured.settings.update(
+        emoji_enabled=True,
+        native_memory_enabled=True,
+        image_memory_enabled=True,
+        memory_enabled=True,
+    )
+    assert sender._scope_allows_llm_origin(wake)
+    wake.set_extra("ovenheart_decision", {"planner_session": "current"})
+    assert not sender._scope_allows_llm_origin(wake)
+    structured.settings["emoji_enabled"] = False
+    assert sender._scope_allows_llm_origin(wake)
+    structured.outgoing_media.disconnect()
+    assert sender._scope_allows_llm_origin(wake)
 
 
 async def prepare(plugin, tmp_path, *, caption="蓝发女孩抱着西瓜啃，神情满足"):
