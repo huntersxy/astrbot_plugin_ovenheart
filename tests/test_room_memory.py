@@ -405,6 +405,26 @@ async def test_embedding_model_change_rebuilds_from_metadata_without_crossing_sp
     assert (state.path / "vectors" / original_space).is_dir()
 
 
+async def test_openai_embedding_config_model_identifies_vector_space():
+    from types import SimpleNamespace
+
+    from astrbot_plugin_ovenheart.memory_embedding import EmbeddingAPIAdapter
+
+    class Provider(SyntheticEmbedding):
+        provider_config = {"embedding_model": "first-model"}
+
+        def get_model(self):
+            return ""
+
+    provider = Provider()
+    context = SimpleNamespace(get_provider_by_id=lambda _: provider)
+    before = EmbeddingAPIAdapter(context, "native", asyncio.get_running_loop())
+    provider.provider_config = {"embedding_model": "second-model"}
+    after = EmbeddingAPIAdapter(context, "native", asyncio.get_running_loop())
+    assert before.fingerprint["model_name"] == "first-model"
+    assert before.get_embedding_configuration_key() != after.get_embedding_configuration_key()
+
+
 async def test_sdk_takes_ownership_and_keeps_legacy_evidence_graph_and_vector_files(
     memories,
 ):

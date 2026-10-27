@@ -42,7 +42,13 @@ class EmbeddingAPIAdapter:
             self.provider and callable(getattr(self.provider, "get_embeddings", None))
         )
         config = getattr(self.provider, "provider_config", {})
-        model = self.provider.get_model() if self.available else ""
+        # AstrBot's OpenAI embedding provider keeps its model in the embedding
+        # config, while AbstractProvider.get_model() returns an empty string.
+        model = (
+            self.provider.get_model() or config.get("embedding_model", "")
+            if self.available
+            else ""
+        )
         self.fingerprint = {
             "model_name": str(model),
             "configuration_key": hashlib.sha256(
