@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import sqlite3
 import time
 from datetime import datetime, timezone
 from types import SimpleNamespace
@@ -14,6 +15,39 @@ from tests.test_room_memory import SyntheticEmbedding, material
 from tests.test_structured_conversation import incoming
 
 pytest_plugins = ["tests.test_structured_conversation"]
+
+
+def test_midterm_cutoff_includes_older_rows_outside_the_result_limit(tmp_path):
+    from astrbot_plugin_ovenheart.room_memory import RoomState
+
+    db = sqlite3.connect(":memory:")
+    db.row_factory = sqlite3.Row
+    db.execute("CREATE TABLE paragraphs (hash TEXT, source TEXT, metadata TEXT, created_at INT)")
+    scope = tmp_path / "scope"
+    for key, created, end in (("old", 1, 900), ("middle", 2, 200), ("new", 3, 300)):
+        db.execute(
+            "INSERT INTO paragraphs VALUES (?, ?, ?, ?)",
+            (key, "chat_summary:scope", json.dumps({"midterm": {"cid": "chat", "end": end}}), created),
+        )
+
+    class Metadata:
+        _conn = db
+
+        def get_paragraphs_by_hashes(self, hashes):
+            return {key: {"hash": key, "source": "s", "content": key, "metadata": {}} for key in hashes}
+
+    room = RoomState(scope, asyncio.Lock())
+    room.metadata = Metadata()
+    room.kernel = SimpleNamespace(
+        _get_search_hit_service=lambda: SimpleNamespace(_filter_user_visible_hits=lambda hits: hits)
+    )
+    try:
+        result = room._midterm_records("chat", 2)
+        assert result["cutoff"] == 900
+        assert {row["hash"] for row in result["records"]} == {"middle", "new"}
+        assert room._midterm_records("missing", 2) == {"cutoff": 0, "records": []}
+    finally:
+        db.close()
 
 
 async def test_evicted_native_context_compresses_recalls_and_obeys_forgetting(

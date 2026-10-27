@@ -3290,12 +3290,13 @@ class PersonaPlugin(Star):
                     for scope, window in self.learning_context.items()
                     if any(now - m["created"] <= 300 for m in window)
                 }
-                state = await self.store.call(
+                state = await self.store.read(
                     "state",
                     None,
                     self.settings["target_senders"],
                     self.settings["blocked_senders"],
                     not self.settings["session_isolation"],
+                    "summary",
                 )
                 if (
                     self.settings["enabled"]

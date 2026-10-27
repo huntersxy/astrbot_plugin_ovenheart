@@ -615,15 +615,19 @@ class RoomState:
         return await run_sync_work(self._midterm_records, cid, limit)
 
     def _midterm_records(self, cid, limit):
+        source = "chat_summary:" + self.path.name
+        cutoff = self.metadata._conn.execute(
+            "SELECT COALESCE(MAX(json_extract(metadata,'$.midterm.end')), 0) "
+            "FROM paragraphs WHERE source=? AND json_extract(metadata,'$.midterm.cid')=?",
+            (source, cid),
+        ).fetchone()[0]
         rows = self.metadata._conn.execute(
-            "SELECT hash,metadata FROM paragraphs WHERE source=? AND json_extract(metadata,'$.midterm.cid')=? ORDER BY created_at DESC",
-            ("chat_summary:" + self.path.name, cid),
+            "SELECT hash FROM paragraphs WHERE source=? "
+            "AND json_extract(metadata,'$.midterm.cid')=? ORDER BY created_at DESC LIMIT ?",
+            (source, cid, limit),
         ).fetchall()
-        cutoff = max(
-            (json.loads(r["metadata"])["midterm"]["end"] for r in rows), default=0
-        )
         found = self.metadata.get_paragraphs_by_hashes(
-            [r["hash"] for r in rows[:limit]]
+            [r["hash"] for r in rows]
         )
         hits = self.kernel._get_search_hit_service()._filter_user_visible_hits(
             [

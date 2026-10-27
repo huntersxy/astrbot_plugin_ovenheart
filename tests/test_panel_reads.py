@@ -3,6 +3,7 @@
 import asyncio
 import json
 import sqlite3
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
 import pytest
@@ -95,6 +96,27 @@ async def test_light_views_select_scope_once_without_traits_or_history(
     assert history["runs"] == full["runs"] and history["traits"] == []
     traits.assert_not_called()
     inventory.assert_not_called()
+
+
+async def test_background_poll_uses_summary_read(plugin, monkeypatch):
+    import astrbot_plugin_ovenheart.main as main_module
+
+    await sources(plugin)
+    plugin.settings.update(memory_summary_enabled=False, person_memory_enabled=False, learning_enabled=False)
+    read = AsyncMock(wraps=plugin.store.read)
+    monkeypatch.setattr(plugin.store, "read", read)
+    monkeypatch.setattr(plugin.store, "_state_traits", Mock(side_effect=AssertionError("heavy state")))
+
+    async def stop_after_sleep(_):
+        plugin.closing = True
+
+    with monkeypatch.context() as scoped:
+        scoped.setattr(
+            main_module, "asyncio", SimpleNamespace(sleep=stop_after_sleep, CancelledError=asyncio.CancelledError)
+        )
+        await plugin.poll()
+    assert read.await_count == 1
+    assert read.await_args.args[-1] == "summary"
 
 
 async def test_panel_read_bypasses_write_queue_but_keeps_snapshot_isolation(plugin):
