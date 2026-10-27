@@ -2348,6 +2348,18 @@ class PersonaPlugin(Star):
         user_injection += prompts.REPLY_ACTION_RULE
         if plan.get("jev_reading"):
             user_injection += JEV_RULE
+        if plan.get("planner_session"):
+            # Keep the system rule constant for caching. Only the validated
+            # turn's action goes into the unsaved request tail, after history.
+            req.system_prompt += prompts.REPLY_EXECUTION_RULE
+            event.set_extra("ovenheart_reply_execution_injected", True)
+            user_injection += "\n[OvenHeart current reply execution]\n" + json.dumps(
+                {
+                    "reply_style": plan.get("reply_style", "正常回复"),
+                    "expression_intent": plan.get("expression_intent", {}),
+                },
+                ensure_ascii=False,
+            )
         req.extra_user_content_parts.append(
             TextPart(text=user_injection).mark_as_temp()
         )
@@ -2711,7 +2723,11 @@ class PersonaPlugin(Star):
             for t in selection["traits"]
             if t["id"] in current and habit_text(current[t["id"]]) == habit_text(t)
         ]
-        if selection.get("expression_intent") and (plan or direct):
+        if (
+            selection.get("expression_intent")
+            and (plan or direct)
+            and not (plan or {}).get("planner_session")
+        ):
             (plan or direct)["expression_intent"] = selection["expression_intent"]
         role = ""
         if settings["guidance_delivery"] == "dual":
@@ -2841,6 +2857,8 @@ class PersonaPlugin(Star):
                     or ""
                 )[:128],
                 "reason": plan.get("reason", "宿主直接应答；无需参与决策。")[:240],
+                "reply_execution_injected": event.get_extra("ovenheart_reply_execution_injected", False),
+                "reply_style": plan.get("reply_style", ""),
                 "context_count": len(messages),
                 "context_chars": (
                     len(dump_reply_payload([message_view(m) for m in messages]))
