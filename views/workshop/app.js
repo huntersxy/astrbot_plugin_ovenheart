@@ -551,9 +551,10 @@ function renderSettings(target = "#content") {
       ${switchField("emoji_enabled", "Planner表情动作", "查看本会话的表情候选，选择后随文字回复发送；真实发送结果回流后续规划。", s.emoji_enabled)}
       ${field("emoji_provider_id", "独立表情选择模型 ID", s.emoji_provider_id ?? "", "使用支持图片的模型；留空使用视觉Planner或宿主图片描述模型。", {type:"text"})}
       ${switchField("planner_visual_enabled", "Planner视觉候选拼图", "Planner模型支持图片输入时开启；否则使用已有描述选择。拼图只进入内部工具上下文。", s.planner_visual_enabled)}
-      ${switchField("reply_rhythm_enabled", "语义分段与回复节奏", "按语义切分并发送原文片段；宿主已启用分段时沿用宿主，不叠加。", s.reply_rhythm_enabled)}
-      <div class="number-fields">${field("reply_split_max_messages", "每次正文最多分段数", s.reply_split_max_messages ?? 3, "超过时按原版规则合并", {type:"number",min:1,max:10})}${field("reply_typing_speed", "模拟打字时间倍率", s.reply_typing_speed ?? 0.25, "0关闭等待；每段最多5秒", {type:"number",min:0,max:3,step:0.05})}</div>
-      ${field("reply_split_provider_id", "语义断句模型 ID", s.reply_split_provider_id ?? "", "留空使用Planner或当前模型；使用已有快速模型可缩短等待，计入reply_split用量。", {type:"text"})}
+      ${switchField("reply_rhythm_enabled", "分段回复与发送节奏", "首段直接发送，后续段落再模拟打字；支持普通模型回复与Planner正文。宿主开启分段时完全沿用宿主。", s.reply_rhythm_enabled)}
+      <div class="field"><label for="reply_split_mode">断句方式</label><select id="reply_split_mode" name="reply_split_mode"><option value="rule" ${s.reply_split_mode !== "llm" ? "selected" : ""}>本地规则（推荐，无额外模型调用）</option><option value="llm" ${s.reply_split_mode === "llm" ? "selected" : ""}>模型语义（额外调用，最多等待设定秒数）</option></select><small>初次安装保持本地规则即可：按 AstrBot 分段词与换行切分，保留原文标点。代码、列表、括号和引号正文整条发送；流式与图文混排沿用原发送方式。</small></div>
+      <div class="number-fields">${field("reply_split_max_messages", "每次正文最多分段数", s.reply_split_max_messages ?? 3, "超过时按原版规则合并", {type:"number",min:1,max:10})}${field("reply_typing_speed", "模拟打字时间倍率", s.reply_typing_speed ?? 0.25, "0关闭等待；首段不等待，后续每段最多5秒", {type:"number",min:0,max:3,step:0.05})}</div>
+      <div class="number-fields">${field("reply_split_provider_id", "语义断句模型 ID", s.reply_split_provider_id ?? "", "仅模型语义模式使用；推荐填写 AstrBot 已配置的快速模型 ID。留空使用Planner或当前模型，计入语义断句用量。", {type:"text"})}${field("reply_split_timeout", "语义断句等待上限", s.reply_split_timeout ?? 3, "秒；独立于Planner，失败或超时使用本地规则结果。", {type:"number",min:1,max:10})}</div>
 </section>
 <section class="settings-group"><h2>习惯检索与上下文</h2><p>控制每轮选用的习惯、群聊参考窗口与补充提示。</p>
       <div class="number-fields">${field("max_traits", "每次最多应用习惯", s.max_traits, "条；所有检索模式统一上限，可少选或不选", {type:"number", min:1, max:24})}${field("prompt_budget", "补充内容字数上限", s.prompt_budget, "字符；包含人工底稿", {type:"number", min:500, max:8000})}</div>
@@ -574,6 +575,13 @@ function renderSettings(target = "#content") {
     <div class="form-end"><button class="primary" type="submit">${memoryPage ? "保存记忆设置" : "保存设置"}</button><span class="muted">保存本页所有标签中的修改，立即生效并同步到 AstrBot 插件配置。</span></div></form>`;
   bindSettingsTabs(active, memoryPage);
   const toolSelection = memoryPage ? () => ({}) : renderAutonomousTools(s);
+  const updateSplitControls = () => {
+    const semantic = $("#reply_split_mode").value === "llm";
+    $("#field-reply_split_provider_id").disabled = !semantic;
+    $("#field-reply_split_timeout").disabled = !semantic;
+  };
+  $("#reply_split_mode").onchange = updateSplitControls;
+  updateSplitControls();
   $("#settings-form").onsubmit = event => {
     event.preventDefault();
     const form = event.currentTarget;

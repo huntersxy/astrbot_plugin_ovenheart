@@ -356,3 +356,21 @@ test('review triage separates scores and verdicts and only selects passed pendin
   runInContext('data.library.traits[1].updated=3;renderLibrary();',context);
   assert.equal(runInContext('librarySelection.has(2)',context),false);
 });
+
+
+test('reply split modes guide setup, gate model fields and save timeout', () => {
+  const {context,element}=fixture();
+  runInContext(`data={settings:{reply_split_mode:'rule',reply_split_timeout:3,reply_split_provider_id:'',blocked_senders:[],target_senders:[],allowed_sessions:[],autonomous_tools:[]}};renderSettings();globalThis.saved=null;mutate=(action,payload)=>saved=payload;`,context);
+  assert.ok(element('#content').innerHTML.includes('本地规则（推荐，无额外模型调用）'));
+  assert.ok(element('#content').innerHTML.includes('初次安装保持本地规则即可'));
+  assert.equal(element('#field-reply_split_provider_id').disabled,true);
+  assert.equal(element('#field-reply_split_timeout').disabled,true);
+  element('#reply_split_mode').value='llm';
+  element('#reply_split_mode').onchange();
+  assert.equal(element('#field-reply_split_provider_id').disabled,false);
+  assert.equal(element('#field-reply_split_timeout').disabled,false);
+  const inputs={reply_split_mode:{value:'llm'},reply_split_timeout:{value:'2'},reply_split_provider_id:{value:'fast-model'}};
+  element('#settings-form').onsubmit({preventDefault(){},currentTarget:{elements:{namedItem:key=>inputs[key]||null}}});
+  assert.equal(runInContext('saved.reply_split_mode',context),'llm');
+  assert.equal(runInContext('saved.reply_split_timeout',context),2);
+});

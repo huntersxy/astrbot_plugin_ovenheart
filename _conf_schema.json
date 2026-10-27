@@ -102,9 +102,22 @@
   },
   "reply_rhythm_enabled": {
     "type": "bool",
-    "description": "语义分段与回复节奏",
+    "description": "分段回复与发送节奏",
     "default": true,
-    "hint": "Planner正文按原版语义切分并用原文发送，模拟有限打字间隔。宿主已启用分段时沿用宿主，不叠加。"
+    "hint": "默认使用宿主分段词在本地切分普通模型回复与Planner正文；首段直接发送，仅后续段落模拟打字。宿主已启用分段时完全沿用宿主。流式、图文混排及结构化正文保持原发送方式。"
+  },
+  "reply_split_mode": {
+    "type": "string",
+    "description": "断句方式",
+    "default": "rule",
+    "options": ["rule", "llm"],
+    "hint": "rule 推荐：本地规则，无额外模型调用。llm：使用模型语义断句，会增加调用和等待；失败或超时使用规则结果。代码、列表、括号和引号正文整条发送。"
+  },
+  "reply_split_timeout": {
+    "type": "int",
+    "description": "语义断句等待上限（秒）",
+    "default": 3,
+    "hint": "仅语义模式使用，范围1～10秒，独立于Planner超时。超时后立即使用规则结果。"
   },
   "reply_split_provider_id": {
     "type": "string",
@@ -121,7 +134,7 @@
     "type": "float",
     "description": "模拟打字时间倍率",
     "default": 0.25,
-    "hint": "0关闭等待；按原版中英文字时间计算，每段最多等待5秒。不会修改正文。"
+    "hint": "0关闭等待；首段直接发送，后续按原版中英文字时间计算，每段最多等待5秒。"
   },
   "emoji_provider_id": {
     "type": "string",

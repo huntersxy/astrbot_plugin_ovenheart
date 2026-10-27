@@ -19,6 +19,8 @@ Open **Persona Workshop** on the plugin card. It uses AstrBot authentication and
 - Review sourced facts, shared experiences, images and corrections in the Memory tab.
 - Enable observation before automatic group participation. Automatic participation is off by default.
 
+Reply splitting defaults to local rules using AstrBot’s split words and line breaks. No additional model is required. The first part sends without a typing delay; later parts use bounded typing intervals, with at most three messages by default. Optional semantic splitting uses a chat provider and a separate three-second timeout, falling back to local rules. Code, lists, bracketed or quoted content stay intact. Host segmentation takes precedence; streaming and mixed media keep their original delivery. Configure this under Settings → Expression & retrieval.
+
 Learning changes retrieval and prompt guidance, not model weights. Model calls may include relevant chat excerpts. Runtime data belongs in AstrBot's plugin data directory, not in the source tree.
 
 See the [user guide](../guide.md) and [developer guide](../../CONTRIBUTING.md). Reports should include versions, reproduction steps and sanitized logs; never submit keys or real chat exports.

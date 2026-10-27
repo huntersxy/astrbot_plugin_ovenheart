@@ -27,6 +27,8 @@ DEFAULTS = {
     "image_memory_enabled": True,
     "emoji_enabled": True,
     "reply_rhythm_enabled": True,
+    "reply_split_mode": "rule",
+    "reply_split_timeout": 3,
     "reply_split_provider_id": "",
     "reply_split_max_messages": 3,
     "reply_typing_speed": 0.25,
@@ -156,6 +158,7 @@ def validate_settings(values: dict) -> dict:
         "memory_summary_min_messages": (1, 50),
         "midterm_memory_limit": (1, 50),
         "reply_split_max_messages": (1, 10),
+        "reply_split_timeout": (1, 10),
         "reply_typing_speed": (0, 3),
         "memory_summary_interval": (0, 86400),
     }
@@ -198,6 +201,9 @@ def validate_settings(values: dict) -> dict:
         elif key == "participation_mode":
             if value not in ("off", "observe", "auto"):
                 raise ValueError("参与方式必须为 off、observe 或 auto。")
+        elif key == "reply_split_mode":
+            if value not in ("rule", "llm"):
+                raise ValueError("断句方式必须为 rule 或 llm。")
         elif key == "planner_mode":
             if value not in ("maibot", "legacy"):
                 raise ValueError("planner_mode 必须为 maibot 或 legacy。")

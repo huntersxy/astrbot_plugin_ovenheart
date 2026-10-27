@@ -1,9 +1,10 @@
-"""Native send adapter for original semantic splitting and bounded typing delays."""
+"""Reuse host word splitting, optional MaiBot semantics, and bounded send delays."""
 
 from __future__ import annotations
 
 import asyncio
 import copy
+import re
 
 from astrbot.api import logger
 from astrbot.core.message.components import At, Image, Plain, Reply
@@ -34,8 +35,22 @@ class ReplyRhythm:
                 .get("platform_settings", {})
                 .get("segmented_reply", {})
             )
-            if not plan or not settings["reply_rhythm_enabled"] or native.get("enable"):
+            if not settings["reply_rhythm_enabled"] or native.get("enable"):
                 return await original(message)
+            if not plan:
+                result = event.get_result()
+                if (
+                    result is None
+                    or not result.is_llm_result()
+                    or message.chain is not result.chain
+                    or not settings["apply_enabled"]
+                    or not await self.plugin.permitted(event)
+                ):
+                    return await original(message)
+                scope, _, _ = await self.plugin.resolve_scope(event)
+                profile = await self.plugin.store.read("scope_profile", scope)
+                if not profile or not profile["profile"]["apply_enabled"]:
+                    return await original(message)
             parts = message.chain
             if any(not isinstance(part, (At, Reply, Plain, Image)) for part in parts):
                 return await original(message)
@@ -49,49 +64,14 @@ class ReplyRhythm:
                 if image_only:
                     await self.pause(event, "", True)
                 return await original(message)
-            text = texts[0]
-            sentences = [text]
-            if len(text) >= 40:
-
-                async def generate(prompt):
-                    provider = (
-                        settings["reply_split_provider_id"]
-                        or settings["planner_provider_id"]
-                        or await self.plugin.context.get_current_chat_provider_id(
-                            event.unified_msg_origin
-                        )
-                    )
-                    response = await self.plugin.auxiliary.generate(
-                        "reply_split", chat_provider_id=provider, prompt=prompt
-                    )
-                    if getattr(response, "role", "") == "err":
-                        raise ValueError("断句模型返回了错误响应。")
-                    return response.completion_text
-
-                try:
-                    with bind_response(generate, settings["reply_typing_speed"]):
-                        split = await asyncio.wait_for(
-                            split_text_with_llm(text), settings["planner_timeout"]
-                        )
-                    segments = _merge_processed_segments_to_max_count(
-                        [
-                            ProcessedResponseSegment(part, separator=separator)
-                            for part, separator in split
-                            if part.strip()
-                        ],
-                        settings["reply_split_max_messages"],
-                    )
-                    sentences = [segment.text for segment in segments] or [text]
-                except asyncio.CancelledError:
-                    raise
-                except Exception as exc:
-                    logger.warning(
-                        "语义断句未完成，使用原文发送 (%s)", type(exc).__name__
-                    )
+            sentences = await self.split(event, texts[0], native)
             result = None
             sent = event.get_extra("ovenheart_actual_text_segments", [])
             for index, sentence in enumerate(sentences):
-                await self.pause(event, sentence, False)
+                if index:
+                    await self.pause(event, sentence, False)
+                elif plan and not await self.plugin.check_participation(event):
+                    raise asyncio.CancelledError
                 chain = copy.copy(message)
                 chain.chain = [
                     *[
@@ -116,6 +96,85 @@ class ReplyRhythm:
         event.send = send
         event.set_extra("ovenheart_reply_rhythm_bound", True)
 
+    async def split(self, event, text, native):
+        settings = self.plugin.settings
+        if (
+            settings["reply_split_max_messages"] == 1
+            or len(text.strip()) < 2
+            or re.search(
+                r"[`()（）\[\]【】{}“”‘’「」『』\"']|~~~|\$\$|^[ \t]*(?:[-*+]|\d+[.)、])[ \t]+",
+                text,
+                re.MULTILINE,
+            )
+        ):
+            return [text]
+
+        from astrbot.core.pipeline.result_decorate.stage import ResultDecorateStage
+
+        stage = ResultDecorateStage()
+        stage.split_words = list(
+            dict.fromkeys(
+                [*native.get("split_words", ["。", "？", "！", "~", "…"]), "\n"]
+            )
+        )
+        stage.split_words_pattern = re.compile(
+            f"(.*?({'|'.join(sorted(map(re.escape, stage.split_words), key=len, reverse=True))})|.+$)",
+            re.DOTALL,
+        )
+        chunks = stage._split_text_by_words(text)
+        # The host removes delimiters. Recover its boundaries in the original
+        # text so punctuation and whitespace survive both splitting and merging.
+        starts = []
+        position = 0
+        for chunk in chunks:
+            start = text.find(chunk, position)
+            if start < 0:
+                return [text]
+            starts.append(start)
+            position = start + len(chunk)
+        boundaries = [0, *starts[1:], len(text)]
+        segments = [
+            ProcessedResponseSegment(text[start:end])
+            for start, end in zip(boundaries, boundaries[1:], strict=False)
+        ]
+        if settings["reply_split_mode"] == "llm":
+
+            async def generate(prompt):
+                provider = (
+                    settings["reply_split_provider_id"]
+                    or settings["planner_provider_id"]
+                    or await self.plugin.context.get_current_chat_provider_id(
+                        event.unified_msg_origin
+                    )
+                )
+                response = await self.plugin.auxiliary.generate(
+                    "reply_split", chat_provider_id=provider, prompt=prompt
+                )
+                if getattr(response, "role", "") == "err":
+                    raise ValueError("断句模型返回了错误响应。")
+                return response.completion_text
+
+            try:
+                with bind_response(generate, settings["reply_typing_speed"]):
+                    split = await asyncio.wait_for(
+                        split_text_with_llm(text), settings["reply_split_timeout"]
+                    )
+                segments = [
+                    ProcessedResponseSegment(part, separator=separator)
+                    for part, separator in split
+                    if part.strip()
+                ]
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                logger.warning(
+                    "语义断句未完成，使用本地规则分段 (%s)", type(exc).__name__
+                )
+        merged = _merge_processed_segments_to_max_count(
+            segments, settings["reply_split_max_messages"]
+        )
+        return [segment.text for segment in merged] or [text]
+
     async def pause(self, event, text, image):
         with bind_response(None, self.plugin.settings["reply_typing_speed"]):
             delay = (
@@ -125,5 +184,8 @@ class ReplyRhythm:
             )
         if delay > 0:
             await asyncio.sleep(delay)
-        if not await self.plugin.check_participation(event):
+        if event.is_stopped() or (
+            event.get_extra("ovenheart_decision")
+            and not await self.plugin.check_participation(event)
+        ):
             raise asyncio.CancelledError
