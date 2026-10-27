@@ -160,6 +160,7 @@ class PlannerSession:
         self.replied = set()
         self.waits = 0
         self.direct = bool(event.is_at_or_wake_command)
+        self.trigger_source = event_source(event)
         self.memory_ids = set()
         self.emojis = {}
         self.reacted = set()
@@ -297,11 +298,11 @@ class PlannerSession:
                         for row in targets
                         if self.direct
                         and not self.replied
-                        and row["source"] == event_source(self.event)
+                        and row["source"] == self.trigger_source
                     ),
                     None,
                 )
-                if target is None:
+                if target is None and not (self.direct and not self.replied):
                     target = next(
                         (
                             row
@@ -330,7 +331,7 @@ class PlannerSession:
                 and not self.replied
                 and not any(
                     m["sequence"] == sequence
-                    and m["source"] == event_source(self.event)
+                    and m["source"] == self.trigger_source
                     for m in self.messages
                 )
             ):

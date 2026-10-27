@@ -452,6 +452,32 @@ async def test_new_input_resumes_an_actual_wait_without_restarting(native_planne
         await anext(replies)
 
 
+async def test_direct_trigger_remains_reply_target_after_wait_is_resumed():
+    from astrbot_plugin_ovenheart.planner import PlannerSession
+    from astrbot_plugin_ovenheart.settings import DEFAULTS
+
+    original = event("direct-original", text="帮我看看", sender="alice")
+    original.is_at_or_wake_command = True
+    owner = SimpleNamespace(plugin=SimpleNamespace(settings_revision="a", prompts_revision="b", debug=MagicMock()))
+    messages = [
+        {"sequence": 1, "source": "direct-original", "sender_id": "alice", "text": "帮我看看"},
+        {"sequence": 2, "source": "interruption", "sender_id": "bob", "text": "插句话"},
+    ]
+    session = PlannerSession(owner, original, "room", "persona", {"scope": {"profile": {}}}, messages, DEFAULTS | {"planner_reply_timeout": 5})
+    session.check_current = AsyncMock()
+    session.event = event("interruption", text="插句话", sender="bob")
+    result = await session.invoke("reply", {"msg_id": "2", "reply_reference": "回应插话"})
+    assert "先处理 trigger.msg_id" in result
+    reply = asyncio.create_task(session.invoke("reply", {"msg_id": "1", "reply_reference": "回应原请求"}))
+    done, _ = await asyncio.wait({reply}, timeout=0.1)
+    if done:
+        await reply
+    plan = await asyncio.wait_for(session.actions.get(), 1)
+    assert plan["target_sequence"] == 1
+    session.acknowledge({"send_hook": True})
+    await reply
+
+
 async def test_no_send_hook_does_not_report_success_or_continue(native_planner):
     plugin, provider = native_planner
     provider.text_chat.side_effect = [
