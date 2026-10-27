@@ -1458,6 +1458,17 @@ class RoomMemory:
         revision = self.plugin.settings_revision
         if self.closing or self.plugin.closing:
             raise ValueError("记忆运行时正在关闭。")
+        empty_reads = {
+            "search": [],
+            "person_context": {"paragraphs": [], "relations": [], "episodes": []},
+            "midterm_records": {"cutoff": 0, "records": []},
+        }
+        if (
+            operation in empty_reads
+            and scope not in self.rooms
+            and not (self.directory / scope / "metadata" / "metadata.db").exists()
+        ):
+            return empty_reads[operation]
         embedding = EmbeddingAPIAdapter(
             self.plugin.context,
             self.plugin.settings["embedding_provider_id"],

@@ -103,6 +103,9 @@ class EmbeddingAPIAdapter:
             if self.dimension == dimension and self.dimension
             else "configured"
         )
+        # The SDK uses `model` for status/log display. Keep the existing hash
+        # inputs so adding this display alias does not invalidate saved vectors.
+        fingerprint["model"] = fingerprint["model_name"]
         return fingerprint
 
     def get_embedding_configuration_key(self):

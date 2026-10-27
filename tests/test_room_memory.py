@@ -84,6 +84,22 @@ async def test_original_sparse_graph_search_retains_native_evidence(memories):
     )
 
 
+async def test_first_empty_reads_do_not_start_memory_kernel_and_first_write_does(memories):
+    incoming, scope, persona, messages = await material(memories)
+    assert not await memories.room_memory.search(incoming, scope, persona, "猫咪")
+    assert await memories.room_memory.person_context(incoming, scope, persona, "alice") == {
+        "paragraphs": [], "relations": [], "episodes": [],
+    }
+    assert await memories.room_memory.call(scope, "midterm_records", "conversation", 4, event=incoming) == {
+        "cutoff": 0, "records": [],
+    }
+    assert not memories.room_memory.rooms
+    assert not (memories.room_memory.directory / scope).exists()
+    saved = await memories.room_memory.remember(incoming, scope, persona, note(), messages)
+    result = await memories.room_memory.search(incoming, scope, persona, "猫咪")
+    assert any(row["id"] == saved["id"] for row in result)
+
+
 async def test_search_skips_empty_episode_index_but_recalls_new_episode(memories, monkeypatch):
     incoming, scope, persona, messages = await material(memories)
     saved = await memories.room_memory.remember(incoming, scope, persona, note(), messages)
@@ -422,6 +438,7 @@ async def test_openai_embedding_config_model_identifies_vector_space():
     provider.provider_config = {"embedding_model": "second-model"}
     after = EmbeddingAPIAdapter(context, "native", asyncio.get_running_loop())
     assert before.fingerprint["model_name"] == "first-model"
+    assert before.get_embedding_fingerprint(dimension=4)["model"] == "first-model"
     assert before.get_embedding_configuration_key() != after.get_embedding_configuration_key()
 
 
