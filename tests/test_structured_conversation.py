@@ -341,16 +341,30 @@ async def test_own_speech_and_same_sender_survive_busy_room_window(structured):
     assert json.dumps(focus) == before
 
 
-async def test_already_answered_message_is_not_an_autonomous_target(structured):
+@pytest.mark.parametrize("has_message_id", [True, False])
+async def test_already_answered_message_is_not_an_autonomous_target(structured, has_message_id):
     original = incoming("original", "QUESTION")
+    if not has_message_id:
+        original.message_obj.message_id = ""
+    source = structured.conversation.record(original)["source"]
     scope = (await structured.resolve_scope(original))[0]
     await structured.capture(original)
+    await structured.conversation.delivered(
+        original, scope, None, "", False, media=[{"type": "image", "status": "ready"}]
+    )
+    after_image = structured.conversation.snapshot(
+        original, scope, through_sequence=structured.participation.windows[scope]["sequence"]
+    )
+    assert next(m for m in after_image if m["source"] == source)["replyable"]
     await structured.conversation.delivered(original, scope, None, "ANSWER", True)
     next_turn = incoming("next", "NEW_TOPIC", sender="peer")
+    if not has_message_id:
+        next_turn.message_obj.message_id = ""
     await structured.conversation.prepare(next_turn, scope, ProviderRequest())
     messages = next_turn.get_extra("ovenheart_context_snapshot")["messages"]
-    answered = next(m for m in messages if m["message_id"] == "original")
+    answered = next(m for m in messages if m["source"] == source)
     assert not answered["replyable"]
+    assert next(m for m in messages if m["source"] == structured.conversation.record(next_turn)["source"])["replyable"]
     with pytest.raises(ParticipationFormatError):
         parse_plan(
             decision(target_sequence=answered["sequence"]).completion_text,

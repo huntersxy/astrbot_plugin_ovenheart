@@ -1460,14 +1460,17 @@ class ParticipationController:
 
 def offered_messages(messages, settings):
     """Use the same bounded structured snapshot for decisions and generation."""
-    if settings["context_mode"] == "structured":
-        return messages[-40:]
-    answered = {m.get("answered_source") for m in messages if m.get("self")}
+    answered = {
+        m.get("answered_source", (m.get("reply_to") or {}).get("source"))
+        for m in messages
+        if m.get("self")
+    }
+    count = 40 if settings["context_mode"] == "structured" else 20
     return [
         m | {"replyable": False}
         if not m.get("self") and m.get("source") in answered
         else m
-        for m in messages[-20:]
+        for m in messages[-count:]
     ]
 
 

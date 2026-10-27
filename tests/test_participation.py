@@ -884,6 +884,9 @@ async def test_first_direct_reply_is_visible_to_the_next_group_planner(participa
     payload = json.loads(participant.context.llm_generate.await_args.kwargs["prompt"])
     own = next(message for message in payload["recent_messages"] if message["self"])
     assert own["text"] == "已经解决，不需要重复操作。"
+    scope = (await participant.resolve_scope(later))[0]
+    recorded = next(m for m in participant.participation.windows[scope]["messages"] if m["self"])
+    assert recorded["answered_source"] == "direct-first"
     assert own["reply_to"]["message_id"] == "direct-first"
     assert own["reply_to"]["text"] == "这个问题解决了吗？"
     assert own["sender_id"] == direct.get_self_id()

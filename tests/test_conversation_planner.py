@@ -472,10 +472,12 @@ async def test_wait_timeout_resumes_the_same_native_tool_loop(native_planner):
     assert incoming.get_result() is None
 
 
-async def test_partial_reply_keeps_target_available(native_planner):
+@pytest.mark.parametrize("context_mode", ["native", "structured"])
+async def test_partial_reply_keeps_target_available(native_planner, context_mode):
     from astrbot_plugin_ovenheart.chat.participation import offered_messages
 
     plugin, provider = native_planner
+    plugin.settings["context_mode"] = context_mode
     provider.text_chat.side_effect = [
         action("reply", msg_id="1", reply_reference="回答问题")
     ]
@@ -487,8 +489,10 @@ async def test_partial_reply_keeps_target_available(native_planner):
         incoming.set_extra("ovenheart_actual_text_segments", ["第一部分"])
         await send_reply(plugin, incoming, "第一部分")
         scope = incoming.get_extra("ovenheart_decision")["scope"]
-        offered = offered_messages(
-            list(plugin.participation.windows[scope]["messages"]), plugin.settings
+        offered = (
+            plugin.conversation.snapshot(incoming, scope, through_sequence=plugin.participation.windows[scope]["sequence"])
+            if context_mode == "structured"
+            else offered_messages(list(plugin.participation.windows[scope]["messages"]), plugin.settings)
         )
         assert next(m for m in offered if m["source"] == "partial-target").get(
             "replyable", True

@@ -18,7 +18,7 @@ from astrbot.core.message.components import At, Image, Plain, Reply
 
 from ..core.message_source import own_message_text
 from .native_context import conversation_metadata
-from .participation import event_source
+from .participation import event_source, offered_messages
 
 CONTEXT_COUNT = 40
 CONTEXT_BUDGET = 24000
@@ -428,11 +428,6 @@ class ConversationContext:
         ):
             return []
         result = []
-        answered = {
-            str((m.get("reply_to") or {}).get("message_id"))
-            for m in window["messages"]
-            if m.get("self") and (m.get("reply_to") or {}).get("message_id")
-        }
         for record in reversed(
             [
                 m
@@ -452,12 +447,11 @@ class ConversationContext:
             value["replyable"] = (
                 not value.get("self")
                 and (scope, value["source"]) in self.plugin.participation.sources
-                and value.get("message_id") not in answered
             )
             if len(json.dumps([value, *result], ensure_ascii=False)) > CONTEXT_BUDGET:
                 break
             result.insert(0, value)
-        return result
+        return offered_messages(result, self.plugin.settings)
 
     def focus(self, event, scope, target, messages):
         """Pin the addressee's thread and our own speech separately from room chatter.
@@ -619,6 +613,9 @@ class ConversationContext:
                 "sender_id": event.get_self_id(),
                 "self": True,
                 "text": text[:4000],
+                "answered_source": target.get("source", "")
+                if text and not event.get_extra("ovenheart_text_delivery_incomplete")
+                else "",
                 "reply_to": {
                     k: target.get(k, "")
                     for k in ("source", "message_id", "sender", "sender_id", "text")

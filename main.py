@@ -3196,7 +3196,9 @@ class PersonaPlugin(Star):
                     # Further segments from this same admitted turn stay valid;
                     # a newer input must never be acknowledged on its behalf.
                     plan["sequence"] = window["sequence"]
-                target = (plan.get("target") or {}) if plan else {}
+                target = (
+                    plan.get("target") if plan else None
+                ) or self.conversation.record(event)
                 window["messages"].append(
                     {
                         "sequence": window["sequence"],
@@ -3208,8 +3210,7 @@ class PersonaPlugin(Star):
                         "text": text,
                         "answered_source": (
                             target.get("source", "")
-                            if plan
-                            and not event.get_extra(
+                            if not event.get_extra(
                                 "ovenheart_text_delivery_incomplete"
                             )
                             else ""
