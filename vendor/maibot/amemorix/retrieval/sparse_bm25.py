@@ -20,10 +20,9 @@ import re
 import sqlite3
 import time
 
-from ..host import get_logger
+from astrbot.api import logger
 from ..storage import MetadataStore
 
-logger = get_logger("A_Memorix.SparseBM25")
 
 try:
     import jieba  # type: ignore

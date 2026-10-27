@@ -19,7 +19,7 @@ import traceback
 
 import numpy as np
 
-from ..host import get_logger
+from astrbot.api import logger
 from ..summary_host import load_prompt
 from ..summary_host import config_manager, global_config
 from ..host import TaskConfig
@@ -43,7 +43,6 @@ from .metadata import coerce_metadata_dict
 from .relation_write_service import RelationWriteService
 from .runtime_payloads import optional_float
 
-logger = get_logger("A_Memorix.SummaryImporter")
 
 
 @dataclass(frozen=True)
@@ -828,6 +827,10 @@ class SummaryImporter:
                 source=f"chat_summary:{stream_id}",
             )
 
+        except TimeoutError:
+            # Native request deadlines belong to the host scheduler; retain
+            # their type instead of wrapping them as an import/data error.
+            raise
         except Exception as e:
             logger.error(f"总结导入过程中出错: {e}\n{traceback.format_exc()}")
             return SummaryImportResult(False, f"错误: {str(e)}")

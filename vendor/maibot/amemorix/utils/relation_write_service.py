@@ -11,15 +11,14 @@
 
 from __future__ import annotations
 
+from astrbot.api import logger
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
 import numpy as np
 
-from ..host import get_logger
 
 
-logger = get_logger("A_Memorix.RelationWriteService")
 
 
 @dataclass

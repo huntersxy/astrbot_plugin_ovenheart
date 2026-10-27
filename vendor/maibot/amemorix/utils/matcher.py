@@ -6,10 +6,10 @@
 优先使用 ahocorasick-rs 原生实现，缺失时回退到纯 Python Aho-Corasick。
 """
 
+from astrbot.api import logger
 from collections import deque
 from typing import Dict, List, Optional, Set, Tuple
 
-from ..host import get_logger
 
 import os
 
@@ -21,7 +21,6 @@ except ImportError:
     ahocorasick_rs = None
     HAS_AHOCORASICK_RS = False
 
-logger = get_logger("A_Memorix.Matcher")
 
 
 class AhoCorasick:

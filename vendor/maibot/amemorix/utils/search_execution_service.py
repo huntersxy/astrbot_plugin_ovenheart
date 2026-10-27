@@ -14,8 +14,8 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
 
-from ..sdk_host import get_logger
 
+from astrbot.api import logger
 from ..retrieval import RetrievalResult, RetrievalScope, TemporalQueryOptions
 from .metadata import coerce_metadata_dict
 from .search_postprocess import (
@@ -24,7 +24,6 @@ from .search_postprocess import (
 )
 from .time_parser import parse_query_time_range
 
-logger = get_logger("A_Memorix.SearchExecutionService")
 
 
 def _get_config_value(config: Optional[dict], key: str, default: Any = None) -> Any:

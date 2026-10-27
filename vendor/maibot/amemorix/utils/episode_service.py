@@ -20,14 +20,12 @@ import asyncio
 import json
 import re
 
-from ..host import get_logger
 from ..host import global_config
 
 from .episode_segmentation_service import EpisodeSegmentationService
 from .hash import compute_hash
 from .runtime_payloads import argument_tokens
 
-logger = get_logger("A_Memorix.EpisodeService")
 
 
 class EpisodeService:

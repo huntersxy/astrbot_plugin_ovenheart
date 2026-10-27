@@ -12,12 +12,11 @@ import re
 import shutil
 import time
 
-from ...sdk_host import get_logger
 
+from astrbot.api import logger
 from .base import KernelServiceBase
 from .vector_rebuild_checkpoint import EmbeddingConfigurationChanged
 
-logger = get_logger("A_Memorix.VectorSpaces")
 
 
 class MemoryVectorSpaceService(KernelServiceBase):

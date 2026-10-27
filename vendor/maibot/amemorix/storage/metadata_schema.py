@@ -6,8 +6,8 @@ from typing import Any, Dict, List, Tuple
 
 import sqlite3
 
-from ..host import get_logger
 
+from astrbot.api import logger
 from .metadata_fact import FACT_SCHEMA_STATEMENTS
 from .knowledge_types import (
     KnowledgeType,
@@ -16,7 +16,6 @@ from .knowledge_types import (
     validate_stored_knowledge_type,
 )
 
-logger = get_logger("A_Memorix.MetadataSchema")
 
 SCHEMA_VERSION = 27
 RUNTIME_AUTO_MIGRATION_MIN_SCHEMA_VERSION = 9

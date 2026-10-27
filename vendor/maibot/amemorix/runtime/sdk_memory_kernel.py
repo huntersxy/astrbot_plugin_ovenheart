@@ -11,7 +11,6 @@ import asyncio
 import time  # noqa: F401
 
 from ..sdk_host import chat_manager  # noqa: F401
-from ..sdk_host import get_logger
 from ..sdk_host import LLMServiceClient
 
 from ..paths import default_data_dir, resolve_repo_path
@@ -84,7 +83,6 @@ from .runtime_facade import KernelRuntimeFacade
 from .runtime_writer_lock import RuntimeWriterLock
 from .search_runtime_initializer import SearchRuntimeBundle, build_search_runtime  # noqa: F401
 
-logger = get_logger("A_Memorix.SDKMemoryKernel")
 
 DUAL_VECTOR_AUTO_MIGRATION_INITIAL_DELAY_SECONDS = 5.0
 DUAL_VECTOR_AUTO_MIGRATION_LOCK_RETRY_DELAYS_SECONDS = (2.0, 5.0, 10.0)

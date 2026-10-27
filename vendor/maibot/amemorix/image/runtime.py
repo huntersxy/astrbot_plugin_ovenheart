@@ -16,15 +16,14 @@ import uuid
 
 import numpy as np
 
-from ..sdk_host import get_logger
 
+from astrbot.api import logger
 from ..storage import MetadataStore, QuantizationType, VectorStore
 from .asset_store import ImageAssetStore, InspectedImage
 from .component_paths import build_package_external_ref
 from .embedder import ImageEmbedder
 from .fingerprints import fingerprint_hash
 
-logger = get_logger("A_Memorix.ImageMemory")
 
 
 class ImageMemoryRuntime:

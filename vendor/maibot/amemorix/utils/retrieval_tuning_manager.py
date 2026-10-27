@@ -19,8 +19,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
-from ..sdk_host import get_logger
 
+from astrbot.api import logger
 from ..paths import artifacts_root
 from ..runtime.search_runtime_initializer import build_search_runtime
 from .model_routing import (
@@ -37,7 +37,6 @@ try:
 except Exception:  # pragma: no cover
     llm_api = None
 
-logger = get_logger("A_Memorix.RetrievalTuningManager")
 
 
 OBJECTIVES = {"precision_priority", "balanced", "recall_priority"}

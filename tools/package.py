@@ -1,5 +1,6 @@
 """Build the runtime artifact; developer files never enter the install ZIP."""
 
+import ast
 import re
 import subprocess
 from pathlib import Path
@@ -27,6 +28,38 @@ RUNTIME_TREES = {
 }
 
 
+def validate_logger_imports(source, filename):
+    for node in ast.walk(ast.parse(source, filename=filename)):
+        invalid = False
+        if isinstance(node, ast.Import):
+            invalid = any(alias.name.split(".")[0] == "logging" for alias in node.names)
+        elif isinstance(node, ast.ImportFrom):
+            invalid = (node.module or "").split(".")[0] == "logging" or any(
+                alias.name in {"get_logger", "getLogger"} for alias in node.names
+            )
+            if any(alias.name == "logger" for alias in node.names):
+                invalid = invalid or not (
+                    node.module == "astrbot.api"
+                    and not node.level
+                    and len(node.names) == 1
+                    and node.names[0].asname is None
+                )
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            invalid = node.name in {"get_logger", "getLogger"}
+        elif isinstance(node, ast.Call):
+            invalid = (
+                isinstance(node.func, ast.Name)
+                and node.func.id in {"get_logger", "getLogger"}
+            ) or (
+                isinstance(node.func, ast.Attribute)
+                and node.func.attr in {"get_logger", "getLogger"}
+            )
+        if invalid:
+            raise ValueError(
+                f"{filename}:{node.lineno}: logger must use from astrbot.api import logger"
+            )
+
+
 def package():
     tracked = set(
         subprocess.check_output(["git", "ls-files", "-z"], cwd=ROOT)
@@ -52,6 +85,9 @@ def package():
             and "__pycache__" not in p.parts
             and p.relative_to(ROOT).as_posix() in tracked
         )
+    for path in files:
+        if path.suffix == ".py":
+            validate_logger_imports(path.read_bytes(), path.relative_to(ROOT).as_posix())
     with ZipFile(destination, "w", compression=ZIP_DEFLATED) as archive:
         for path in sorted(files):
             archive.write(path, path.relative_to(ROOT).as_posix())

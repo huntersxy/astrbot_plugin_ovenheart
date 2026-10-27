@@ -81,6 +81,31 @@ def episode():
     )
 
 
+def test_summary_batches_bound_input_without_losing_minimum_or_source_text():
+    from astrbot_plugin_ovenheart.memory.memory_consolidation import summary_batch
+
+    rows = [{"source_id": str(i), "text": "原" * 1000} for i in range(50)]
+    assert summary_batch(rows, set(), 12) == rows[:12]
+    assert summary_batch(rows, {"0"}, 12) == rows[1:13]
+    assert summary_batch(rows, set(), 30) == rows[:30]
+    quoted = [row | {"text": "正文" * 50, "reply_to": {"text": "引" * 1000}} for row in rows]
+    assert summary_batch(quoted, set(), 12) == quoted[:12]
+
+
+async def test_summary_model_timeout_retains_sources_without_import_error_trace(consolidator, caplog):
+    p = consolidator
+    p.settings["embedding_provider_id"] = "semantic"
+    p.context.get_provider_by_id = lambda name: SyntheticEmbedding() if name == "semantic" else None
+    p.context.llm_generate.side_effect = TimeoutError()
+    incoming, scope, persona = await capture(p, "timed-out-source")
+    assert p.room_memory.rooms[scope].metadata.count_paragraphs() == 0
+    assert not (await p.room_memory.call(scope, "summary_status"))["processed"]
+    assert len(await p.store.call("room_memory_inputs", scope)) == 1
+    assert "等待预算" in caplog.text
+    assert "总结导入过程中出错" not in caplog.text
+    assert "RuntimeError, phase=summary_model" not in caplog.text
+
+
 @pytest.fixture
 async def consolidator(participant):
     participant.settings.update(
@@ -756,6 +781,11 @@ def test_original_summary_episode_algorithms_and_prompts_match_pinned_upstream()
                     for m in cls.body
                     if getattr(m, "name", "") != "_ensure_runtime_self_check"
                 ]
+                for method in cls.body:
+                    if getattr(method, "name", "") == "_import_from_stream_unlocked":
+                        for node in ast.walk(method):
+                            if isinstance(node, ast.Try):
+                                node.handlers = [h for h in node.handlers if not (isinstance(h.type, ast.Name) and h.type.id == "TimeoutError" and len(h.body) == 1 and isinstance(h.body[0], ast.Raise) and h.body[0].exc is None)]
         assert ast.dump(original) == ast.dump(native)
     for name, entry in manifest["files"].items():
         assert (

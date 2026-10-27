@@ -9,7 +9,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from . import host, summary_host
-from .host import PersonInfo, TaskConfig, get_db_session, get_logger
+from .host import PersonInfo, TaskConfig, get_db_session
 from .utils.async_work import run_sync_work
 
 _native = ContextVar("ovenheart_memory_sdk_host")

@@ -8,11 +8,10 @@ import re
 import sqlite3
 import time
 
-from ..host import get_logger
 
+from astrbot.api import logger
 from .tokenizer_runtime import HAS_JIEBA, JIEBA_MODULE
 
-logger = get_logger("A_Memorix.MetadataFTS")
 
 
 class MetadataFTSMixin:

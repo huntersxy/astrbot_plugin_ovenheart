@@ -2,6 +2,8 @@
 # Native host imports: see NOTICE.md and source_manifest.json.
 from __future__ import annotations
 
+from astrbot.api import logger
+
 from .base import KernelServiceBase
 
 
@@ -85,7 +87,7 @@ class MemoryRuntimeDependencyService(KernelServiceBase):
             rebuild_required = bool(self._vector_rebuild_status().get("vector_rebuild_required", False))
         if self.vector_store is not None and not self._dual_vector_pools_enabled():
             if rebuild_required:
-                kernel_module.logger.debug("检测到向量库需要重建，跳过向量库持久化以保留重建提示")
+                logger.debug("检测到向量库需要重建，跳过向量库持久化以保留重建提示")
             else:
                 self._save_vector_store(self.vector_store)
         if self._dual_vector_pools_enabled() and not rebuild_required:

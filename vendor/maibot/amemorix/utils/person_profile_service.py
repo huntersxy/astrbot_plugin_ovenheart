@@ -19,9 +19,9 @@ from sqlalchemy import or_
 from sqlmodel import select
 
 
+from astrbot.api import logger
 from ..host import get_db_session
 from ..host import PersonInfo
-from ..host import get_logger
 from ..host import global_config
 from .. import host as llm_api
 
@@ -34,7 +34,6 @@ from .model_routing import (
 )
 from .profile_text import build_profile_injection_text, build_structured_profile_text
 
-logger = get_logger("A_Memorix.PersonProfileService")
 
 PROFILE_CLASSIFICATION_REQUEST_TYPE = "A_Memorix.PersonProfileEvidenceClassify"
 PROFILE_GENERATION_VERSION = 3

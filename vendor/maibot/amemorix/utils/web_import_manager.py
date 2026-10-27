@@ -25,7 +25,7 @@ import uuid
 
 import numpy as np
 
-from ..sdk_host import get_logger
+from astrbot.api import logger
 from ..sdk_host import llm_service as llm_api
 
 from ..paths import default_data_dir, repo_root, resolve_repo_path, scripts_root
@@ -63,7 +63,6 @@ from .relation_write_service import RelationWriteService
 from .runtime_self_check import ensure_runtime_self_check
 from .time_parser import normalize_time_meta
 
-logger = get_logger("A_Memorix.WebImportManager")
 
 
 TASK_STATUS = {

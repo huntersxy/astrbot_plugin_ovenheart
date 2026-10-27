@@ -6,11 +6,10 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
-from ..host import get_logger
 
+from astrbot.api import logger
 from ..retrieval import DualPathRetriever, RetrievalScope, TemporalQueryOptions
 
-logger = get_logger("A_Memorix.EpisodeRetrievalService")
 
 
 class EpisodeRetrievalService:

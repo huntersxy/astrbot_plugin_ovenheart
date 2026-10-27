@@ -4,12 +4,11 @@
 
 from __future__ import annotations
 
+from astrbot.api import logger
 from dataclasses import dataclass
 from typing import Any, Collection, Dict, List, Optional, Sequence, Set
 
-from ..host import get_logger
 
-logger = get_logger("A_Memorix.GraphRelationRecall")
 
 
 @dataclass

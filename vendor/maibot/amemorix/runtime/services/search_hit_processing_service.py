@@ -7,8 +7,8 @@ from typing import Any, Dict, List, Optional, Sequence
 import json
 import time
 
+from astrbot.api import logger
 from ...sdk_host import chat_manager
-from ...sdk_host import get_logger
 
 from ...retrieval import RetrievalResult, RetrievalScope
 from ...utils.feedback_policy import (
@@ -21,7 +21,6 @@ from ...utils.time_parser import format_timestamp, parse_query_datetime_to_times
 from ..models import _NormalizedSearchTimeWindow
 from .base import KernelServiceBase
 
-logger = get_logger("A_Memorix.SearchHitProcessingService")
 
 
 class MemorySearchHitProcessingService(KernelServiceBase):

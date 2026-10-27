@@ -4,14 +4,13 @@
 
 from __future__ import annotations
 
+from astrbot.api import logger
 import time
 from typing import Any, Dict, Optional
 
 import numpy as np
 
-from ..sdk_host import get_logger
 
-logger = get_logger("A_Memorix.RuntimeSelfCheck")
 
 _DEFAULT_SAMPLE_TEXT = "A_Memorix runtime self check"
 

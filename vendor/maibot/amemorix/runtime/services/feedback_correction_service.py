@@ -9,7 +9,7 @@ import asyncio
 import json
 import time
 
-from ...sdk_host import get_logger
+from astrbot.api import logger
 from ...sdk_host import message_service as message_api
 from ...sdk_host import LLMServiceClient
 
@@ -36,7 +36,6 @@ from ...utils.person_profile_service import PersonProfileService
 from ...utils.runtime_payloads import coerce_datetime, merge_tokens, safe_json_loads, tokens
 from .base import KernelServiceBase
 
-logger = get_logger("A_Memorix.SDKMemoryKernel")
 
 
 class MemoryFeedbackCorrectionService(KernelServiceBase):

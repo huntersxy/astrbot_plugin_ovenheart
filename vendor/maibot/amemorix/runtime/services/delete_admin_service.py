@@ -7,14 +7,13 @@ from typing import Any, Dict, List, Optional, Sequence
 import time
 import uuid
 
-from ...sdk_host import get_logger
 
+from astrbot.api import logger
 from ...utils.hash import compute_hash
 from ...utils.metadata import coerce_metadata_dict
 from ...utils.runtime_payloads import merge_tokens, optional_float, tokens
 from .base import KernelServiceBase
 
-logger = get_logger("A_Memorix.SDKMemoryKernel")
 
 
 class _VectorCleanupRollbackError(RuntimeError):

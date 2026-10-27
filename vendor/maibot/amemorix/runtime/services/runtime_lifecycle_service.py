@@ -7,13 +7,12 @@ from typing import List
 import asyncio
 import time
 
+from astrbot.api import logger
 from ...sdk_host import run_sync_work
-from ...sdk_host import get_logger
 
 from ...storage import VectorStoreIntegrityError
 from .base import KernelServiceBase
 
-logger = get_logger("A_Memorix.SDKMemoryKernel")
 
 
 class MemoryRuntimeLifecycleService(KernelServiceBase):
@@ -281,7 +280,7 @@ class MemoryRuntimeLifecycleService(KernelServiceBase):
         runtime_config = self._build_runtime_config()
         self._runtime_bundle = kernel_module.build_search_runtime(
             plugin_config=runtime_config,
-            logger_obj=kernel_module.logger,
+            logger_obj=logger,
             owner_tag="sdk_kernel",
             log_prefix="[sdk]",
         )

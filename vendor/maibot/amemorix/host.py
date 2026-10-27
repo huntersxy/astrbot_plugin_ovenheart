@@ -9,7 +9,6 @@ from contextvars import ContextVar
 from dataclasses import dataclass
 from types import SimpleNamespace
 
-from astrbot.api import logger
 from sqlmodel import Field, Session, SQLModel
 
 
@@ -37,8 +36,6 @@ class NativeGlobalConfig:
 global_config = NativeGlobalConfig()
 
 
-def get_logger(name):
-    return logger
 
 
 @contextmanager

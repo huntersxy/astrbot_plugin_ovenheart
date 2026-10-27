@@ -6,6 +6,7 @@
 提供内存使用监控和预警功能。
 """
 
+from astrbot.api import logger
 import gc
 import threading
 import time
@@ -18,9 +19,7 @@ try:
 except ImportError:
     HAS_PSUTIL = False
 
-from ..sdk_host import get_logger
 
-logger = get_logger("A_Memorix.MemoryMonitor")
 
 
 class MemoryMonitor:

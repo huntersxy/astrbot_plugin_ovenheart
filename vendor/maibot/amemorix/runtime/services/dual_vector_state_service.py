@@ -9,12 +9,11 @@ import json
 import shutil
 import time
 
-from ...sdk_host import get_logger
 
+from astrbot.api import logger
 from ...storage import QuantizationType, VectorStore, VectorStoreIntegrityError
 from .base import KernelServiceBase
 
-logger = get_logger("A_Memorix.SDKMemoryKernel")
 
 
 class MemoryDualVectorStateService(KernelServiceBase):

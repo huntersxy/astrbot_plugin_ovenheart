@@ -7,8 +7,8 @@ from typing import Any, Callable, Dict, List, Optional, Sequence
 import asyncio
 import time
 
-from ...host import get_logger
 
+from astrbot.api import logger
 from ...storage import VectorStore
 from ...utils import profile_policy
 from ...utils.hash import compute_hash, normalize_text
@@ -24,7 +24,6 @@ from ...utils.runtime_payloads import (
 )
 from .base import KernelServiceBase
 
-logger = get_logger("A_Memorix.SDKMemoryKernel")
 
 class MemoryIngestService(KernelServiceBase):
     """协调段落元数据、向量、实体关系和后续派生任务的写入。"""

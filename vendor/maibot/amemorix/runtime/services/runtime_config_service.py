@@ -6,6 +6,8 @@ from typing import Any, Dict, Optional
 
 import copy
 
+from astrbot.api import logger
+
 from .base import KernelServiceBase
 
 
@@ -62,7 +64,7 @@ class MemoryRuntimeConfigService(KernelServiceBase):
         next_config = self._merge_runtime_config_patch(self.config, profile)
         runtime_bundle = kernel_module.build_search_runtime(
             plugin_config=self._build_runtime_config(next_config),
-            logger_obj=kernel_module.logger,
+            logger_obj=logger,
             owner_tag="sdk_kernel_tuning_apply",
             log_prefix="[sdk]",
         )

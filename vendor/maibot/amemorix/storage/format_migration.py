@@ -17,11 +17,10 @@ import pickle
 import sqlite3
 import time
 
-from ..host import get_logger
 
+from astrbot.api import logger
 from ..utils.io import atomic_write
 
-logger = get_logger("A_Memorix.FormatMigration")
 
 FORMAT_MIGRATION_VERSION = "pickle_to_json_v1"
 

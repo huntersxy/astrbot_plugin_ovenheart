@@ -54,6 +54,19 @@ SUMMARY_SCHEMA = {
 }
 
 
+def summary_batch(messages, processed, minimum):
+    pending, chars = [], 0
+    for message in messages:
+        if message["source_id"] in processed:
+            continue
+        size = len(message["text"]) + len((message.get("reply_to") or {}).get("text", ""))
+        if len(pending) >= minimum and (len(pending) >= 24 or chars + size > 12000):
+            break
+        pending.append(message)
+        chars += size
+    return pending
+
+
 class MemoryConsolidation:
     def __init__(self, plugin):
         self.plugin = plugin
@@ -93,9 +106,7 @@ class MemoryConsolidation:
             < self.plugin.settings["memory_summary_interval"]
         ):
             return
-        pending = [m for m in messages if m["source_id"] not in status["processed"]][
-            :50
-        ]
+        pending = summary_batch(messages, status["processed"], self.plugin.settings["memory_summary_min_messages"])
         summarize = len(pending) >= self.plugin.settings["memory_summary_min_messages"]
         if not summarize and not status["episode_pending"]:
             return
@@ -226,6 +237,8 @@ class MemoryConsolidation:
             self.plugin.debug("memory_consolidated", scope=scope, **result)
         except asyncio.CancelledError:
             raise
+        except TimeoutError:
+            logger.warning("群聊记忆整理达到本轮等待预算，素材和进度保留，将按整理间隔重试 (phase=%s)", phase)
         except Exception as exc:
             logger.warning(
                 "群聊记忆整理未完成，保留已提交记忆与未处理素材 (%s, phase=%s)",

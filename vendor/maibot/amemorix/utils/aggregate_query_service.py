@@ -9,12 +9,11 @@
 
 from __future__ import annotations
 
+from astrbot.api import logger
 import asyncio
 from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple
 
-from ..sdk_host import get_logger
 
-logger = get_logger("A_Memorix.AggregateQueryService")
 
 BranchRunner = Callable[[], Awaitable[Dict[str, Any]]]
 

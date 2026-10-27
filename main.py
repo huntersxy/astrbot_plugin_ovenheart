@@ -2198,6 +2198,12 @@ class PersonaPlugin(Star):
             )
         host_config = self.context.get_config(event.unified_msg_origin)
 
+        context_tools = {
+            tool.name for tool in (req.func_tool.tools if req.func_tool else [])
+            if getattr(tool, "oven_multi_context_tool", False)
+        }
+        allowed.update(context_tools)
+
         def permit_tool(name: str) -> bool:
             """Reject tools from a superseded autonomous request.
 
@@ -2216,7 +2222,7 @@ class PersonaPlugin(Star):
                 and (not plan.get("followup") or current["participation_followup"])
                 and self.participation.current(plan)
             )
-            permitted = plan.get("direct") or (
+            permitted = name in context_tools or plan.get("direct") or (
                 name in current["autonomous_tools"]
                 if current["autonomous_tool_policy"] == "allowlist"
                 else name not in current["autonomous_tool_denylist"]

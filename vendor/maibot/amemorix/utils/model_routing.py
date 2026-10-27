@@ -5,11 +5,10 @@
 from dataclasses import dataclass
 from typing import Any, Dict, Iterable, Optional, Tuple
 
-from ..host import get_logger
+from astrbot.api import logger
 from ..host import LLMServiceResult
 from .. import host as llm_api
 
-logger = get_logger("A_Memorix.ModelRouting")
 
 NON_TEXT_GENERATION_TASK_NAMES = {"embedding", "voice", "vlm"}
 A_MEMORIX_TEXT_TASK_PRIORITY = (

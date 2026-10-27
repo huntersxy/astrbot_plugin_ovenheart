@@ -10,9 +10,7 @@ import numpy as np
 from enum import Enum
 from typing import Tuple, Union
 
-from ..host import get_logger
 
-logger = get_logger("A_Memorix.Quantization")
 
 
 class QuantizationType(Enum):

@@ -13,12 +13,11 @@ import uuid
 
 import numpy as np
 
-from ...sdk_host import get_logger
 
+from astrbot.api import logger
 from ...storage import ReadOnlyVectorStoreView, VectorStoreIntegrityError
 from .base import KernelServiceBase
 
-logger = get_logger("A_Memorix.SDKMemoryKernel")
 
 
 class MemoryVectorRecoveryService(KernelServiceBase):

@@ -4,7 +4,7 @@
     "utils/model_routing.py": {
       "source": "src/A_memorix/core/utils/model_routing.py",
       "upstream_sha256": "3cd3c24e6edaaac8036343fd395fcbf8f1310b5cc13e81fb889797d64b7d8e78",
-      "ported_sha256": "8a3a46164aa2e08763bb504d37915aab1602c3c9b1baa202873992afd8980cda"
+      "ported_sha256": "a08e9ce510ee402881db3ffde6740678b17b6e9612c540976789cd6c2a8044b0"
     },
     "utils/metadata.py": {
       "source": "src/A_memorix/core/utils/metadata.py",
@@ -14,7 +14,7 @@
     "utils/person_profile_service.py": {
       "source": "src/A_memorix/core/utils/person_profile_service.py",
       "upstream_sha256": "5da1b2ecd395b279385dc4d73915097015a2da420bc5602050b5ed5402d7906d",
-      "ported_sha256": "d3bf9ec39f5735b570f50da1e0bdc398dc8fb78dcf0d07e84ee0ae2cd83dbe3c"
+      "ported_sha256": "71256be20b5f349ef3f749978e04d640cff2272d304ebb6a380bf87928436f02"
     },
     "utils/profile_text.py": {
       "source": "src/A_memorix/core/utils/profile_text.py",
@@ -24,7 +24,7 @@
     "storage/metadata_store.py": {
       "source": "src/A_memorix/core/storage/metadata_store.py",
       "upstream_sha256": "eb16d549fecb779b9423558c9ce5c4dfc4c567d3c1afff4dab6fbf3064c07ca4",
-      "ported_sha256": "7bc45eb0c0213fc69fe851e85cbd091e234eff0c7e61f3a95047be79e45c2596"
+      "ported_sha256": "f6926109e62df504083fa6a932d754779b5963661663159d4be4e12a6b393803"
     },
     "storage/transaction.py": {
       "source": "src/A_memorix/core/storage/transaction.py",
@@ -39,7 +39,7 @@
     "storage/metadata_schema.py": {
       "source": "src/A_memorix/core/storage/metadata_schema.py",
       "upstream_sha256": "9cd7b6d08f02e9aab865347de1c026ead49e84a44075cd26724c8206e3226f4d",
-      "ported_sha256": "27f01dabdbffbb9f7099a9c25e5e527408bdfa4cefc23b2b9491da2dd7e75ee2"
+      "ported_sha256": "124aedf319f1d064442c787d8eccfcd7a93a25f8c95f3fdcd716452f80178927"
     },
     "storage/knowledge_types.py": {
       "source": "src/A_memorix/core/storage/knowledge_types.py",
@@ -74,7 +74,7 @@
     "storage/metadata_fts.py": {
       "source": "src/A_memorix/core/storage/metadata_fts.py",
       "upstream_sha256": "fcd62f46fea901d8db0c4934c2a29ece6f19bbcc324bc218b36d61a0ea3423c9",
-      "ported_sha256": "b71470119e5c5bc36908cd404503496b79cf00dafe65440ad429087e14d7c5c4"
+      "ported_sha256": "36a18603b3a40e0aee0c6a7274f62726af3de1de346e19d34fff6a58c8d33506"
     },
     "storage/tokenizer_runtime.py": {
       "source": "src/A_memorix/core/storage/tokenizer_runtime.py",
@@ -114,17 +114,17 @@
     "utils/relation_write_service.py": {
       "source": "src/A_memorix/core/utils/relation_write_service.py",
       "upstream_sha256": "b9e928957cbdaafd13663b9d0732751fcf43f7051938f9693e6d231046366eef",
-      "ported_sha256": "cf678b7b7d27c6a708bdd7620aa727cd134f2cc07783c0b1ef09d73e8e8f1c49"
+      "ported_sha256": "1a78907e2d7f090009a86b340a35d438d5f01dd21efc8fde3fab94d663b22159"
     },
     "storage/graph_store.py": {
       "source": "src/A_memorix/core/storage/graph_store.py",
       "upstream_sha256": "86cf2c1d7df01fde6d382369912de2989e03784d91ac52dedfbe94471568365e",
-      "ported_sha256": "6a35602c30bbbfe5a8bf5099921ddcf99d8894beb9bdb2f7296df53144249c03"
+      "ported_sha256": "12d448e2e698e50dc41ba7b9812a440b952ce3e5e2c02470b5aa9896bfaf8e97"
     },
     "storage/format_migration.py": {
       "source": "src/A_memorix/core/storage/format_migration.py",
       "upstream_sha256": "4fb027f78d5c907614856002d590f5bbd73ec0ef8e8a1a26bb10018c77ee4a87",
-      "ported_sha256": "bc80ac13d0611573f25fe790ecdd7bf419b94fa86adc411fb67183bb6518cab2"
+      "ported_sha256": "7f394adf8a125db14828db3be2588f92401977cf735b406bc515b018b7657241"
     },
     "utils/io.py": {
       "source": "src/A_memorix/core/utils/io.py",
@@ -134,12 +134,12 @@
     "storage/vector_store.py": {
       "source": "src/A_memorix/core/storage/vector_store.py",
       "upstream_sha256": "1885e86a398049248e7d909501bab75ab055d5be539b0862314ac61e02fe67f4",
-      "ported_sha256": "c7c6d6d42108ed1619ca2f0ab94643c1d06ba9be7c8c40100c4837b8b0cc8e1f"
+      "ported_sha256": "b1d1400c02dc60bdb28840df545a9c3231a32eece9924ad62f846835e5d620fc"
     },
     "utils/quantization.py": {
       "source": "src/A_memorix/core/utils/quantization.py",
       "upstream_sha256": "ca916950825983f75721c4e15ba205aec293afb5e471a32284865586e1bbd262",
-      "ported_sha256": "6b78a17545732dfd6469a394ff1a24701709516c140fdba180ca3bbf77de2ddb"
+      "ported_sha256": "87b5a94d628e618c9dca70686ebaedde5799c35ad6625f377fa70f3d4364672f"
     },
     "retrieval/__init__.py": {
       "source": "src/A_memorix/core/retrieval/__init__.py",
@@ -149,22 +149,22 @@
     "retrieval/graph_relation_recall.py": {
       "source": "src/A_memorix/core/retrieval/graph_relation_recall.py",
       "upstream_sha256": "f17f726136f1281b1356537c4f24c50c5c28e23f0af53f972f58b288b193fbc4",
-      "ported_sha256": "86df2bdb0c29a007e57808c941cd49a705eedbb71b25cec89e84aaecc42c3cf0"
+      "ported_sha256": "fb3922a578985fab89f4ea43f693719e8944ff5e39ad1619b566634859839199"
     },
     "retrieval/sparse_bm25.py": {
       "source": "src/A_memorix/core/retrieval/sparse_bm25.py",
       "upstream_sha256": "f30e69ecdbc0f284466072428e167a4ff4bdfd3a4abf52c116a25091678c0631",
-      "ported_sha256": "1014626c31e73d392f1d0ce99ad322f6c57d1cf2a48530887a5ff51fa01fbdd1"
+      "ported_sha256": "02b5d759d76bd445824cb1c42169cc10ab2a92c66f93a70a370d759518a7fc9c"
     },
     "retrieval/threshold.py": {
       "source": "src/A_memorix/core/retrieval/threshold.py",
       "upstream_sha256": "11ee2412c0209f460c04849402a9226ecf7f07118b14b2c88f35243d458b8917",
-      "ported_sha256": "14f8ef3dfa067943e61515daebf980c602a64dfdd65c89b491081a206c50e9da"
+      "ported_sha256": "5b37884c26b2771f2085fd052eecb83e78f40faa125a72a46d1fa8a074ed62f5"
     },
     "retrieval/dual_path.py": {
       "source": "src/A_memorix/core/retrieval/dual_path.py",
       "upstream_sha256": "69e69d1a581dcca2b682bb8efafdc86ac0287ad3ccbaf51828361393969b1701",
-      "ported_sha256": "2a550e5cae4a3591e79b1c1246727103e83991b9d4dae0ce54e7a403f62a856d"
+      "ported_sha256": "5030f7ab4bd1f4b7faee7d667675099849fc19c9b67c3f1ca7b8523969f2c4a9"
     },
     "retrieval/score_calibration.py": {
       "source": "src/A_memorix/core/retrieval/score_calibration.py",
@@ -179,32 +179,32 @@
     "retrieval/pagerank.py": {
       "source": "src/A_memorix/core/retrieval/pagerank.py",
       "upstream_sha256": "35c31f18df30b01e98363661caeb3e62e9f5e06a9a713750c98e5838750e9211",
-      "ported_sha256": "b6b8b6129151197aeecb9813fd7c67c04d2b9012ddb0bde12448b70d9c95d486"
+      "ported_sha256": "1db37d2a3e0e9359c66ef03e1d6e2b83485b7158133137f4b43cb967c1720535"
     },
     "utils/matcher.py": {
       "source": "src/A_memorix/core/utils/matcher.py",
       "upstream_sha256": "67d661700e8a3b8407359bba118499ca337d3725b24fb14c845aa03174345028",
-      "ported_sha256": "c7e4b30ca08a2549c0cff28e91a2f0f8720e784ec46ea8900fb629da3231ac7f"
+      "ported_sha256": "9544fca00391a77d1f8a93bd1f53999ab54b082a4ad011eb275f6f4dcbfdc9c7"
     },
     "utils/summary_importer.py": {
       "source": "src/A_memorix/core/utils/summary_importer.py",
       "upstream_sha256": "ee3983e810812239c1b3cfece947b07473cb2fe0783df0bc6ffa84fe9129e770",
-      "ported_sha256": "efbe78354316da660221f3b7162a7aea169706a5fe6265e6d05f7dac0ecbc77e"
+      "ported_sha256": "f11e5ba27ac3827eef9508b08b1fc3290065b9310118a44702f4db60c824baef"
     },
     "utils/episode_service.py": {
       "source": "src/A_memorix/core/utils/episode_service.py",
       "upstream_sha256": "3a40973547a7a7c37e702e1e2fdd1f307ae2eca5adca51f75466955e712684ca",
-      "ported_sha256": "b195ed68198ba0135239951fe225966bbebec03973fd18a77bcfec376548265e"
+      "ported_sha256": "da139d97866b2f84a6b75dbb915f1b7fe55b77df2a8ae98de01cd1e84e14d0d3"
     },
     "utils/episode_segmentation_service.py": {
       "source": "src/A_memorix/core/utils/episode_segmentation_service.py",
       "upstream_sha256": "58a1305425415411ff8c23964f8fc580e5c0984732c17737523318b63dba5a20",
-      "ported_sha256": "a1eed71895b7882d87aac6f7dc3bbd008361d0a744f5d2d20f55f48eb4039589"
+      "ported_sha256": "a79219a739b73ed3abc89835f3dd683bfefe448100039b857c96dbfcab421d6c"
     },
     "utils/episode_retrieval_service.py": {
       "source": "src/A_memorix/core/utils/episode_retrieval_service.py",
       "upstream_sha256": "ae2478b6758474be6d030c7f698af9cd858ea3a759bf38dc0410667e64921633",
-      "ported_sha256": "6908449a269e17079c85e6415caf05ce1a6e7f8e0b96a4e982f05a28166af9e0"
+      "ported_sha256": "cc6994600f53d37d8b99c90a2d75454d90e47345e8cc060dd21610be782406b7"
     },
     "utils/runtime_payloads.py": {
       "source": "src/A_memorix/core/utils/runtime_payloads.py",
@@ -229,7 +229,7 @@
     "runtime/services/ingest_service.py": {
       "source": "src/A_memorix/core/runtime/services/ingest_service.py",
       "upstream_sha256": "d792710623ed4fffcb69d385fcb6bc9375da45ab52d5f5f54afec23ae5bae010",
-      "ported_sha256": "e736cb4418ad9b9efe4682c52e2a410c0923289605f10d8442e5c39b5ac2cb20"
+      "ported_sha256": "4d08bab7e43d63fde44b31c20194220a9101d5daaa0145722fb35644d4d0010b"
     },
     "prompts/chat_summary.zh-CN.txt": {
       "source": "prompts/zh-CN/a_memorix_chat_summary.prompt",
@@ -249,12 +249,12 @@
     "runtime/sdk_memory_kernel.py": {
       "source": "src/A_memorix/core/runtime/sdk_memory_kernel.py",
       "upstream_sha256": "8791f8af6c25a84d819751c310eb55d201baa2df18762a9fea09ceafb75d347d",
-      "ported_sha256": "ac21eb225d79ad3dd3220b8188120116e2033fad37a1c01f5f8f53ca98113b9c"
+      "ported_sha256": "edfb3c38a4140f02b497fc641d5ddf720ac56c02fde92eafc98f84f6f50b1fbf"
     },
     "runtime/services/search_hit_processing_service.py": {
       "source": "src/A_memorix/core/runtime/services/search_hit_processing_service.py",
       "upstream_sha256": "7b091c0087cbb31a9ccc16f2accc9473c9a68519400e2e90736461fc3eb24019",
-      "ported_sha256": "b6cb80ca45627ab76b2b60d416535728d3b8607d3ca1a1a23c7f903cbbc4a2fa"
+      "ported_sha256": "a83d113b4d83d94753fe5d36b1c8ca157ebdb3245db6b89b3c2f90d107f146ef"
     },
     "runtime/models.py": {
       "source": "src/A_memorix/core/runtime/models.py",
@@ -269,12 +269,12 @@
     "runtime/services/embedding_state_service.py": {
       "source": "src/A_memorix/core/runtime/services/embedding_state_service.py",
       "upstream_sha256": "d9023809cc31ffee82541e0341146d3a23c939c165e569816fc6e1a3674883be",
-      "ported_sha256": "b59c94d8af6bfeeb08c43b36430f47def0da5f4733e7bc2dced0fd9344022653"
+      "ported_sha256": "8bce9d891c5d5b1daf54ba91222273e318d1126a3cb5f25892de397b5eab0883"
     },
     "runtime/search_runtime_initializer.py": {
       "source": "src/A_memorix/core/runtime/search_runtime_initializer.py",
       "upstream_sha256": "7baf5fcebb101fbc0eac01abe1d87c9ca3679c61c2b309d9b14a4362cfd9d676",
-      "ported_sha256": "364f93ec387863d5eeab92a31f03110219bb40df4722f164e2373cd6f79f394a"
+      "ported_sha256": "b281aa18089f11f034776b56066224dacde6096827c51e851f4f144b187223e6"
     },
     "runtime_registry.py": {
       "source": "src/A_memorix/runtime_registry.py",
@@ -284,7 +284,7 @@
     "runtime/services/dual_vector_state_service.py": {
       "source": "src/A_memorix/core/runtime/services/dual_vector_state_service.py",
       "upstream_sha256": "dc5438c04c8f484e584a24bd2a36054b515c04ec1d5b41195a778b71c55f8d89",
-      "ported_sha256": "99afc04d651687f341530adf0dc2475648bf3da40dd3d06a62336da719a37e07"
+      "ported_sha256": "743c05ebd21415688f03171050ebdf6c326c730888e4fb9d8a7cd26cc1090dce"
     },
     "runtime/services/chat_filter_service.py": {
       "source": "src/A_memorix/core/runtime/services/chat_filter_service.py",
@@ -294,12 +294,12 @@
     "runtime/services/runtime_config_service.py": {
       "source": "src/A_memorix/core/runtime/services/runtime_config_service.py",
       "upstream_sha256": "0e7128cbafb81d4707c687695d28bddd34b8d172df873d5b4f62dfb85508db56",
-      "ported_sha256": "36fb0a62f0a0d880014e1e407f006df636e115bbd3b741f51197068b805ca06d"
+      "ported_sha256": "9698c940ab9615591641c3c807c31af40dceaa0925e7802ca054a1ffe6c495ce"
     },
     "runtime/services/vector_space_service.py": {
       "source": "src/A_memorix/core/runtime/services/vector_space_service.py",
       "upstream_sha256": "b745999fc7b58ef0c1856a1a28a056ed84780838a11f1848d6f1655a17bdc53c",
-      "ported_sha256": "cd6d868a7f169d84d950ec73e6e1fd20c0a372cef409fa16f479c1b10ad7dcc7"
+      "ported_sha256": "48abfc6474ab95975304ede15cb82d1f71ca95ac69f580a1d6af3a5841b27776"
     },
     "runtime/services/vector_rebuild_checkpoint.py": {
       "source": "src/A_memorix/core/runtime/services/vector_rebuild_checkpoint.py",
@@ -314,12 +314,12 @@
     "runtime/services/vector_runtime_service.py": {
       "source": "src/A_memorix/core/runtime/services/vector_runtime_service.py",
       "upstream_sha256": "caa05c71dbfb517102fc80dd4a64d4055908507fbb1347a0e7ab6abff4b7fe3f",
-      "ported_sha256": "f2390a96cba6bdebccd4904f82cdb6378d29d28a8b25d2bc4d6c70d90d36f667"
+      "ported_sha256": "fbd18ce245baced00110dae03243685dcd6534717644f735d67117d00fed8b42"
     },
     "runtime/services/vector_recovery_service.py": {
       "source": "src/A_memorix/core/runtime/services/vector_recovery_service.py",
       "upstream_sha256": "d5537d28a10b58eb0ec55b61293d4b247c2b81b8b9f569c906e700c4c33a5a33",
-      "ported_sha256": "4a8175d3a4cf37fb892e3f8563a029068a5d78c37ee283c6d3176a04831df304"
+      "ported_sha256": "39144ecfe3f06f901840ea8d496876030c9078846caffd6603da1f2d92771978"
     },
     "runtime/services/vector_delete_service.py": {
       "source": "src/A_memorix/core/runtime/services/vector_delete_service.py",
@@ -349,7 +349,7 @@
     "runtime/services/runtime_lifecycle_service.py": {
       "source": "src/A_memorix/core/runtime/services/runtime_lifecycle_service.py",
       "upstream_sha256": "d4212b36c784d004a3cf3e31fffff1aff8260727d7a1eb905a6dea1c91a6cc7e",
-      "ported_sha256": "d3a23e557aa5831d4863f37206dcef677e2fafa1e83d6f509f01db81badf43a5"
+      "ported_sha256": "2f33cc4d95e05fcb433a34035c495f046e889c5940bc50e1f5e5c3f990027c2a"
     },
     "image/embedder.py": {
       "source": "src/A_memorix/core/image/embedder.py",
@@ -369,7 +369,7 @@
     "image/runtime.py": {
       "source": "src/A_memorix/core/image/runtime.py",
       "upstream_sha256": "3821cb0b790ea2bbfa857a72ba20ffb3e6481d7aa1c60e28d2ebb9ee4e208479",
-      "ported_sha256": "298f6a63d1da2b35836f3a885fa63cde890a99ab5ae9c90a8763c3c05c91b7fc"
+      "ported_sha256": "222f2e9f34d1f1691aef57028741a19125119665f08bafd078340d3241c258e3"
     },
     "image/asset_store.py": {
       "source": "src/A_memorix/core/image/asset_store.py",
@@ -379,7 +379,7 @@
     "runtime/services/runtime_dependency_service.py": {
       "source": "src/A_memorix/core/runtime/services/runtime_dependency_service.py",
       "upstream_sha256": "d68d5c9bbcffefb64132cb08f9ec208d9880b259a09efd7a20c7128d65bbaa46",
-      "ported_sha256": "fde5ab0c5ebe65d83e5d08683364c7ecbe5c3fc5b80eb55d133b0d001e3db52d"
+      "ported_sha256": "cde8932fdcf101c8cf05387d92606b04ab196f279aeefe54b7f4f301b3a857d9"
     },
     "runtime/services/request_dedup_service.py": {
       "source": "src/A_memorix/core/runtime/services/request_dedup_service.py",
@@ -409,7 +409,7 @@
     "utils/monitor.py": {
       "source": "src/A_memorix/core/utils/monitor.py",
       "upstream_sha256": "ae17e132666a82d07a6640ee6e09f5bdcc564aa70ef5cf74fb5ef1d55dff404a",
-      "ported_sha256": "39fb44d2602701cd4ed961f3a375258aaf819d3019aef4bd9d1a9bf362491e8b"
+      "ported_sha256": "f25929d63b7697d0a32bc90b2c961be9a290124b3e4801a5fd7fdb8ce34831d7"
     },
     "runtime/services/memory_search_service.py": {
       "source": "src/A_memorix/core/runtime/services/memory_search_service.py",
@@ -419,7 +419,7 @@
     "utils/search_execution_service.py": {
       "source": "src/A_memorix/core/utils/search_execution_service.py",
       "upstream_sha256": "eed953aaba9a5160038c7a523c61e68d382e8d39609e79aadb63aea2ab739a51",
-      "ported_sha256": "042e266b1c8d729057afa507e4d47a378363563cb15efab53656d94e915fe113"
+      "ported_sha256": "123f03d7a7ba02763212fa44364b802b8da39cb1e8fdfc57ffbe24c6932ad20b"
     },
     "utils/search_postprocess.py": {
       "source": "src/A_memorix/core/utils/search_postprocess.py",
@@ -434,7 +434,7 @@
     "runtime/services/memory_maintenance_service.py": {
       "source": "src/A_memorix/core/runtime/services/memory_maintenance_service.py",
       "upstream_sha256": "5aea4c5a50e22a93e183b69ffe5de74cbe89dbe7eaa8277f106e014984895238",
-      "ported_sha256": "86746521ed813b41e24b819aeb0a91098182fad0cf3630fe4fa662355acc1eb2"
+      "ported_sha256": "e055eb609f5218c89867397889c4dc9091d6e88b7acf95e825d1d75bf426daa1"
     },
     "runtime/services/image_service.py": {
       "source": "src/A_memorix/core/runtime/services/image_service.py",
@@ -459,7 +459,7 @@
     "runtime/services/feedback_correction_service.py": {
       "source": "src/A_memorix/core/runtime/services/feedback_correction_service.py",
       "upstream_sha256": "57255e614ed5f292c6b11f9e449226edca8ffce05cb0bb9fdf0ef4cbbff044e2",
-      "ported_sha256": "432a64eeaaea94242c0493ec2cf36159ed852cc0b3fa3207338882e68e508c47"
+      "ported_sha256": "80e49de36d4a6a90ec051381855bc810bc85f426b09ae6bac8d2632a01761fea"
     },
     "runtime/services/episode_admin_service.py": {
       "source": "src/A_memorix/core/runtime/services/episode_admin_service.py",
@@ -474,12 +474,12 @@
     "runtime/services/delete_admin_service.py": {
       "source": "src/A_memorix/core/runtime/services/delete_admin_service.py",
       "upstream_sha256": "2bb76dada245a2cfeee09c27f172032c23ed097a731ffe6abca0034973628094",
-      "ported_sha256": "50274ffef0290b2c1eb1c2508ab096ae6311aeb2848c5cd33276d915a578beca"
+      "ported_sha256": "5da5e8791c1111effa2de74f2adedca7e2d646247782cb1e45bfea69c18db1af"
     },
     "runtime/services/correction_admin_service.py": {
       "source": "src/A_memorix/core/runtime/services/correction_admin_service.py",
       "upstream_sha256": "1160d67c9d526961192ba918c0e332aaf5f0636b0cd989d4ebeabb1c2753d460",
-      "ported_sha256": "693426d03e708fe72a1fd789f9c818017ea86d7dde4a0d70b904f2f8893692f1"
+      "ported_sha256": "a01815236662bcae5c797d97f4e26c1d50d6194e2a34c5d80486c668637ef529"
     },
     "runtime/services/bundle_admin_service.py": {
       "source": "src/A_memorix/core/runtime/services/bundle_admin_service.py",
@@ -489,7 +489,7 @@
     "runtime/services/background_task_service.py": {
       "source": "src/A_memorix/core/runtime/services/background_task_service.py",
       "upstream_sha256": "4cd16181e3363fdd9a35bce38bac630383e73309db5392b5236ee2e8d94dd22a",
-      "ported_sha256": "4920baece6b0ea9a2eafe3b4958f163e82ce24d6bea953053cfd2c7a0c0a526f"
+      "ported_sha256": "802a6020f80901c9b25c9b2504053e787f6090d5eab894c867bc381413a4b8ea"
     },
     "runtime/runtime_writer_lock.py": {
       "source": "src/A_memorix/core/runtime/runtime_writer_lock.py",
@@ -509,12 +509,12 @@
     "utils/web_import_manager.py": {
       "source": "src/A_memorix/core/utils/web_import_manager.py",
       "upstream_sha256": "1196ceca1301a886f5cf52517c33c03984983a1115ac26db9edaeed9a7125394",
-      "ported_sha256": "e7181110261072b18e06bc8a8c649b0fadca5d5e7015f05377f14958f0cf80b9"
+      "ported_sha256": "a47fb9bade295422d7771375880f985e0de67e75c1afb3eb066815f63c7464af"
     },
     "utils/runtime_self_check.py": {
       "source": "src/A_memorix/core/utils/runtime_self_check.py",
       "upstream_sha256": "d74e168a60546d3ce95afe679276bb6d4dd5471aaef58bfac5ecd023ce8d4de0",
-      "ported_sha256": "5575be73d32daf29698ba0f1641c4ac08c4c2a45792fd6647bdc5456931513c6"
+      "ported_sha256": "975e011efc01d8e35cc365eec0ef609c240853fcb7c3c73fef35a82772ed4640"
     },
     "utils/import_payloads.py": {
       "source": "src/A_memorix/core/utils/import_payloads.py",
@@ -554,12 +554,12 @@
     "utils/retrieval_tuning_manager.py": {
       "source": "src/A_memorix/core/utils/retrieval_tuning_manager.py",
       "upstream_sha256": "fb0116d8cdb28bcaeff628f5e6020474bbccd5fc58fdbf9cea6b7d54ffe13fa7",
-      "ported_sha256": "c66615507efc1d785ad23bfa7af2367e8b6f3fccaac1746265647e93f06d2b94"
+      "ported_sha256": "4e10f808fd6c837333250fc1d46dfb8ad62b78a90675f087e382361fd0232a55"
     },
     "utils/aggregate_query_service.py": {
       "source": "src/A_memorix/core/utils/aggregate_query_service.py",
       "upstream_sha256": "89ff380b034d99fd157d09de2a1296c9a6c30d52186af26b319d70f4daaf6c77",
-      "ported_sha256": "b0290fc45f985b87f728fbe942eda16e977611f88fb86193e5b30fe066c983e4"
+      "ported_sha256": "1aa06bbb13b3f19657ecd4a9de915469fde75c5f559baa7deb9c1dbee6fed8d4"
     },
     "prompts/memory_fuzzy_modify_plan.zh-CN.txt": {
       "source": "prompts/zh-CN/memory_fuzzy_modify_plan.prompt",
@@ -579,7 +579,7 @@
     "utils/async_work.py": {
       "source": "src/common/async_work.py",
       "upstream_sha256": "d540bb38e1866717e9e38a1f4cb1490c9af827c85b061e3300201c73864b1fb6",
-      "ported_sha256": "589ca30a1f228b4cf59e45b3e056072454225ab7b1de2880df3bc72b8feb155d"
+      "ported_sha256": "dcbb9601244437eadaf582df4b88451c1c21d65dc01d765630c08121e600140c"
     }
   }
 }

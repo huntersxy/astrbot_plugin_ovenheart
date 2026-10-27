@@ -7,7 +7,7 @@ from typing import Any, Dict, List, Optional, Sequence
 import json
 import time
 
-from ...sdk_host import get_logger
+from astrbot.api import logger
 from ...sdk_host import load_prompt
 from ...sdk_host import LLMServiceClient
 
@@ -30,7 +30,6 @@ from ...utils.runtime_payloads import (
 from ..models import KernelSearchRequest
 from .base import KernelServiceBase
 
-logger = get_logger("A_Memorix.SDKMemoryKernel")
 
 
 class MemoryCorrectionAdminService(KernelServiceBase):

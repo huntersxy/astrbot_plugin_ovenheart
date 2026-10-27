@@ -12,11 +12,10 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 
 import numpy as np
 
-from ..host import get_logger
 
+from astrbot.api import logger
 from .dual_path import RetrievalResult
 
-logger = get_logger("A_Memorix.DynamicThresholdFilter")
 
 
 class ThresholdMethod(Enum):

@@ -7,8 +7,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Dict, Optional
 
-from ..sdk_host import get_logger
 
+from astrbot.api import logger
 from ..retrieval import (
     DualPathRetriever,
     DualPathRetrieverConfig,
@@ -24,7 +24,6 @@ from ..retrieval import (
     VectorPoolsConfig,
 )
 
-_logger = get_logger("A_Memorix.SearchRuntimeInitializer")
 
 _REQUIRED_COMPONENT_KEYS = ("metadata_store",)
 
@@ -154,7 +153,7 @@ def build_search_runtime(
 ) -> SearchRuntimeBundle:
     """通过统一的降级与配置解析构建检索器和阈值过滤器。"""
 
-    log = logger_obj or _logger
+    log = logger_obj or logger
     owner = str(owner_tag or "runtime").strip().lower() or "runtime"
     prefix = str(log_prefix or "").strip()
     prefix_text = f"{prefix} " if prefix else ""

@@ -14,7 +14,7 @@ from __future__ import annotations
 from typing import Any, Dict, List, Optional, Tuple
 import json
 
-from ..host import get_logger
+from astrbot.api import logger
 from ..host import TaskConfig
 from .. import host as llm_api
 
@@ -26,7 +26,6 @@ from .model_routing import (
     resolve_text_generation_model_selector,
 )
 
-logger = get_logger("A_Memorix.EpisodeSegmentationService")
 
 
 class EpisodeSegmentationService:

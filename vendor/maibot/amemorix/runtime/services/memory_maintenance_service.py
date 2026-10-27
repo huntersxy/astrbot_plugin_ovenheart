@@ -7,15 +7,14 @@ from typing import Any, Dict, List
 import asyncio
 import time
 
-from ...sdk_host import get_logger
 
+from astrbot.api import logger
 from ...utils.memory_lifecycle_policy import (
     RelationLifecycleEvent,
     RelationLifecyclePolicy,
 )
 from .base import KernelServiceBase
 
-logger = get_logger("A_Memorix.SDKMemoryKernel")
 
 MAX_PROJECTION_RECONCILE_ROUNDS = 3
 

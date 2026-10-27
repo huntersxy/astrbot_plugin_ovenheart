@@ -9,12 +9,11 @@ import asyncio
 import json
 import time
 
-from ...sdk_host import get_logger
 
+from astrbot.api import logger
 from ...storage import VectorStore, VectorStoreIntegrityError
 from .base import KernelServiceBase
 
-logger = get_logger("A_Memorix.SDKMemoryKernel")
 
 
 class MemoryEmbeddingStateService(KernelServiceBase):
@@ -419,7 +418,7 @@ class MemoryEmbeddingStateService(KernelServiceBase):
 
             runtime_bundle = kernel_module.build_search_runtime(
                 plugin_config=self._build_runtime_config(),
-                logger_obj=kernel_module.logger,
+                logger_obj=logger,
                 owner_tag="sdk_kernel_embedding_recovery",
                 log_prefix="[sdk]",
             )

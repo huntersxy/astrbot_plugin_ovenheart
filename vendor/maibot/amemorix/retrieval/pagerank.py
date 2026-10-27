@@ -9,11 +9,10 @@ Personalized PageRank实现
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
 
-from ..host import get_logger
+from astrbot.api import logger
 from ..storage import GraphStore
 from ..utils.matcher import AhoCorasick
 
-logger = get_logger("A_Memorix.PersonalizedPageRank")
 
 
 @dataclass

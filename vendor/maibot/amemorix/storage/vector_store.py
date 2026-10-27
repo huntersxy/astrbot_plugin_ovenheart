@@ -28,11 +28,10 @@ try:
 except ImportError:
     HAS_FAISS = False
 
-from ..host import get_logger
+from astrbot.api import logger
 from ..utils.quantization import QuantizationType
 from ..utils.io import atomic_write, atomic_save_path
 
-logger = get_logger("A_Memorix.VectorStore")
 
 
 class VectorStoreIntegrityError(RuntimeError):

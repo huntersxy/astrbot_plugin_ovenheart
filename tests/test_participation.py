@@ -96,6 +96,19 @@ async def requests(plugin, incoming):
     return [request async for request in plugin.participate(incoming)]
 
 
+async def test_session_bound_compression_tools_survive_autonomous_allowlist(participant):
+    incoming = event(text="接着说")
+    request = (await requests(participant, incoming))[0]
+    recovery = FunctionTool(name="decompress", description="当前会话", parameters={"type": "object", "properties": {}})
+    recovery.oven_multi_context_tool = True
+    unrelated = FunctionTool(name="unrelated", description="其他工具", parameters={"type": "object", "properties": {}})
+    request.func_tool = ToolSet([recovery, unrelated])
+    participant.settings["autonomous_tools"] = []
+    await participant.apply_participation(incoming, request)
+    assert [tool.name for tool in request.func_tool.tools] == ["decompress"]
+    assert request.func_tool.get_tool("decompress") is recovery
+
+
 def result_decorate_stage(*, mention=False, quote=False):
     """Build the native result decorator with controlled platform settings.
 

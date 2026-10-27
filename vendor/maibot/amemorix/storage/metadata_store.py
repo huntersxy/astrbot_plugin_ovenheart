@@ -14,8 +14,8 @@ import json
 import sqlite3
 import uuid
 
-from ..host import get_logger
 
+from astrbot.api import logger
 from ..utils.hash import compute_hash, normalize_text
 from ..utils.memory_lifecycle_policy import (
     RelationLifecycleEvent,
@@ -38,7 +38,6 @@ from .metadata_schema import MetadataSchemaMixin, SCHEMA_VERSION
 from .sqlite_connection import SQLiteConnectionManager
 from .transaction import ConnectionTransaction
 
-logger = get_logger("A_Memorix.MetadataStore")
 
 
 class MetadataStore(

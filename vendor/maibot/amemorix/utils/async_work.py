@@ -1,15 +1,14 @@
 # Ported from MaiBot common async work; GPL-3.0, see NOTICE.md.
 """同步工作边界：让出事件循环，同时保持调用方的锁和资源生命周期。"""
 
+from astrbot.api import logger
 from typing import Callable, ParamSpec, TypeVar
 
 import asyncio
 
-from ..host import get_logger
 
 _P = ParamSpec("_P")
 _T = TypeVar("_T")
-logger = get_logger("async_work")
 
 
 async def run_sync_work(function: Callable[_P, _T], *args: _P.args, **kwargs: _P.kwargs) -> _T:

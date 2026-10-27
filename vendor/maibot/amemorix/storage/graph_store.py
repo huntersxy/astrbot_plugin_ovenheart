@@ -19,8 +19,8 @@ import uuid
 
 import numpy as np
 
-from ..host import get_logger
 
+from astrbot.api import logger
 from ..utils.io import atomic_write
 from .format_migration import ensure_graph_edge_map_table
 
@@ -55,7 +55,6 @@ except ImportError:
     norm = _scipy_missing
     HAS_SCIPY = False
 
-logger = get_logger("A_Memorix.GraphStore")
 
 
 def _read_json_object(path: Path) -> Dict[str, Any]:

@@ -18,7 +18,7 @@ import unicodedata
 from scipy.sparse import csr_matrix
 import numpy as np
 
-from ..host import get_logger
+from astrbot.api import logger
 from ..storage import VectorStore, GraphStore, MetadataStore
 from ..embedding import EmbeddingAPIAdapter
 from ..utils.matcher import AhoCorasick
@@ -30,7 +30,6 @@ from .posterior_graph import PosteriorGraphConfig, apply_posterior_graph_gate
 from .score_calibration import fuse_score_maps, normalize_calibration_method
 from .sparse_bm25 import SparseBM25Config, SparseBM25Index
 
-logger = get_logger("A_Memorix.DualPathRetriever")
 
 _RELATION_BOTH_ENTITIES_GROUNDING_FACTOR = 0.78
 _RELATION_SINGLE_ENTITY_GROUNDING_FACTOR = 0.55
