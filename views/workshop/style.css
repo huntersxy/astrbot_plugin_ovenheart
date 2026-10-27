@@ -354,6 +354,8 @@ summary:hover { color: var(--accent); }
 .emoji-switch { display: flex; align-items: flex-start; gap: 12px; margin: 24px 0; }
 .emoji-switch input { width: auto; margin: 4px 0 0; }
 .emoji-switch small { display: block; margin-top: 6px; color: var(--muted); font-weight: 400; }
+.emoji-settings input[type="range"] { accent-color: var(--accent); padding: 0; border: 0; background: transparent; min-height: 32px; }
+.emoji-settings output { margin-inline-start: 6px; font-variant-numeric: tabular-nums; }
 @media (max-width: 900px) {
   .memory-columns { grid-template-columns: 1fr; gap: 24px; }
   .memory-list { max-height: 440px; overflow-y: auto; }

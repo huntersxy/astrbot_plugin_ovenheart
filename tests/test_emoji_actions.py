@@ -1,6 +1,7 @@
 """Real SDK candidate-image tool results, text reply, media send and feedback."""
 
 import asyncio
+import base64
 import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -9,9 +10,114 @@ import pytest
 
 from tests.test_conversation_planner import action, send_reply
 from tests.test_image_memory import capture, picture
-from tests.test_runtime import event
+from tests.test_runtime import api_call, event
 
 pytest_plugins = ["tests.test_conversation_planner"]
+
+
+async def test_proactive_candidates_attach_without_an_extra_lookup_and_obey_controls(
+    native_planner, monkeypatch
+):
+    p, provider = native_planner
+    p.settings.update(
+        native_memory_enabled=True,
+        image_memory_enabled=True,
+        emoji_enabled=True,
+        emoji_frequency=1.0,
+        emoji_cooldown=30,
+        planner_visual_enabled=False,
+        participation_frequency=0,
+    )
+    uploaded = await api_call(
+        p.page_api.emoji_panel.action,
+        {
+            "scope": "library",
+            "action": "emoji_upload",
+            "payload": {
+                "encoded": base64.b64encode(picture()).decode(),
+                "text": "开心，庆祝好消息",
+            },
+        },
+    )
+    assert uploaded["status"] == "ok", uploaded
+    incoming = event("happy-news", text="终于考过啦！")
+    incoming.is_at_or_wake_command = True
+    incoming.send = AsyncMock(return_value=True)
+    sent = incoming.send
+    await p.capture(incoming)
+    sessions = []
+
+    async def model(**kwargs):
+        if not sessions:
+            messages = json.loads(
+                json.dumps(kwargs["contexts"], default=lambda value: value.model_dump())
+            )
+            content = messages[-1]["content"]
+            prompt = json.loads(
+                content
+                if isinstance(content, str)
+                else "".join(part.get("text", "") for part in content)
+            )
+            policy = prompt["emoji_policy"]
+            assert policy["proactive_allowed"] and len(policy["candidates"]) == 1
+            index = policy["candidates"][0]["index"]
+            scope = (await p.resolve_scope(incoming))[0]
+            session = p.participation.planner.sessions[scope]
+            assert index in session.emojis
+            sessions.append(session)
+            return action(
+                "reply",
+                msg_id="1",
+                reply_reference="庆祝对方考试通过。",
+                attach_emoji=index,
+            )
+        return action("stop")
+
+    provider.text_chat.side_effect = model
+    replies = p.participate(incoming)
+    await anext(replies)
+    await send_reply(p, incoming, "过啦！恭喜恭喜")
+    with pytest.raises(StopAsyncIteration):
+        await anext(replies)
+    sent.assert_awaited_once()
+    assert provider.text_chat.await_count == 2
+    session = sessions[0]
+    cooling = await p.emoji_actions.proactive(session)
+    assert not cooling["proactive_allowed"] and cooling["cooldown_remaining"] > 0
+    # Explicit requests still use the real candidate/send path during cooldown.
+    assert (await p.emoji_actions.show(session)).content
+    index = next(reversed(session.emojis))
+    assert (await p.emoji_actions.send(incoming, session, index))["sent"]
+    p.settings.update(emoji_frequency=0.0, emoji_cooldown=0)
+    assert not (await p.emoji_actions.proactive(session))["candidates"]
+    p.settings["emoji_frequency"] = 0.5
+    monkeypatch.setattr(
+        "astrbot_plugin_ovenheart.memory.emoji_actions.random", lambda: 0.9
+    )
+    assert not (await p.emoji_actions.proactive(session))["proactive_allowed"]
+    monkeypatch.setattr(
+        "astrbot_plugin_ovenheart.memory.emoji_actions.random", lambda: 0.1
+    )
+    assert (await p.emoji_actions.proactive(session))["proactive_allowed"]
+
+
+def test_emoji_controls_validate_ranges():
+    from astrbot_plugin_ovenheart.core.settings import validate_settings
+
+    assert (
+        validate_settings({"emoji_frequency": 0.8, "emoji_cooldown": 10})[
+            "emoji_frequency"
+        ]
+        == 0.8
+    )
+    for patch in (
+        {"emoji_frequency": 1.1},
+        {"emoji_frequency": True},
+        {"emoji_cooldown": -1},
+        {"emoji_cooldown": 1.5},
+    ):
+        with pytest.raises(ValueError):
+            validate_settings(patch)
 
 
 @pytest.mark.parametrize("failed", [False, True])
@@ -171,9 +277,7 @@ async def test_direct_selected_emoji_needs_no_text_or_visual_subagent(native_pla
     incoming.send = sent
     assert not [request async for request in p.participate(incoming)]
     sent.assert_awaited_once()
-    assert all(
-        part.type.value == "Image" for part in sent.await_args.args[0].chain
-    )
+    assert all(part.type.value == "Image" for part in sent.await_args.args[0].chain)
     assert incoming.get_extra("ovenheart_planner_receipt")["media"]["sent"]
     p.context.llm_generate.assert_not_awaited()
 

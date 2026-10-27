@@ -100,6 +100,18 @@
     "default": true,
     "hint": "在独立表情页管理公共图库与本会话候选。Planner按描述选择，随文字附图或单独发送；自己的规划回复不再重复调用meme_manager情感检索。"
   },
+  "emoji_frequency": {
+    "type": "float",
+    "description": "主动表情推荐比例",
+    "default": 0.5,
+    "hint": "0～1。每轮聊天规划按此概率提前提供最多六个候选，由同一个规划模型结合语境决定是否发送，不增加选图模型调用。0 仅按明确请求使用，1 每轮都提供；推荐比例不等于实际发送比例。"
+  },
+  "emoji_cooldown": {
+    "type": "int",
+    "description": "主动表情最短间隔（秒）",
+    "default": 30,
+    "hint": "0～3600。同一会话成功发表情后，在此间隔内不再主动推荐；用户明确要求发表情不受限制。重载后重新计时。"
+  },
   "reply_rhythm_enabled": {
     "type": "bool",
     "description": "分段回复与发送节奏",

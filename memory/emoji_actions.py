@@ -5,10 +5,12 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
+import time
 from itertools import count
 from pathlib import Path
-from random import sample
+from random import random, sample
 
+from astrbot.api import logger
 from astrbot.core.message.components import Image
 from astrbot.core.message.message_event_result import MessageChain
 from mcp.types import CallToolResult, ImageContent, TextContent
@@ -26,6 +28,39 @@ _indices = count(1)
 class EmojiActions:
     def __init__(self, plugin):
         self.plugin = plugin
+        self.last_sent = {}
+
+    async def proactive(self, session):
+        settings = self.plugin.settings
+        remaining = max(
+            0,
+            self.last_sent.get(session.scope, -float("inf"))
+            + settings["emoji_cooldown"]
+            - time.monotonic(),
+        )
+        policy = {
+            "frequency": settings["emoji_frequency"],
+            "cooldown_remaining": round(remaining, 1),
+            "proactive_allowed": False,
+            "candidates": [],
+        }
+        if (
+            not settings["emoji_enabled"]
+            or remaining > 0
+            or settings["emoji_frequency"] == 0
+            or random() >= settings["emoji_frequency"]
+            or not await self.plugin.image_memory.permitted(
+                session.event, session.scope, session.persona
+            )
+        ):
+            return policy
+        try:
+            captions, _ = await asyncio.wait_for(self.offer(session), timeout=1.5)
+        except Exception as exc:
+            logger.debug("主动表情候选暂不可用，继续文字规划 (%s)", type(exc).__name__)
+            return policy
+        policy.update(proactive_allowed=bool(captions), candidates=captions)
+        return policy
 
     async def candidates(self, session, query=""):
         local = await self.plugin.room_memory.call(
@@ -48,9 +83,31 @@ class EmojiActions:
             session.event, session.scope, session.persona
         ):
             return "当前表情选择未启用或无权访问。"
-        available = await self.candidates(session, query)
-        if not available:
+        captions, images = await self.offer(
+            session, query, visual=self.plugin.settings["planner_visual_enabled"]
+        )
+        if not captions:
             return "公共图库与当前会话暂无可选表情；请在工坊的表情页上传或导入素材。普通图片不能充当表情候选。"
+        text = (
+            "本次可选表情，仅供内部查看；reply.attach_emoji填写选中序号，文字发送后再发送该表情。\n"
+            + json.dumps(captions, ensure_ascii=False)
+        )
+        content = [TextContent(type="text", text=text)]
+        if images:
+            collage = await asyncio.to_thread(
+                _merge_emoji_tiles, images, captions[0]["index"]
+            )
+            content.append(
+                ImageContent(
+                    type="image",
+                    mimeType="image/png",
+                    data=base64.b64encode(collage).decode(),
+                )
+            )
+        return CallToolResult(content=content)
+
+    async def offer(self, session, query="", *, visual=False):
+        available = await self.candidates(session, query)
         selected = sample(available, min(6, len(available)))
         indices = [next(_indices) for _ in selected]
         captions, images = [], []
@@ -69,27 +126,13 @@ class EmojiActions:
                 "scope": item["scope"],
             }
             captions.append({"index": index, "description": caption[:500]})
-            if self.plugin.settings["planner_visual_enabled"]:
+            if visual:
                 images.append(await asyncio.to_thread(Path(item["path"]).read_bytes))
         # Keep the current planner's bounded offered IDs; never accept a path
         # or global library ID invented by the model.
         session.emojis = dict(list(session.emojis.items())[-24:])
         await session.check_current()
-        text = (
-            "本次可选表情，仅供内部查看；reply.attach_emoji填写选中序号，文字发送后再发送该表情。\n"
-            + json.dumps(captions, ensure_ascii=False)
-        )
-        content = [TextContent(type="text", text=text)]
-        if images:
-            collage = await asyncio.to_thread(_merge_emoji_tiles, images, indices[0])
-            content.append(
-                ImageContent(
-                    type="image",
-                    mimeType="image/png",
-                    data=base64.b64encode(collage).decode(),
-                )
-            )
-        return CallToolResult(content=content)
+        return captions, images
 
     async def send(self, event, session, index):
         choice = session.emojis.get(index)
@@ -117,6 +160,10 @@ class EmojiActions:
             result = await event.send(MessageChain(chain=[image]))
             if result is False:
                 return {"sent": False, "error": "原生适配器未接受表情发送。"}
+            self.last_sent.pop(session.scope, None)
+            self.last_sent[session.scope] = time.monotonic()
+            if len(self.last_sent) > 128:
+                self.last_sent.pop(next(iter(self.last_sent)))
             return {
                 "sent": True,
                 "index": index,
