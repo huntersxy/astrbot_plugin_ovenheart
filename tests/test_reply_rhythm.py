@@ -100,12 +100,20 @@ async def test_original_splitter_preserves_text_headers_and_actual_sent_segments
     )
 
 
-async def test_short_native_reply_splits_without_a_planner_or_model(participant):
+@pytest.mark.parametrize(
+    "text,expected",
+    [
+        ("先保存好。再继续。", ["先保存好。", "再继续。"]),
+        ("给你这个 ヽ(≧∇≦)ﾉ\n\n这张换个花样", ["给你这个 ヽ(≧∇≦)ﾉ", "这张换个花样"]),
+    ],
+)
+async def test_short_native_reply_splits_without_a_planner_or_model(
+    participant, text, expected
+):
     p = participant
     p.settings["reply_split_mode"] = "rule"
     incoming = event("native-short", text="接下来怎么做")
     await p.capture(incoming)
-    text = "先保存好。再继续。"
     incoming.set_result(incoming.plain_result(text))
     incoming.get_result().result_content_type = ResultContentType.LLM_RESULT
     sent = AsyncMock(return_value=True)
@@ -114,15 +122,9 @@ async def test_short_native_reply_splits_without_a_planner_or_model(participant)
     p.reply_rhythm.bind(incoming)
     # RespondStage derives a MessageChain; it does not send the result object.
     await incoming.send(incoming.get_result().derive(incoming.get_result().chain))
-    assert [call.args[0].get_plain_text() for call in sent.await_args_list] == [
-        "先保存好。",
-        "再继续。",
-    ]
-    p.reply_rhythm.pause.assert_awaited_once_with(incoming, "再继续。", False)
-    assert incoming.get_extra("ovenheart_actual_text_segments") == [
-        "先保存好。",
-        "再继续。",
-    ]
+    assert [call.args[0].get_plain_text() for call in sent.await_args_list] == expected
+    p.reply_rhythm.pause.assert_awaited_once_with(incoming, expected[1], False)
+    assert incoming.get_extra("ovenheart_actual_text_segments") == expected
     p.context.llm_generate.assert_not_awaited()
 
 
@@ -131,6 +133,40 @@ async def test_rule_splitting_merges_without_losing_punctuation(participant):
     text = "第一步。 第二步！\n第三步？第四步。"
     result = await participant.reply_rhythm.split(event(), text, {})
     assert len(result) == 2
+    assert "".join(result) == text
+
+
+@pytest.mark.parametrize("face", ["ヽ(≧∇≦)ﾉ", "٩(ˊᗜˋ*)و"])
+async def test_kaomoji_does_not_block_the_next_paragraph(participant, face):
+    text = f"给你这个 {face}\n\n这张换个花样"
+    result = await participant.reply_rhythm.split(event(), text, {})
+    assert len(result) == 2
+    assert face in result[0]
+    assert "这张换个花样" == result[1]
+    assert "".join(result) == text
+
+
+async def test_quote_protection_keeps_splitting_outside_the_quote(participant):
+    text = "他说“先保存。再继续。”\n\n我觉得可以。接着来。"
+    result = await participant.reply_rhythm.split(event(), text, {})
+    assert len(result) == 3
+    assert "“先保存。再继续。”" in result[0]
+    assert "".join(result) == text
+
+
+async def test_semantic_cut_inside_kaomoji_uses_protected_rule_boundaries(participant):
+    participant.settings["reply_split_mode"] = "llm"
+    text = "给你这个 ヽ(≧∇≦)ﾉ\n\n这张换个花样"
+    participant.context.llm_generate = AsyncMock(
+        return_value=SimpleNamespace(
+            completion_text=json.dumps(
+                ["给你这个 ヽ(≧", "∇≦)ﾉ", "这张换个花样"], ensure_ascii=False
+            )
+        )
+    )
+    result = await participant.reply_rhythm.split(event(), text, {})
+    assert len(result) == 2
+    assert "ヽ(≧∇≦)ﾉ" in result[0]
     assert "".join(result) == text
 
 

@@ -2293,6 +2293,19 @@ class PersonaPlugin(Star):
                 event, plan["scope"], target, context_messages
             ),
             "jev_reading": plan.get("jev_reading"),
+            "reply_capabilities": {
+                "emoji": bool(plan.get("planner_session"))
+                and all(
+                    self.settings[key]
+                    for key in (
+                        "emoji_enabled",
+                        "native_memory_enabled",
+                        "image_memory_enabled",
+                        "memory_enabled",
+                    )
+                )
+            },
+            "planned_emoji": plan.get("planned_emoji"),
         }
         user_injection = self.template(
             "participation_user",
@@ -2329,6 +2342,7 @@ class PersonaPlugin(Star):
         if self.conversation.active(event):
             user_injection += prompts.STRUCTURED_CONTEXT_RULE
         user_injection += prompts.REPLY_FOCUS_RULE
+        user_injection += prompts.REPLY_ACTION_RULE
         if plan.get("jev_reading"):
             user_injection += JEV_RULE
         req.extra_user_content_parts.append(

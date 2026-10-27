@@ -1326,7 +1326,7 @@ class ParticipationController:
         # next action without cancelling that reply's consumed quota record.
         await session.check_current()
         scope = previous["scope"]
-        if previous.get("attach_emoji"):
+        if previous.get("attach_emoji") and not previous.get("media_only"):
             receipt = receipt | {
                 "media": await self.plugin.emoji_actions.send(
                     event, session, previous["attach_emoji"]

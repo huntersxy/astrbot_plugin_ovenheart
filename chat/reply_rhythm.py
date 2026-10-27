@@ -68,6 +68,8 @@ class ReplyRhythm:
             result = None
             sent = event.get_extra("ovenheart_actual_text_segments", [])
             for index, sentence in enumerate(sentences):
+                if len(sentences) > 1:
+                    sentence = sentence.strip()
                 if index:
                     await self.pause(event, sentence, False)
                 elif plan and not await self.plugin.check_participation(event):
@@ -102,7 +104,7 @@ class ReplyRhythm:
             settings["reply_split_max_messages"] == 1
             or len(text.strip()) < 2
             or re.search(
-                r"[`()（）\[\]【】{}“”‘’「」『』\"']|~~~|\$\$|^[ \t]*(?:[-*+]|\d+[.)、])[ \t]+",
+                r"```|~~~|\$\$|^[ \t]*(?:[-*+]|\d+[.)、])[ \t]+",
                 text,
                 re.MULTILINE,
             )
@@ -132,12 +134,48 @@ class ReplyRhythm:
                 return [text]
             starts.append(start)
             position = start + len(chunk)
-        boundaries = [0, *starts[1:], len(text)]
+        # Keep only boundaries outside a complete bracket/quote/kaomoji span.
+        # A protected fragment must not disable splitting the rest of the reply.
+        pairs = {
+            "(": ")",
+            "（": "）",
+            "[": "]",
+            "【": "】",
+            "{": "}",
+            "“": "”",
+            "‘": "’",
+            "「": "」",
+            "『": "』",
+            '"': '"',
+            "`": "`",
+        }
+        quotes = {'"', "“", "‘", "「", "『", "`"}
+        stack, protected = [], []
+        for position, character in enumerate(text):
+            if stack and character == pairs[stack[-1][0]]:
+                _, start = stack.pop()
+                if not stack:
+                    protected.append((start, position + 1))
+            elif stack and stack[-1][0] in quotes:
+                continue
+            elif character in pairs:
+                stack.append((character, position))
+        if stack:
+            protected.append((stack[0][1], len(text)))
+        boundaries = [
+            0,
+            *(
+                start
+                for start in starts[1:]
+                if not any(left < start < right for left, right in protected)
+            ),
+            len(text),
+        ]
         segments = [
             ProcessedResponseSegment(text[start:end])
             for start, end in zip(boundaries, boundaries[1:], strict=False)
         ]
-        if settings["reply_split_mode"] == "llm":
+        if settings["reply_split_mode"] == "llm" and (len(segments) > 1 or not protected):
 
             async def generate(prompt):
                 provider = (
@@ -159,11 +197,19 @@ class ReplyRhythm:
                     split = await asyncio.wait_for(
                         split_text_with_llm(text), settings["reply_split_timeout"]
                     )
-                segments = [
+                semantic_segments = [
                     ProcessedResponseSegment(part, separator=separator)
                     for part, separator in split
                     if part.strip()
                 ]
+                # Semantic cuts must obey the same protected spans as rules.
+                position = 0
+                for segment in semantic_segments[:-1]:
+                    end = text.find(segment.text, position) + len(segment.text)
+                    if any(left < end < right for left, right in protected):
+                        raise ValueError("语义断句切入了括号或引用内部。")
+                    position = end
+                segments = semantic_segments
             except asyncio.CancelledError:
                 raise
             except Exception as exc:

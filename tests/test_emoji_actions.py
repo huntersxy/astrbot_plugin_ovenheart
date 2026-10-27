@@ -80,6 +80,12 @@ async def test_original_candidate_grid_selected_attachment_and_real_send_result(
     request = await anext(replies)
     await p.apply_persona(incoming, request)
     await p.apply_participation(incoming, request)
+    reply_context = "\n".join(part.text for part in request.extra_user_content_parts)
+    assert '"planned_emoji"' in reply_context
+    assert "绿色猫猫开心表情包" in reply_context
+    assert '"pending"' in reply_context
+    assert '"reply_capabilities"' in reply_context
+    assert "正文工具列表只覆盖当前文字生成阶段" in reply_context
     await send_reply(p, incoming, "这下终于搞定啦")
     with pytest.raises(StopAsyncIteration):
         await anext(replies)
@@ -138,6 +144,38 @@ async def seed_emoji_library(p):
         },
     }
     await capture(p, "emoji-source", picture(), "开心猫猫")
+
+
+async def test_direct_selected_emoji_needs_no_text_or_visual_subagent(native_planner):
+    p, provider = native_planner
+    await seed_emoji_library(p)
+    p.context.llm_generate = AsyncMock(
+        side_effect=AssertionError("unexpected extra model")
+    )
+    calls = 0
+
+    async def model(**kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return action("show_emoji_list")
+        if calls == 2:
+            session = next(iter(p.participation.planner.sessions.values()))
+            return action("send_emoji", index=next(iter(session.emojis)))
+        return action("stop")
+
+    provider.text_chat.side_effect = model
+    incoming = event("image-only-request", text="发个表情给我")
+    incoming.is_at_or_wake_command = True
+    sent = AsyncMock(return_value=True)
+    incoming.send = sent
+    assert not [request async for request in p.participate(incoming)]
+    sent.assert_awaited_once()
+    assert all(
+        part.type.value == "Image" for part in sent.await_args.args[0].chain
+    )
+    assert incoming.get_extra("ovenheart_planner_receipt")["media"]["sent"]
+    p.context.llm_generate.assert_not_awaited()
 
 
 async def test_standalone_emoji_uses_original_visual_selector_and_returns_media_only_receipt(
