@@ -38,6 +38,7 @@ https://github.com/huntersxy/astrbot_plugin_ovenheart
 | 保存共同经历、人物事实和图片，按来源召回 | 记忆 |
 | 查询、更正、遗忘和撤销记忆修改 | 聊天中的明确请求 / 记忆控制台 |
 | 查看关系、时间线、图片和有效状态，导入导出记忆包 | 记忆控制台 |
+| 从 LivingMemory 复制文本，保留来源与重复导入去重 | 记忆 → 导入与来源 |
 | 选择表情、语义分段和回复节奏 | 设置 → 表达与检索 |
 
 自主群聊参与和名字唤醒默认关闭，工具调用受 AstrBot 的会话、人格和权限限制。人格与表达习惯默认共用；群聊词汇和记忆按会话与人格隔离。
@@ -50,6 +51,6 @@ https://github.com/huntersxy/astrbot_plugin_ovenheart
 
 ## 致谢与许可
 
-运行于 [AstrBot](https://github.com/AstrBotDevs/AstrBot)，部分聊天和记忆实现来自 [MaiBot](https://github.com/Mai-with-u/MaiBot)。可选的 LivingMemory、Jev 和表情插件联动在独立模块中维护。
+运行于 [AstrBot](https://github.com/AstrBotDevs/AstrBot)，部分聊天和记忆实现来自 [MaiBot](https://github.com/Mai-with-u/MaiBot)。Jev 和表情插件联动在独立模块中维护。
 
 本仓库采用 [AGPL-3.0-or-later](LICENSE)。移植来源、修改说明和许可证见 [MaiBot 说明](vendor/maibot/NOTICE.md)及 [A_memorix 说明](vendor/maibot/amemorix/NOTICE.md)。

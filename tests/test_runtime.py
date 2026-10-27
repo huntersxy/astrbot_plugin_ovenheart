@@ -6,9 +6,7 @@ events, decorators, provider requests and Web request contexts are real SDK type
 """
 
 import asyncio
-import importlib.util
 import json
-import sys
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -38,10 +36,6 @@ from astrbot_plugin_ovenheart.main import (  # noqa: E402
     SessionServiceManager,
 )
 
-POLICY_PATH = (
-    Path(__file__).resolve().parents[2]
-    / "astrbot_plugin_livingmemory/core/memory_scope.py"
-)
 PLUGIN_ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -878,167 +872,6 @@ async def test_native_page_validation_and_teardown(plugin):
     )
     await plugin.terminate()
     assert not plugin.tasks and not plugin.context.registered_web_apis
-
-
-async def test_memory_bridge_uses_livingmemory_policy_and_bounded_context(
-    plugin, monkeypatch
-):
-    policy_path = POLICY_PATH
-    if not policy_path.exists():
-        pytest.skip("LivingMemory reference checkout not available")
-    spec = importlib.util.spec_from_file_location(
-        "lm_fixture.core.memory_scope", policy_path
-    )
-    policy = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(policy)
-    monkeypatch.setitem(sys.modules, spec.name, policy)
-    scope = await sources(plugin)
-    engine = SimpleNamespace(
-        search_memories=AsyncMock(
-            return_value=[SimpleNamespace(doc_id="m1", content="长期上下文")]
-        )
-    )
-    manager = SimpleNamespace(filtering_settings={"use_persona_filtering": True})
-    values = {"filtering_settings.memory_scope_mode": "session"}
-    manager.get = lambda key, default=None: values.get(key, default)
-    memory_plugin = type("MemoryPlugin", (), {"__module__": "lm_fixture.main"})()
-    memory_plugin.initializer = SimpleNamespace(
-        is_initialized=True, memory_engine=engine
-    )
-    memory_plugin.config_manager = manager
-    metadata = SimpleNamespace(activated=True, star_cls=memory_plugin)
-    plugin.context.get_registered_star = lambda name: metadata
-    await plugin.learn(scope)
-    call = engine.search_memories.await_args.kwargs
-    assert (
-        call["session_id"] == event().unified_msg_origin
-        and call["persona_id"] == "default"
-    )
-    assert call["k"] == 3
-    assert "好家伙，你又看出来了" in call["query"]
-    assert "好家伙，还是你懂我" in call["query"]
-    prompt = json.loads(plugin.context.llm_generate.await_args.kwargs["prompt"])
-    assert prompt["memory_context"][0]["id"] == "m1"
-    quoted_batch = [
-        {
-            "id": 77,
-            "sender": "alice",
-            "text": "这个我听懂了",
-            "reply_to": {"sender": "bob", "text": "QUOTE_MEMORY_LOOKUP：想先倾诉"},
-        }
-    ]
-    await plugin.memory.recall(
-        event(), "default", plugin.settings, observations=quoted_batch
-    )
-    assert "QUOTE_MEMORY_LOOKUP" in engine.search_memories.await_args.kwargs["query"]
-    await plugin.memory.recall(
-        event(),
-        "default",
-        plugin.settings | {"blocked_senders": ["bob"]},
-        observations=quoted_batch,
-    )
-    assert (
-        "QUOTE_MEMORY_LOOKUP" not in engine.search_memories.await_args.kwargs["query"]
-    )
-    for mode, session_filter, isolated, expected in (
-        ("legacy", False, "", None),
-        ("legacy", True, "", event().unified_msg_origin),
-        ("global", True, "", "livingmemory:global"),
-        ("user", True, "", "livingmemory:user:aiocqhttp:alice"),
-        ("global", False, event().unified_msg_origin, event().unified_msg_origin),
-        ("legacy", False, "another-session", "livingmemory:global"),
-    ):
-        values.update(
-            {
-                "filtering_settings.memory_scope_mode": mode,
-                "filtering_settings.use_session_filtering": session_filter,
-                "filtering_settings.isolated_sessions": isolated,
-            }
-        )
-        await plugin.memory.recall(event(), "default", plugin.settings)
-        assert engine.search_memories.await_args.kwargs["session_id"] == expected
-    calls_before_denial = engine.search_memories.await_count
-    values["access_control.whitelist_enabled"] = True
-    values["access_control.allowed_ids"] = "nobody"
-    memories, message = await plugin.memory.recall(event(), "default", plugin.settings)
-    assert memories == [] and "禁止" in message
-    assert engine.search_memories.await_count == calls_before_denial
-    values.update(
-        {
-            "access_control.whitelist_enabled": False,
-            "filtering_settings.memory_scope_mode": "session",
-            "filtering_settings.isolated_sessions": "",
-        }
-    )
-    observations = [
-        {
-            "id": index,
-            "sender": "alice",
-            "text": f"BATCH_TOPIC_{index} " + "原始素材" * 40,
-        }
-        for index in range(10)
-    ]
-    latest = event("later", text="UNRELATED_LATEST_INPUT", sender="bob")
-    memories, _ = await plugin.memory.recall(
-        latest, "default", plugin.settings, observations=observations
-    )
-    query = engine.search_memories.await_args.kwargs["query"]
-    assert len(query) <= 500 and "BATCH_TOPIC_0" in query and "BATCH_TOPIC_9" in query
-    assert "UNRELATED_LATEST_INPUT" not in query
-    assert memories[0]["for_evidence_ids"] == list(range(10))
-    values["filtering_settings.memory_scope_mode"] = "user"
-    count = engine.search_memories.await_count
-    memories, status = await plugin.memory.recall(
-        latest, "default", plugin.settings, observations=observations
-    )
-    assert memories == [] and "不匹配" in status
-    assert engine.search_memories.await_count == count
-    mixed = [*observations, {"id": 77, "sender": "bob", "text": "BOB_BATCH_TOPIC"}]
-    memories, _ = await plugin.memory.recall(
-        latest, "default", plugin.settings, observations=mixed
-    )
-    assert engine.search_memories.await_args.kwargs["query"] == "BOB_BATCH_TOPIC"
-    assert memories[0]["for_evidence_ids"] == [77]
-    assert latest.get_message_str() == "UNRELATED_LATEST_INPUT"
-
-    plugin.settings.update(batch_size=4, min_messages=4)
-    for index in range(4):
-        await plugin.capture(
-            event(
-                f"backlog-{index}",
-                text=f"BACKLOG_TOPIC_{index}",
-                session="789",
-                sender="alice",
-            )
-        )
-    await plugin.capture(
-        event(
-            "outside-backlog",
-            text="OUTSIDE_SELECTED_BATCH",
-            session="789",
-            sender="bob",
-        )
-    )
-    selected_scope, _, _ = await plugin.resolve_scope(event(session="789"))
-    assert (await plugin.learn(selected_scope))["status"] == "success"
-    call = engine.search_memories.await_args.kwargs
-    assert call["session_id"] == "livingmemory:user:aiocqhttp:alice"
-    assert "BACKLOG_TOPIC_0" in call["query"] and "BACKLOG_TOPIC_3" in call["query"]
-    assert "OUTSIDE_SELECTED_BATCH" not in call["query"]
-    for index in range(4):
-        incoming = event(
-            f"mutated-source-{index}",
-            text="原始素材仍属于 Alice",
-            session="999",
-            sender="alice",
-        )
-        await plugin.capture(incoming)
-    # Native reply decoration can rebind the event to an older addressee.
-    incoming.message_obj.sender = MessageMember("bob", "Bob")
-    mutated_scope, _, _ = await plugin.resolve_scope(incoming)
-    count = engine.search_memories.await_count
-    assert (await plugin.learn(mutated_scope))["status"] == "success"
-    assert engine.search_memories.await_count == count
 
 
 async def test_blacklisted_qq_is_not_captured_or_used_as_neighbor_context(plugin):

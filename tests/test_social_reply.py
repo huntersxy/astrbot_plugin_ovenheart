@@ -3,11 +3,9 @@
 import asyncio
 import json
 import sqlite3
-from types import MethodType
 from unittest.mock import AsyncMock
 
 from astrbot.api.provider import ProviderRequest
-from astrbot.core.agent.message import TextPart
 
 from tests.test_jev_owned import enable
 from tests.test_participation import requests
@@ -18,7 +16,6 @@ pytest_plugins = [
     "tests.test_participation",
     "tests.test_retrieval",
     "tests.test_planner_memory",
-    "tests.test_reply_memory_binding",
 ]
 
 
@@ -134,7 +131,7 @@ async def test_jev_plans_with_authorized_shared_memory_and_concrete_intent(
 ):
     plugin, engine, _ = planner_memory
     enable(plugin)
-    engine.search_memories.return_value[0].metadata = {
+    engine.return_value[0]["metadata"] = {
         "participants": ["alice"],
         "key_facts": ["这位成员希望交流时直接说出不同看法"],
         "create_time": "2026-10-24T12:00:00+08:00",
@@ -145,7 +142,6 @@ async def test_jev_plans_with_authorized_shared_memory_and_concrete_intent(
         assert data["memory_context"][0]["for_sequences"] == [1]
         assert "OLDER_SHARED_BACKGROUND" in data["memory_context"][0]["content"]
         assert data["memory_context"][0]["social"]["participants"] == ["member_1"]
-        assert data["memory_context"][0]["social"]["key_facts"]
         assert "NOT owners" in data["RULES"]
         return {
             "status": "ready",
@@ -167,7 +163,7 @@ async def test_jev_plans_with_authorized_shared_memory_and_concrete_intent(
     assert plan["expression_intent"]["reply_act"] == "表达不同意见"
     assert "表达不同意见" in plan["intent"]
     assert plan["expression_intent"]["focus"] == incoming.get_message_str()
-    engine.search_memories.assert_awaited_once()
+    engine.assert_awaited_once()
     plugin.jev.client.evaluate.assert_awaited_once()
     plugin.context.llm_generate.assert_not_awaited()
 
@@ -176,52 +172,11 @@ async def test_memory_context_stays_bounded_with_native_participants(planner_mem
     plugin, engine, _ = planner_memory
     enable(plugin)
     plugin.settings["jev_max_state_chars"] = 1500
-    engine.search_memories.return_value[0].metadata = {"participants": ["alice"]}
+    engine.return_value[0]["metadata"] = {"participants": ["alice"]}
     plugin.jev.client.evaluate = AsyncMock(return_value={"status": "error"})
     assert not await requests(plugin, event("small-social-budget", text="刚才说到哪了"))
     state = plugin.jev.client.evaluate.await_args.args[1]
     assert len(state) <= 1500 and json.loads(state)["eligible_targets"]
-
-
-async def test_jev_does_not_read_unselected_personal_memory(planner_memory):
-    plugin, engine, policy = planner_memory
-    enable(plugin)
-    policy["filtering_settings.memory_scope_mode"] = "user"
-    plugin.jev.client.evaluate = AsyncMock(return_value={"status": "error"})
-    assert not await requests(plugin, event("personal-memory"))
-    state = json.loads(plugin.jev.client.evaluate.await_args.args[1])
-    assert state["memory_context"] == []
-    engine.search_memories.assert_not_awaited()
-
-
-async def test_native_memory_hook_adds_temporary_social_context_and_respects_pause(
-    native_memory,
-):
-    plugin, owner, _, entries = native_memory
-
-    async def native_recall(self, source, req):
-        self.calls.append(("recall", source, req))
-        req.extra_user_content_parts.append(
-            TextPart(
-                text="<RAG-Faiss-Memory>真实共同话题</RAG-Faiss-Memory>"
-            ).mark_as_temp()
-        )
-
-    entries[0].handler = MethodType(native_recall, owner)
-    assert plugin.memory.install()
-    incoming = event("native-social")
-    request = ProviderRequest(prompt="本轮问题", system_prompt="固定人格")
-    await entries[0].handler(incoming, request)
-    assert owner.calls[0][1] is incoming
-    assert request.system_prompt == "固定人格" and not request.contexts
-    assert len(request.extra_user_content_parts) == 2
-    social = request.extra_user_content_parts[-1]
-    assert social.text.startswith("[OvenHeart social memory]")
-    assert social.model_dump_for_context()["_no_save"]
-    plugin.settings["apply_enabled"] = False
-    paused = ProviderRequest(prompt="暂停应用")
-    await entries[0].handler(incoming, paused)
-    assert len(paused.extra_user_content_parts) == 1
 
 
 async def test_interleaved_followup_uses_short_window_and_still_can_observe(

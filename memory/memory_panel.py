@@ -54,6 +54,12 @@ TEXT = {"type": "string", "minLength": 1, "maxLength": 30000, "pattern": r"\S"}
 IDENTIFIER = {"type": "string", "minLength": 1, "maxLength": 128}
 ACTION_FIELDS = {
     "import_text": {"text": TEXT},
+    "import_livingmemory": {
+        "session": {"type": "string", "maxLength": 1024},
+        "persona": {"type": "string", "maxLength": 128},
+        "after": {"type": "integer", "minimum": 0, "maximum": 9223372036854775807},
+        "until": {"type": "integer", "minimum": 1, "maximum": 9223372036854775807},
+    },
     "edit": {
         "id": IDENTIFIER,
         "kind": {"enum": ["paragraph", "relation"]},
@@ -347,6 +353,11 @@ class MemoryPanel:
         try:
             scope = await self.scope(request.query.get("scope"))
             view = request.query.get("view", "records")
+            if view == "livingmemory":
+                from .livingmemory_import import read_source
+
+                result = await asyncio.to_thread(read_source, self.livingmemory_path)
+                return {"status": "ok", "data": result}
             kind = request.query.get("kind", "paragraph")
             query = request.query.get("query", "").strip()
             identity = request.query.get("id", "")
@@ -397,6 +408,14 @@ class MemoryPanel:
                 if isinstance(exc, ValueError)
                 else "记忆库暂忙，请稍后刷新。",
             }
+
+    @property
+    def livingmemory_path(self):
+        return (
+            self.plugin.store.path.parent.parent
+            / "astrbot_plugin_livingmemory"
+            / "livingmemory.db"
+        )
 
     async def image(self):
         try:
@@ -473,6 +492,14 @@ class MemoryPanel:
                 },
             )
             scope = await self.scope(body["scope"])
+            if operation == "import_livingmemory":
+                from .livingmemory_import import read_source
+
+                body["payload"] = body["payload"] | {
+                    "records": await asyncio.to_thread(
+                        read_source, self.livingmemory_path, body["payload"]
+                    )
+                }
             result = await self.plugin.room_memory.call(
                 scope, "admin", operation, body["payload"]
             )
@@ -520,6 +547,10 @@ async def execute_admin(state, operation, payload):
     identity = payload.get("id", "")
     actor = "astrbot_panel"
     reason = "Panel 管理员明确操作"
+    if operation == "import_livingmemory":
+        from .livingmemory_import import import_records
+
+        return await import_records(state, payload)
     if operation.startswith("delete_"):
         action = operation.removeprefix("delete_")
         if action == "restore":

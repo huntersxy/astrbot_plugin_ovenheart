@@ -84,7 +84,7 @@ function updateHeader() {
   scopeSelect.disabled = !data.scopes.length;
   $("#scope-label").textContent = tab === "memory" || data.settings.session_isolation ? "会话与人格" : "学习素材来源";
   $("#session-status").textContent = data.scope ? `${data.scope.pending} 条待学素材，${data.active_count ?? data.traits.filter(t => t.status === "active").length} 条当前可用习惯已生效` : "收到有效聊天消息后，会话将自动出现在这里。";
-  $("#memory-status").textContent = !data.settings.memory_enabled ? "记忆参考已关闭" : data.settings.native_memory_enabled ? "原生记忆已启用 · 按会话与人格隔离" : data.memory.message || "原生记忆未启用";
+  $("#memory-status").textContent = !data.settings.memory_enabled ? "记忆参考已关闭" : data.settings.native_memory_enabled ? "原生记忆已启用 · 按会话与人格隔离" : "原生记忆未启用";
   $("#review-count").textContent = (data.review_count ?? data.scopes.reduce((sum, scope) => sum + scope.review_count, 0)) || "";
   const busy = data.busy.includes(selectedScope);
   $("#learn").disabled = pending || !data.scope || !!data.busy.length || !data.settings.enabled || !data.settings.learning_enabled || !!data.learning_blocked || !data.scope.profile.learning_enabled || data.scope.pending < data.settings.min_evidence;
@@ -483,7 +483,7 @@ function renderSettings(target = "#content") {
     ${memoryPage ? `<div class="settings-panel settings-grid" id="settings-panel-core" role="tabpanel" aria-labelledby="settings-tab-core" data-settings-panel="core">
 <section class="settings-group"><h2>通用与图片记忆</h2><p>按当前会话与人格保存、检索记忆，独立于旧记忆插件运行。</p>
       ${switchField("memory_enabled", "参考长期记忆", "控制学习和回复时是否参考记忆；关闭后已有记忆仍保留。", s.memory_enabled)}
-      ${switchField("native_memory_enabled", "A_memorix 通用记忆", "保存有真实来源的段落和关系，按会话和人格隔离；使用原版 BM25、图谱与双路检索，配置嵌入模型后启用双向量池。可独立于 LivingMemory 运行。", s.native_memory_enabled)}
+      ${switchField("native_memory_enabled", "A_memorix 通用记忆", "保存有真实来源的段落和关系，按会话和人格隔离；使用原版 BM25、图谱与双路检索，配置嵌入模型后启用双向量池。", s.native_memory_enabled)}
       ${switchField("image_memory_enabled", "图片记忆", "保存当前会话中真实出现的图片、作者原话和模型观察；图片描述沿用宿主的图片描述模型，暂停学习后不再入库。", s.image_memory_enabled)}
       ${field("image_embedding_provider_id", "图片嵌入模型 ID", s.image_embedding_provider_id ?? "", "AstrBot 的 DashScope 或硅基流动多模态嵌入提供商 ID；留空仍可回忆同一图片。", {type:"text"})}
       ${switchField("memory_feedback_enabled", "根据后续反馈维护记忆", "跟进已召回记忆的实际后续反馈，按原版窗口和置信度判断是否修正。暂停学习时停止更新，调用计入辅助用量。", s.memory_feedback_enabled)}
@@ -500,7 +500,7 @@ function renderSettings(target = "#content") {
       ${field("midterm_memory_limit", "聊天回想保留数", s.midterm_memory_limit ?? 10, "当前原生会话参与语义匹配的近期摘要数", {type:"number",min:1,max:50})}
       <div class="number-fields">${field("memory_summary_min_messages", "群聊摘要最少新发言", s.memory_summary_min_messages ?? 12, "条；每批最多50条", {type:"number",min:1,max:50})}${field("memory_summary_interval", "群聊记忆整理间隔", s.memory_summary_interval ?? 600, "秒；摘要与情景整理共用尝试间隔", {type:"number",min:0,max:86400})}</div>
       ${field("memory_summary_provider_id", "群聊记忆整理模型 ID", s.memory_summary_provider_id ?? "", "留空使用学习模型或当前会话模型；后台调用计入辅助用量。", {type:"text"})}
-      ${switchField("person_memory_enabled", "人物记忆与画像", "按真实成员、会话和人格保存有原文来源的事实；冲突保留待更正，不确定信息不当作稳定了解。与 LivingMemory 回忆召回分别开关。暂停学习时停止更新。", s.person_memory_enabled)}
+      ${switchField("person_memory_enabled", "人物记忆与画像", "按真实成员、会话和人格保存有原文来源的事实；冲突保留待更正，不确定信息不当作稳定了解。暂停学习时停止更新。", s.person_memory_enabled)}
       <div class="number-fields">${field("person_memory_min_messages", "人物记忆最少新发言", s.person_memory_min_messages ?? 6, "条；同一成员的新素材达到门槛后后台提取", {type:"number",min:1,max:30})}${field("person_memory_interval", "人物记忆更新间隔", s.person_memory_interval ?? 600, "秒；每位成员的自动提取间隔", {type:"number",min:0,max:86400})}</div>
       ${field("person_memory_provider_id", "人物记忆提取模型 ID", s.person_memory_provider_id ?? "", "留空使用学习模型或当前会话模型。", {type:"text"})}
 </section>

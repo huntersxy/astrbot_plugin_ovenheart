@@ -71,22 +71,21 @@ def social_memories(memories, messages):
         if identity and identity not in bot_ids:
             aliases.setdefault(identity, f"member_{len(aliases) + 1}")
     return [
-        memory
-        | {
-            "content": redact(memory["content"]),
+        {
+            "id": memory["id"],
+            "content": redact(memory["content"])[:300],
+            "for_sequences": [
+                m["sequence"] for m in messages[-6:] if not m.get("self")
+            ],
             "social": {
                 "participants": [
                     "bot" if person in bot_ids else aliases.get(person, redact(person))
-                    for person in memory.get("social", {}).get("participants", [])
+                    for person in memory.get("metadata", {}).get("participants", [])
                 ],
-                "key_facts": [
-                    redact(fact)
-                    for fact in memory.get("social", {}).get("key_facts", [])
-                ],
-                "source_time": memory.get("social", {}).get("source_time", ""),
+                "time_meta": memory.get("metadata", {}).get("time_meta", {}),
             },
         }
-        for memory in memories
+        for memory in memories[:3]
     ]
 
 
@@ -366,9 +365,8 @@ class JevService:
             literal_query=query,
             record_status=False,
         )
-        memories, memory_status = await self.plugin.memory.planning_context(
-            event, persona, messages, settings
-        )
+        memories = await self.plugin.room_memory.context(event, scope, persona, query)
+        memory_status = f"本次参考 {len(memories)} 条会话原生记忆。"
         # Bound the offered set explicitly: never choose an ID whose content
         # was omitted to fit the input budget. Preserve authors, quotes and self.
         rows = messages[-16:]

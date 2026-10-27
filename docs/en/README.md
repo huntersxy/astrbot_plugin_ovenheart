@@ -24,3 +24,5 @@ Learning changes retrieval and prompt guidance, not model weights. Model calls m
 See the [user guide](../guide.md) and [developer guide](../../CONTRIBUTING.md). Reports should include versions, reproduction steps and sanitized logs; never submit keys or real chat exports.
 
 Licensed under [AGPL-3.0-or-later](../../LICENSE). Source attribution and retained licenses are in [vendor/maibot](../../vendor/maibot/NOTICE.md).
+
+Memory → Import & sources can copy LivingMemory text from the same AstrBot data directory into the selected conversation and persona. Select a source scope and start the transfer; repeated imports skip existing source records and can pause between batches. LivingMemory does not need to be enabled. Its vectors and settings are not copied. Chat and learning use OvenHeart’s native memory.

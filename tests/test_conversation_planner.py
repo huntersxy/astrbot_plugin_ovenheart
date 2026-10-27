@@ -97,7 +97,11 @@ async def test_retired_turn_cleanup_releases_its_native_lock_and_keeps_other_tur
     ]
     incoming = event("old-instance", text="retired-private-message")
     other = event("unrelated-native", session="other-live-session")
-    entered, released, other_released = asyncio.Event(), asyncio.Event(), asyncio.Event()
+    entered, released, other_released = (
+        asyncio.Event(),
+        asyncio.Event(),
+        asyncio.Event(),
+    )
     held = {}
 
     async def native_phase(event, released):
@@ -205,7 +209,6 @@ def native_planner(participant):
     )
     participant.context = native
     participant.auxiliary.context = native
-    participant.memory.planning_context = AsyncMock(return_value=([], "没有历史背景"))
     return participant, provider
 
 
@@ -235,7 +238,6 @@ async def test_private_native_wake_uses_shared_memory_loop_and_receipt(native_pl
         action("reply", msg_id="1", reply_reference="回答当前私聊请求。"),
         action("stop"),
     ]
-    plugin.memory.recall = AsyncMock(return_value=([], "没有历史"))
     replies = plugin.participate(incoming)
     request = await anext(replies)
     await plugin.apply_participation(incoming, request)
@@ -302,7 +304,6 @@ async def test_each_native_planner_transport_is_metered_without_patching_provide
         response.usage = TokenUsage(input_cached=10, input_other=3, output=2)
         response.raw_completion = {"model": "actual-planner-model"}
     transport.side_effect = responses
-    plugin.memory.recall = AsyncMock(return_value=([], "没有历史"))
     incoming = event("usage", text="帮我找文件")
     incoming.is_at_or_wake_command = True
     replies = plugin.participate(incoming)
@@ -333,11 +334,8 @@ async def test_each_native_planner_transport_is_metered_without_patching_provide
 
 async def test_native_memory_query_reply_receipt_and_stop(native_planner):
     plugin, provider = native_planner
-    plugin.memory.recall = AsyncMock(
-        return_value=(
-            [{"id": "past", "content": "曾聊过毕业设计", "for_evidence_ids": [1]}],
-            "获准访问的回忆",
-        )
+    plugin.room_memory.context = AsyncMock(
+        return_value=[{"id": "past", "content": "曾聊过毕业设计"}]
     )
     reference = "先接住对方的失落，再结合此前毕业设计话题追问。" * 15
     provider.text_chat.side_effect = [
@@ -350,9 +348,7 @@ async def test_native_memory_query_reply_receipt_and_stop(native_planner):
     request = await anext(replies)
     assert provider.text_chat.await_count == 2
     assert incoming.get_result() is None
-    assert (
-        plugin.memory.recall.await_args.kwargs["search_query"] == "毕业设计上次聊到哪里"
-    )
+    assert plugin.room_memory.context.await_args.args[3] == "毕业设计上次聊到哪里"
     await plugin.apply_participation(incoming, request)
     injected = "\n".join(part.text for part in request.extra_user_content_parts)
     assert reference in injected and "简短表达" in injected
@@ -391,7 +387,9 @@ async def test_reply_can_continue_to_another_real_target(native_planner):
     from astrbot_plugin_ovenheart.chat.participation import offered_messages
 
     scope = incoming.get_extra("ovenheart_decision")["scope"]
-    offered = offered_messages(list(plugin.participation.windows[scope]["messages"]), plugin.settings)
+    offered = offered_messages(
+        list(plugin.participation.windows[scope]["messages"]), plugin.settings
+    )
     assert next(m for m in offered if m["source"] == "older")["replyable"] is False
     assert next(m for m in offered if m["source"] == "newer").get("replyable", True)
     second = await anext(replies)
@@ -426,7 +424,9 @@ async def test_partial_reply_keeps_target_available(native_planner):
     from astrbot_plugin_ovenheart.chat.participation import offered_messages
 
     plugin, provider = native_planner
-    provider.text_chat.side_effect = [action("reply", msg_id="1", reply_reference="回答问题")]
+    provider.text_chat.side_effect = [
+        action("reply", msg_id="1", reply_reference="回答问题")
+    ]
     incoming = event("partial-target", text="请帮我处理")
     replies = plugin.participate(incoming)
     try:
@@ -435,8 +435,12 @@ async def test_partial_reply_keeps_target_available(native_planner):
         incoming.set_extra("ovenheart_actual_text_segments", ["第一部分"])
         await send_reply(plugin, incoming, "第一部分")
         scope = incoming.get_extra("ovenheart_decision")["scope"]
-        offered = offered_messages(list(plugin.participation.windows[scope]["messages"]), plugin.settings)
-        assert next(m for m in offered if m["source"] == "partial-target").get("replyable", True)
+        offered = offered_messages(
+            list(plugin.participation.windows[scope]["messages"]), plugin.settings
+        )
+        assert next(m for m in offered if m["source"] == "partial-target").get(
+            "replyable", True
+        )
     finally:
         await replies.aclose()
 
@@ -483,17 +487,38 @@ async def test_direct_trigger_remains_reply_target_after_wait_is_resumed():
 
     original = event("direct-original", text="帮我看看", sender="alice")
     original.is_at_or_wake_command = True
-    owner = SimpleNamespace(plugin=SimpleNamespace(settings_revision="a", prompts_revision="b", debug=MagicMock()))
+    owner = SimpleNamespace(
+        plugin=SimpleNamespace(
+            settings_revision="a", prompts_revision="b", debug=MagicMock()
+        )
+    )
     messages = [
-        {"sequence": 1, "source": "direct-original", "sender_id": "alice", "text": "帮我看看"},
+        {
+            "sequence": 1,
+            "source": "direct-original",
+            "sender_id": "alice",
+            "text": "帮我看看",
+        },
         {"sequence": 2, "source": "interruption", "sender_id": "bob", "text": "插句话"},
     ]
-    session = PlannerSession(owner, original, "room", "persona", {"scope": {"profile": {}}}, messages, DEFAULTS | {"planner_reply_timeout": 5})
+    session = PlannerSession(
+        owner,
+        original,
+        "room",
+        "persona",
+        {"scope": {"profile": {}}},
+        messages,
+        DEFAULTS | {"planner_reply_timeout": 5},
+    )
     session.check_current = AsyncMock()
     session.event = event("interruption", text="插句话", sender="bob")
-    result = await session.invoke("reply", {"msg_id": "2", "reply_reference": "回应插话"})
+    result = await session.invoke(
+        "reply", {"msg_id": "2", "reply_reference": "回应插话"}
+    )
     assert "先处理 trigger.msg_id" in result
-    reply = asyncio.create_task(session.invoke("reply", {"msg_id": "1", "reply_reference": "回应原请求"}))
+    reply = asyncio.create_task(
+        session.invoke("reply", {"msg_id": "1", "reply_reference": "回应原请求"})
+    )
     done, _ = await asyncio.wait({reply}, timeout=0.1)
     if done:
         await reply
@@ -591,10 +616,11 @@ async def test_profile_revoked_during_memory_query_stops_before_reply(native_pla
     plugin, provider = native_planner
 
     async def recall(*args, **kwargs):
-        plugin.settings_revision = "changed-during-query"
-        return [], "已改变设置"
+        if args[3] == "过去的话题":
+            plugin.settings_revision = "changed-during-query"
+        return []
 
-    plugin.memory.recall = recall
+    plugin.room_memory.context = recall
     provider.text_chat.side_effect = [action("search_memory", query="过去的话题")]
     with pytest.raises(asyncio.CancelledError):
         assert not [req async for req in plugin.participate(event("revoked-memory"))]
@@ -641,7 +667,6 @@ async def test_direct_wake_queries_replies_and_returns_receipt_without_autonomou
         action("reply", msg_id="1", reply_reference="结合查到的背景回答当前请求。"),
         action("stop"),
     ]
-    plugin.memory.recall = AsyncMock(return_value=([], "没有历史"))
     incoming = event("direct-planner", text="帮我找上次说的文件")
     if route == "name":
         plugin.settings.update(mentioned_bot_reply=True, mention_names=["小夏"])

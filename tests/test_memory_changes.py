@@ -3,7 +3,6 @@
 import asyncio
 import json
 import time
-from unittest.mock import AsyncMock
 
 import pytest
 
@@ -304,7 +303,6 @@ async def test_actual_planner_queries_corrects_and_replies_from_updated_memory(
     plugin, provider = native_planner
     plugin.settings.update(native_memory_enabled=True, memory_summary_enabled=False)
     plugin.context.get_provider_by_id = lambda name: None
-    plugin.memory.recall = AsyncMock(return_value=([], "没有旧插件回忆"))
     incoming, scope, persona, messages = await material(plugin)
     old = (
         await plugin.room_memory.remember(incoming, scope, persona, note(), messages)

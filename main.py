@@ -71,7 +71,6 @@ from .core.settings import (
 from .core.store import Store
 from .integrations.jev import JevService
 from .integrations.jev import host_settings as read_host_settings
-from .integrations.memory_bridge import MemoryBridge
 from .integrations.outgoing_media import OutgoingMediaBridge
 from .integrations.oven_multi import JEV_RULE, OvenMultiBridge
 from .integrations.oven_multi import reading as jev_reading
@@ -418,7 +417,6 @@ class PersonaPlugin(Star):
         self.prompt_overrides: dict[str, str] = {}
         self.prompts = prompts.merge({})
         self.prompts_revision = uuid4().hex
-        self.memory = MemoryBridge(context, self.owns_group_reply)
         self.group_context = GroupContextBridge(self)
         self.auxiliary = AuxiliaryUsage(context, self.store)
         self.person_memory = PersonMemory(self)
@@ -649,7 +647,6 @@ class PersonaPlugin(Star):
         await self.store.call("prune", self.settings["retention_days"])
         self.page_api = PageAPI(self)
         self.page_api.register()
-        self.memory.install()
         self.group_context.install()
         self.outgoing_media.install()
         self.ready = True
@@ -660,30 +657,14 @@ class PersonaPlugin(Star):
         logger.info("Persona learning plugin initialized")
 
     @filter.on_plugin_loaded()
-    async def refresh_memory_adapter(self, metadata):
-        """Reattach native memory hooks after either plugin finishes loading.
-
-        Args:
-            metadata: Host metadata for the newly loaded plugin.
-        """
-        if not self.closing and metadata.name in (
-            PLUGIN_NAME,
-            "astrbot_plugin_livingmemory",
-        ):
-            self.memory.install()
+    async def refresh_integrations(self, metadata):
+        """Attach current group-context and outgoing-media handlers."""
         if not self.closing:
             self.group_context.install()
             self.outgoing_media.install()
 
     @filter.on_plugin_unloaded()
-    async def release_memory_adapter(self, metadata):
-        """Release obsolete memory instances before an upstream reload.
-
-        Args:
-            metadata: Host metadata for the unloaded plugin.
-        """
-        if metadata.name == "astrbot_plugin_livingmemory":
-            self.memory.disconnect()
+    async def release_integrations(self, metadata):
         if metadata.name == "meme_manager":
             self.outgoing_media.disconnect()
 
@@ -1281,70 +1262,10 @@ class PersonaPlugin(Star):
         # and the next planner's own-reply context run before/after delivery.
         event.set_extra("enable_streaming", False)
         event.call_llm = True
-        self.memory.clear_reply_source(event)
         if plan.get("media_only"):
             await self.send_planned_emoji(event, plan)
             return
         target = plan.get("target") or {}
-        if target.get("source") != plan["room_source"]:
-            source = self.participation.sources.get(
-                (plan["scope"], target.get("source"))
-            )
-            if source is not None:
-                current_source = event_source(source)
-                native_id = getattr(source.message_obj, "message_id", None)
-                if (
-                    source.get_sender_id() != target.get("sender_id")
-                    or current_source != target.get("source")
-                    or (str(native_id).strip() if native_id is not None else "")
-                    != target.get("message_id", "")
-                    or source.get_message_str()[:1200] != target.get("text")
-                    or source.unified_msg_origin != event.unified_msg_origin
-                    or not await self.permitted(source)
-                    or (await self.resolve_scope(source))[0] != plan["scope"]
-                ):
-                    source = None
-            request_event = weakref.ref(event)
-            self.debug(
-                "participation_memory_source",
-                scope=plan["scope"],
-                target_source=target.get("source"),
-                status=self.memory.bind_reply_source(
-                    event,
-                    source,
-                    lambda: bool(
-                        request_event() is not None
-                        and not request_event().is_stopped()
-                        and self.settings["enabled"]
-                        and self.settings["apply_enabled"]
-                        and (
-                            plan.get("direct")
-                            or self.settings["participation_mode"] == "auto"
-                        )
-                        and request_event().get_extra(
-                            "ovenheart_reply_scope", plan["scope"]
-                        )
-                        == plan["scope"]
-                        and (
-                            not plan.get("followup")
-                            or self.settings["participation_followup"]
-                        )
-                        and self.participation.current(plan)
-                    ),
-                ),
-            )
-        if event.get_extra("ovenheart_memory_source_blocked", False):
-            # Keep call_llm set to prevent a native default-reply fallback.
-            await self.store.call(
-                "cancel_decision",
-                plan["scope"],
-                plan["id"],
-                "LivingMemory 钩子接口不兼容，取消跨消息主动回复以避免记忆来源错位。",
-            )
-            logger.warning(
-                "OvenHeart cancelled a reply because memory source routing is unavailable"
-            )
-            return
         # Keep the full original input when answering the triggering message;
         # older targets are available only as the planner's bounded text.
         prompt = (
@@ -3778,24 +3699,6 @@ class PersonaPlugin(Star):
                 senders=sorted({m["sender"] for m in batch}),
             )
             self.last_attempt[scope] = time.time()
-            try:
-                memories, memory_status = await self.memory.recall(
-                    source_event, selected["persona"], settings, observations=batch
-                )
-            except Exception as exc:
-                logger.warning("Persona memory recall failed (%s)", type(exc).__name__)
-                memories, memory_status = (
-                    [],
-                    "LivingMemory 检索失败，本次仅使用聊天素材；请检查记忆插件状态。",
-                )
-            self.debug(
-                "learning_memory",
-                scope=scope,
-                source_sender=source_event.get_sender_id() if source_event else None,
-                source_ids=[m["id"] for m in batch],
-                memories=memories,
-                status=memory_status,
-            )
             # Include rejected/disabled habits too, so paraphrases cannot undo a decision.
             known_state = await self.store.call(
                 "guidance", scope, not settings["session_isolation"], True
@@ -3825,6 +3728,17 @@ class PersonaPlugin(Star):
                 + text[-(per_source - per_source // 2 - 1) :]
                 for text in query_sources
             )
+            memories = (
+                await self.room_memory.context(
+                    source_event, scope, selected["persona"], batch_query
+                )
+                if source_event is not None
+                else []
+            )
+            memories = [
+                m | {"for_evidence_ids": [row["id"] for row in batch]} for m in memories
+            ]
+            memory_status = f"本次参考 {len(memories)} 条会话原生记忆。"
             selection = await self.track(
                 self.retriever.select(
                     scope if settings["session_isolation"] else SHARED_SCOPE,
@@ -4419,7 +4333,6 @@ class PersonaPlugin(Star):
         await close_retired_turns()
         self.outgoing_media.disconnect()
         self.group_context.disconnect()
-        self.memory.disconnect()
         self.participation.close()
         self.direct_priority.entries.clear()
         self.ready = False

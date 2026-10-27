@@ -148,7 +148,6 @@ class PageAPI:
             settings=self.plugin.settings,
             settings_revision=self.plugin.settings_revision,
             prompts_revision=self.plugin.prompts_revision,
-            memory=self.plugin.memory.status(),
             group_context=self.plugin.group_context.status(),
             conversation=self.plugin.conversation.status(),
             oven_multi=self.plugin.oven_multi.status(),
