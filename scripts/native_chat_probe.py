@@ -71,6 +71,7 @@ async def run(args, packet, report):
                 "native_memory_kernel.py",
                 "room_memory.py",
                 "memory_panel.py",
+                "person_memory.py",
             )
         },
         conditions={
@@ -78,6 +79,7 @@ async def run(args, packet, report):
             "fresh_store_per_case": True,
             "learned_traits": [],
             "memory_enabled": args.memory,
+            "person_memory_enabled": args.person_memory,
             "embedding_configured": False,
             "same_configured_model_for_planner_and_reply": True,
             "platform_transport": "loopback",
@@ -170,7 +172,8 @@ async def run(args, packet, report):
                 learning_enabled=args.memory,
                 memory_enabled=args.memory,
                 native_memory_enabled=args.memory,
-                person_memory_enabled=False,
+                person_memory_enabled=args.person_memory,
+                person_memory_min_messages=100,
                 memory_summary_enabled=False,
                 memory_feedback_enabled=False,
                 midterm_memory_enabled=False,
@@ -286,6 +289,8 @@ async def run(args, packet, report):
                 report["cases"].append(case)
                 previous_replies = []
                 for index, turn in enumerate(turns):
+                    if turn.get("reopen_person_store"):
+                        await plugin.person_memory.close()
                     identifier = f"{name}-{index + 1}"
                     active = turn | {
                         "id": identifier,
@@ -327,6 +332,14 @@ async def run(args, packet, report):
                         planner_status=incoming.get_extra("ovenheart_planner_status"),
                     )
                     previous_replies.extend(active["replies"])
+                    if args.person_memory:
+                        scope, persona_id, _ = await plugin.resolve_scope(incoming)
+                        active["person_profiles"] = {
+                            sender: await plugin.person_memory.query(
+                                incoming, scope, persona_id, sender
+                            )
+                            for sender in dict.fromkeys(t["sender"] for t in turns[:index + 1])
+                        }
                     if args.memory:
                         scope = (await plugin.resolve_scope(incoming))[0]
                         state = plugin.room_memory.rooms.get(scope)
@@ -385,6 +398,7 @@ if __name__ == "__main__":
         "--cases", type=Path, default=ROOT / "scripts/chat_parity_cases.json"
     )
     parser.add_argument("--case")
+    parser.add_argument("--person-memory", action="store_true", help="Enable the native fact ledger for synthetic people")
     parser.add_argument(
         "--memory",
         action="store_true",
@@ -393,6 +407,8 @@ if __name__ == "__main__":
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--turn-timeout", type=int, default=240)
     args = parser.parse_args()
+    if args.person_memory and not args.memory:
+        parser.error("--person-memory requires --memory")
     ROOT = args.source.resolve()
     args.output = args.output.resolve()
     args.output.parent.mkdir(parents=True, exist_ok=True)

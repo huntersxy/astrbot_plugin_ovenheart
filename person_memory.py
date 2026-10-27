@@ -54,16 +54,35 @@ FACTS_SCHEMA = {
                     "corrects",
                 ],
                 "properties": {
-                    "key": {"type": "string", "minLength": 1, "maxLength": 80},
-                    "value": {"type": "string", "minLength": 1, "maxLength": 240},
-                    "section": {"enum": SECTIONS},
-                    "stability": {"enum": ["stable", "temporal", "uncertain"]},
-                    "cardinality": {"enum": ["single", "set"]},
-                    "polarity": {"enum": ["positive", "negative"]},
+                    "key": {
+                        "type": "string", "minLength": 1, "maxLength": 80,
+                        "description": "属性语义键，如称呼偏好、咖啡习惯；更正时沿用被更正 claim 的 fact_key，不另起近义键。",
+                    },
+                    "value": {
+                        "type": "string", "minLength": 1, "maxLength": 240,
+                        "description": "当前有依据的事实正文，如现在喝咖啡。单值更正直接写新事实，不写已作废、删除旧记录等操作说明。",
+                    },
+                    "section": {
+                        "enum": SECTIONS,
+                        "description": "stable 可进入身份、关系、稳定事实或互动偏好；temporal 仅用 recent_interactions，uncertain 仅用 uncertain_notes。",
+                    },
+                    "stability": {
+                        "enum": ["stable", "temporal", "uncertain"],
+                        "description": "明确持续的称呼或生活偏好用 stable，包括本人说现在改为某偏好；当天情绪和临时安排用 temporal，推测用 uncertain。",
+                    },
+                    "cardinality": {
+                        "enum": ["single", "set"],
+                        "description": "single 是同一属性的单个当前值，set 是可并存的多个值；更正时沿用旧 claim 的 cardinality。",
+                    },
+                    "polarity": {
+                        "enum": ["positive", "negative"],
+                        "description": "positive 表示肯定 value 这项事实，即使 value 包含不字。单值更正的新值通常为 positive；set 撤销旧值时保留原 value 并用 negative，不把更正操作本身写成否定事实。",
+                    },
                     "corrects": {
                         "type": "array",
                         "maxItems": 8,
                         "items": {"type": "string"},
+                        "description": "明确更正时填写查询得到的同一人物、同一属性旧 claim_id；新属性留空。single 写新的当前值，set 撤销旧值与新增值分开提交。",
                     },
                     "evidence": {
                         "type": "array",
