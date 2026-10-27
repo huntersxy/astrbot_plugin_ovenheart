@@ -634,20 +634,25 @@ class PersonMemory:
         if not self.plugin.settings["person_memory_enabled"]:
             return []
         plan = event.get_extra("ovenheart_decision") or {}
-        target = (plan.get("target") or {}).get("sender_id") or event.get_sender_id()
+        target = (
+            plan.get("target") if plan.get("scope") == scope else None
+        ) or self.plugin.conversation.record(event)
+        target_sender = target["sender_id"]
+        quoted_sender = (target.get("reply_to") or {}).get("sender_id", "")
         senders = list(
             dict.fromkeys(
-                [
-                    target,
+                sender
+                for sender in [
+                    target_sender,
+                    quoted_sender,
                     event.get_sender_id(),
                     *[m["sender_id"] for m in reversed(messages) if not m.get("self")],
                 ]
+                if sender and sender != event.get_self_id()
             )
         )[:3]
         result = []
         for sender in senders:
-            if sender == event.get_self_id():
-                continue
             profile = await self.query(event, scope, persona, sender)
             text = build_profile_injection_text(
                 profile.get("profile_text", ""), include_uncertain_fallback=False
@@ -656,6 +661,11 @@ class PersonMemory:
                 result.append(
                     {
                         "sender_id": sender,
+                        "role": ("reply_target" if plan.get("scope") == scope else "current_sender")
+                        if sender == target_sender
+                        else "quoted_author"
+                        if sender == quoted_sender
+                        else "participant",
                         "profile": text[:900],
                         "recent_interactions": profile.get("recent_interactions", [])[
                             :2

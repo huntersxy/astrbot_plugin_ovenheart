@@ -4,6 +4,7 @@ import asyncio
 from types import SimpleNamespace
 
 import pytest
+from astrbot.core.message.components import Plain, Reply
 
 from astrbot_plugin_ovenheart.memory.person_memory import PersonMemory
 from tests.test_participation import requests
@@ -85,6 +86,42 @@ async def test_actual_ledger_profile_snapshot_and_restart_keep_source_evidence(p
     context = await person.person_memory.context(incoming, scope, persona)
     assert context[0]["sender_id"] == "alice"
     assert "职业：学生" in context[0]["profile"]
+
+
+@pytest.mark.parametrize("autonomous", [False, True])
+async def test_quoted_author_profile_stays_separate_from_the_current_speaker(person, autonomous):
+    alice = await source(person, "alice-fact", "我是学生。")
+    saved = await remember(person, alice, fact("alice-fact", "我是学生", "职业：学生"))
+    bob = await source(person, "bob-fact", "我是程序员。", sender="bob")
+    await remember(person, bob, fact("bob-fact", "我是程序员", "职业：程序员"))
+    quoted = event("bob-quotes-alice", text="他说得对", sender="bob")
+    quoted.message_obj.message = [
+        Reply(id="alice-fact", sender_id="alice", sender_nickname="同名成员", message_str="我是学生。"),
+        Plain("他说得对"),
+    ]
+    current = event("interjection", text="插句话", sender="carol") if autonomous else quoted
+    scope, persona, _ = await person.resolve_scope(current)
+    target = person.conversation.record(quoted)
+    if autonomous:
+        current.set_extra("ovenheart_decision", {"scope": scope, "target": target})
+    messages = [person.conversation.record(event("other", sender="dave"))]
+    context = await person.person_memory.context(current, scope, persona, messages)
+    assert [row["sender_id"] for row in context] == ["bob", "alice"]
+    assert context[0]["role"] == ("reply_target" if autonomous else "current_sender")
+    assert "程序员" in context[0]["profile"] and "学生" not in context[0]["profile"]
+    assert context[1]["role"] == "quoted_author"
+    assert "学生" in context[1]["profile"] and "程序员" not in context[1]["profile"]
+    correction = await source(person, "alice-correction", "我现在是老师，不是学生。")
+    await remember(
+        person, correction,
+        fact("alice-correction", "我现在是老师，不是学生。", "职业：老师", corrects=[saved["facts"][0]["claim_id"]]),
+    )
+    await person.person_memory.close()
+    person.person_memory = PersonMemory(person)
+    restored = await person.person_memory.context(current, scope, persona, messages)
+    assert [row["sender_id"] for row in restored] == ["bob", "alice"]
+    assert "程序员" in restored[0]["profile"] and "老师" not in restored[0]["profile"]
+    assert "老师" in restored[1]["profile"] and "学生" not in restored[1]["profile"]
 
 
 async def test_actual_upstream_conflict_and_explicit_correction(person):
