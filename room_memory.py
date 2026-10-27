@@ -458,7 +458,12 @@ class RoomState:
                     },
                 }
             )
-        episodes = await self.episodes(query, min(1, top_k))
+        # Episode retrieval repeats the full evidence search; an empty episode
+        # table cannot produce an episode through either of its ranking paths.
+        has_episodes = self.metadata._conn.execute(
+            "SELECT EXISTS(SELECT 1 FROM episodes)"
+        ).fetchone()[0]
+        episodes = await self.episodes(query, min(1, top_k)) if has_episodes else []
         if episodes:
             episode = episodes[0]
             paragraphs = episode.get("paragraphs", [])

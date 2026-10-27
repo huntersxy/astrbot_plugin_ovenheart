@@ -84,6 +84,32 @@ async def test_original_sparse_graph_search_retains_native_evidence(memories):
     )
 
 
+async def test_search_skips_empty_episode_index_but_recalls_new_episode(memories, monkeypatch):
+    incoming, scope, persona, messages = await material(memories)
+    saved = await memories.room_memory.remember(incoming, scope, persona, note(), messages)
+    state = memories.room_memory.rooms[scope]
+    query = state.kernel.episode_retriever.query
+    calls = []
+
+    async def count_query(**kwargs):
+        calls.append(kwargs)
+        return await query(**kwargs)
+
+    monkeypatch.setattr(state.kernel.episode_retriever, "query", count_query)
+    assert await memories.room_memory.search(incoming, scope, persona, "小猫")
+    assert not calls
+    episode = state.metadata.upsert_episode({
+        "source": "chat_summary:" + scope,
+        "title": "小猫之约",
+        "summary": "Neko周末去看小猫。",
+        "evidence_ids": [saved["id"]],
+        "participants": ["alice"],
+    })
+    state.metadata.bind_episode_paragraphs(episode["episode_id"], [saved["id"]])
+    result = await memories.room_memory.search(incoming, scope, persona, "小猫")
+    assert calls and any(row["id"] == episode["episode_id"] for row in result)
+
+
 async def test_room_limit_closes_idle_runtime_and_reopens_persisted_memory(memories):
     memories.settings.update(
         memory_runtime_max_rooms=1,
