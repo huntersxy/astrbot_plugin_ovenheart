@@ -1478,9 +1478,15 @@ class ParticipationController:
 
 def offered_messages(messages, settings):
     """Use the same bounded structured snapshot for decisions and generation."""
-    return (
-        messages[-40:] if settings["context_mode"] == "structured" else messages[-20:]
-    )
+    if settings["context_mode"] == "structured":
+        return messages[-40:]
+    answered = {m.get("answered_source") for m in messages if m.get("self")}
+    return [
+        m | {"replyable": False}
+        if not m.get("self") and m.get("source") in answered
+        else m
+        for m in messages[-20:]
+    ]
 
 
 def planner_message(message):
@@ -1488,7 +1494,7 @@ def planner_message(message):
     return {
         key: value
         for key, value in message.items()
-        if key not in {"image_refs", "arrival_order"}
+        if key not in {"image_refs", "arrival_order", "answered_source"}
         and not (key == "source" and message.get("message_id"))
         and not (key in {"reply_to", "media", "mentions"} and not value)
     }

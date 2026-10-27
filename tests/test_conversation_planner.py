@@ -388,6 +388,12 @@ async def test_reply_can_continue_to_another_real_target(native_planner):
     assert incoming.get_extra("ovenheart_decision")["target"]["source"] == "older"
     await plugin.apply_participation(incoming, first)
     await send_reply(plugin, incoming, "bob，你先看下载目录")
+    from astrbot_plugin_ovenheart.participation import offered_messages
+
+    scope = incoming.get_extra("ovenheart_decision")["scope"]
+    offered = offered_messages(list(plugin.participation.windows[scope]["messages"]), plugin.settings)
+    assert next(m for m in offered if m["source"] == "older")["replyable"] is False
+    assert next(m for m in offered if m["source"] == "newer").get("replyable", True)
     second = await anext(replies)
     assert incoming.get_extra("ovenheart_decision")["target"]["source"] == "newer"
     await plugin.apply_participation(incoming, second)
@@ -414,6 +420,25 @@ async def test_wait_timeout_resumes_the_same_native_tool_loop(native_planner):
         default=lambda m: m.model_dump(),
     )
     assert incoming.get_result() is None
+
+
+async def test_partial_reply_keeps_target_available(native_planner):
+    from astrbot_plugin_ovenheart.participation import offered_messages
+
+    plugin, provider = native_planner
+    provider.text_chat.side_effect = [action("reply", msg_id="1", reply_reference="回答问题")]
+    incoming = event("partial-target", text="请帮我处理")
+    replies = plugin.participate(incoming)
+    try:
+        await anext(replies)
+        incoming.set_extra("ovenheart_text_delivery_incomplete", True)
+        incoming.set_extra("ovenheart_actual_text_segments", ["第一部分"])
+        await send_reply(plugin, incoming, "第一部分")
+        scope = incoming.get_extra("ovenheart_decision")["scope"]
+        offered = offered_messages(list(plugin.participation.windows[scope]["messages"]), plugin.settings)
+        assert next(m for m in offered if m["source"] == "partial-target").get("replyable", True)
+    finally:
+        await replies.aclose()
 
 
 async def test_new_input_resumes_an_actual_wait_without_restarting(native_planner):

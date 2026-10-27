@@ -3236,6 +3236,11 @@ class PersonaPlugin(Star):
                         "message_id": "",
                         "self": True,
                         "text": text,
+                        "answered_source": (
+                            target.get("source", "")
+                            if plan and not event.get_extra("ovenheart_text_delivery_incomplete")
+                            else ""
+                        ),
                         "reply_to": {
                             "message_id": target.get("message_id", source),
                             "sender_id": target.get("sender_id", event.get_sender_id()),
