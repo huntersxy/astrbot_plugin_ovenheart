@@ -17,10 +17,11 @@ from astrbot.core.star.star_handler import (
     star_handlers_registry,
 )
 
+from tests.test_conversation_planner import action, send_reply
 from tests.test_participation import requests
 from tests.test_runtime import event, sources
 
-pytest_plugins = ["tests.test_participation"]
+pytest_plugins = ["tests.test_participation", "tests.test_conversation_planner"]
 
 
 def observe_requests(plugin, monkeypatch, snapshots, *, tail_first):
@@ -60,6 +61,38 @@ def observe_requests(plugin, monkeypatch, snapshots, *, tail_first):
             key,
             SimpleNamespace(name=key, activated=True, display_name=key),
         )
+
+
+@pytest.mark.parametrize("tail_first", [True, False])
+async def test_planned_and_direct_routes_have_the_same_final_cached_system(
+    native_planner, monkeypatch, tail_first
+):
+    from astrbot_plugin_ovenheart.core.prompts import REPLY_EXECUTION_RULE
+
+    plugin, provider = native_planner
+    plugin.settings["guidance_delivery"] = "cached"
+    provider.text_chat.side_effect = [
+        action("reply", msg_id="1", reply_reference="接住这轮话题，不补收尾评价"),
+        action("stop"),
+    ]
+    planned = event("planned-prefix", text="这轮话题")
+    replies = plugin.participate(planned)
+    first = await anext(replies)
+    first.system_prompt = "固定宿主人格"
+    snapshots = []
+    observe_requests(plugin, monkeypatch, snapshots, tail_first=tail_first)
+    assert not await context_utils.call_event_hook(planned, EventType.OnLLMRequestEvent, first)
+    await send_reply(plugin, planned, "嗯，接着说")
+    with pytest.raises(StopAsyncIteration):
+        await anext(replies)
+    direct = event("direct-prefix", text="直接叫你")
+    direct.is_at_or_wake_command = True
+    second = ProviderRequest(prompt=direct.get_message_str(), system_prompt="固定宿主人格")
+    assert not await context_utils.call_event_hook(direct, EventType.OnLLMRequestEvent, second)
+    assert len(snapshots) == 2
+    assert snapshots[0]["system"] == snapshots[1]["system"]
+    assert snapshots[0]["system"].count(REPLY_EXECUTION_RULE) == 1
+    assert "接住这轮话题，不补收尾评价" not in snapshots[0]["system"]
 
 
 @pytest.mark.parametrize("tail_first", [True, False])

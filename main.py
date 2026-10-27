@@ -2357,7 +2357,8 @@ class PersonaPlugin(Star):
         if plan.get("planner_session"):
             # Keep the system rule constant for caching. Only the validated
             # turn's action goes into the unsaved request tail, after history.
-            req.system_prompt += prompts.REPLY_EXECUTION_RULE
+            if prompts.REPLY_EXECUTION_RULE not in req.system_prompt:
+                req.system_prompt += prompts.REPLY_EXECUTION_RULE
             event.set_extra("ovenheart_reply_execution_injected", True)
             user_injection += "\n[OvenHeart current reply execution]\n" + json.dumps(
                 {
@@ -2768,6 +2769,10 @@ class PersonaPlugin(Star):
         if guidance and guidance not in req.system_prompt:
             system_injection = "\n\n" + guidance
             req.system_prompt += "\n\n" + guidance
+        # Direct and planned replies share one constant system prefix. Per-turn
+        # plans remain temporary; switching routes must not change this rule.
+        if prompts.REPLY_EXECUTION_RULE not in req.system_prompt:
+            req.system_prompt += prompts.REPLY_EXECUTION_RULE
         if user_guidance and not any(
             isinstance(part, TextPart)
             and part.text.startswith("[OvenHeart turn context]\n")
