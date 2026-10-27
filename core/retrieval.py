@@ -284,6 +284,7 @@ class HabitRetriever:
         record_status=True,
         contextual_judge=None,
         inline_selection=False,
+        planned_expressions=None,
     ):
         """Recall, optionally rerank, then select habits within bounded deadlines.
 
@@ -307,11 +308,15 @@ class HabitRetriever:
             contextual_judge: Optional typed judgment sharing reply planning with
                 habit applicability, without a separate chat-model generation.
             inline_selection: Let the native reply model judge optional expressions.
+            planned_expressions: Expressions selected from the planner's real pool;
+                reuse them after checking current approval and content, without model calls.
 
         Returns:
             Habits, retrieval mode and a visible fallback explanation.
         """
         active = [t for t in traits if t["status"] == "active"]
+        if planned_expressions is not None:
+            semantic = False
         deadline = time.monotonic() + settings["retrieval_timeout"]
         similarities = None
         document_vectors = {} if settings["selection_mode"] == "contextual" else None
@@ -525,6 +530,18 @@ class HabitRetriever:
                 result["message"] += (
                     f" 已在相近表达中优先 {len(promoted)} 条近期未提供的参考。"
                 )
+        if planned_expressions is not None:
+            current = {t["id"]: t for t in active if t["kind"] == "expression"}
+            result.update(
+                traits=[
+                    current[t["id"]]
+                    for t in planned_expressions
+                    if t["id"] in current and habit_text(current[t["id"]]) == habit_text(t)
+                ],
+                mode="planner",
+                selector_engine="planner",
+                message="沿用本轮规划已选的表达与原话片段，不再次调用模型筛选；已停用或修改的条目不再使用。",
+            )
         # Local definitions are factual context, not optional expression preferences.
         # Match only the human reply target and its quote. Unrelated history and
         # planner goals cannot pin a word into the final reply.

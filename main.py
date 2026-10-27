@@ -2609,25 +2609,29 @@ class PersonaPlugin(Star):
         query = ("\n".join(reversed(recent)) + "\n" + focus + goal).strip()
         settings = self.settings.copy()
         prompts_revision = self.prompts_revision
-        inline_selection = bool(
-            plan
-            and plan.get("planner_session")
-            and settings["selection_mode"] == "contextual"
+        planned_expressions = (
+            plan.get("selected_expressions", [])
+            if plan and plan.get("planner_session")
+            else None
         )
         contextual_judge = (
             self.jev.select_habits
             if settings["jev_enabled"]
             and settings["selection_mode"] == "contextual"
-            and not inline_selection
+            and planned_expressions is None
             else None
         )
         retrieval_settings = (
             settings | {"retrieval_timeout": min(1.5, settings["retrieval_timeout"])}
-            if contextual_judge or inline_selection
+            if contextual_judge
             else settings
         )
         provider_id, identity = None, ""
-        if settings["selection_mode"] == "contextual" and state["traits"]:
+        if (
+            settings["selection_mode"] == "contextual"
+            and state["traits"]
+            and planned_expressions is None
+        ):
             anchor = self.context.persona_manager.get_persona_v3_by_id(persona)
             identity = json.dumps(
                 {
@@ -2655,7 +2659,7 @@ class PersonaPlugin(Star):
                 recent_expression_ids=state.get("recent_expression_ids", []),
                 expression_intent=expression_intent,
                 contextual_judge=contextual_judge,
-                inline_selection=inline_selection,
+                planned_expressions=planned_expressions,
             )
         )
         # wait_for waits for cancellation to finish. An optional selector whose
@@ -2749,6 +2753,12 @@ class PersonaPlugin(Star):
         )
         if selection["mode"] == "contextual_inline":
             notice = "以下表达尚未判定适用；请你结合完整对话自行挑选，也可全部不用，不为套用候选改变话题或立场。\n"
+            if user_guidance:
+                user_guidance += "\n" + notice
+            elif guidance:
+                guidance += "\n" + notice
+        elif selection["mode"] == "planner" and included_ids:
+            notice = "以下表达由本轮规划按实际对象和回应动作选定，用于落实措辞与节奏；不照抄原话，不改变本轮立场，也不因套用表达追加解释或收尾。\n"
             if user_guidance:
                 user_guidance += "\n" + notice
             elif guidance:

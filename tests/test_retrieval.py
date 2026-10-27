@@ -123,6 +123,31 @@ async def test_semantic_synonyms_rank_without_matching_characters(retrieval):
     assert not await retriever.store.call("vectors", signature, "scope-b")
 
 
+@pytest.mark.parametrize("state", ["active", "changed", "revoked", "empty"])
+async def test_planned_expressions_reuse_approval_without_remote_models(retrieval, state):
+    retriever, provider = retrieval
+    planned = [] if state == "empty" else [TRAITS[0]]
+    current = [dict(t) for t in TRAITS]
+    if state == "changed":
+        current[0]["content"] = "已经改成其他表达"
+    if state == "revoked":
+        current[0]["status"] = "rejected"
+    current.append(TRAITS[0] | {"id": 3, "kind": "jargon", "content": "『摆了』：暂时搁下这事"})
+    judge = AsyncMock()
+    result = await retriever.select(
+        "scope-a", current, "摆了", DEFAULTS | {
+            "selection_mode": "contextual", "embedding_provider_id": "embed", "rerank_provider_id": "rerank"
+        },
+        literal_query="摆了", literal_focus="摆了", contextual_judge=judge,
+        planned_expressions=planned,
+    )
+    assert result["mode"] == "planner"
+    assert [t["id"] for t in result["traits"]] == ([3, 1] if state == "active" else [3])
+    provider.get_embedding.assert_not_awaited()
+    provider.get_embeddings.assert_not_awaited()
+    judge.assert_not_awaited()
+
+
 async def test_model_and_edited_content_invalidate_cached_vectors(retrieval):
     retriever, provider = retrieval
     settings = DEFAULTS | {"selection_mode": "hybrid", "embedding_provider_id": "embed"}

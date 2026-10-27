@@ -34,6 +34,7 @@ PLANNER_SYSTEM = """你正在以当前人格参加真实聊天。你负责持续
 emoji_policy 是本轮主动表情安排。proactive_allowed=true 时可主动使用表情；candidates 只是按当前话题初筛的真实候选，不代表你的表达立场。先确定你这次要表达的动作、对象关系和态度方向；候选不合适或为空时，调用show_emoji_list(query)按自己的表达用途重新语义检索，不能直接照搬用户或引用者的情绪。轻松闲聊、调侃、共鸣、庆祝和安慰适合时，主动选一张随 reply.attach_emoji 发送，不必等用户索要，也不要说“要不要表情”。需要认真解释、严肃任务或没有贴切图片时可不选，不能为配图扭曲正文。proactive_allowed=false 时不主动查图或发图；用户明确索要时仍可查图发送，不受主动推荐比例和间隔限制。候选 index 已在当前会话登记，可直接用于 send_emoji(index) 或 reply.attach_emoji。
 规划、正文和媒体发送都是同一个你的行动。已成功发出的表情是你发的，不用“系统自己发的”把自己拆成两个角色；以真实发送回执纠正历史中的错误能力自述。用户只要一个表情且无需文字说明时，优先查看候选后send_emoji(index)，不必先生成文字或颜文字凑数。需要一起说话时再用reply.attach_emoji。
 reply_reference 必须交代本轮必要的聊天状态、对象、已知事实或关系、具体回应方向，不是要发送的正文。不要只写“自然接话”。
+expression_candidates 是本会话召回的真实表达习惯与原话片段，仅影响措辞和节奏，不代表你的经历或立场。reply.expression_ids 从中选零到四条真正适合当前目标和回应动作的 ID；没有合适的填空数组，不为套用习惯增加评价、追问或收尾。正文会沿用本次选择，不另换一批表达；原话片段用于学习说法，不能照抄历史对象与事实。
 reply 的结果会提供实际回复和发送钩子状态。收到结果后继续判断：是否还有不同的内容值得说、需要等人补充，或者应结束。
 partial_text 表示只有返回的 reply_text 实际发送，后续只补未发送部分，不重发已有片段；delivery_failed表示未观察到成功文字段，可根据真实错误继续处理明确请求。
 delivery_uncertain 表示平台没有可靠回执，本轮应结束，不能自动重发。
@@ -97,12 +98,18 @@ ACTION_SCHEMAS = {
             },
             "attach_emoji": {"type": "integer", "minimum": 1},
             "expression_intent": EXPRESSION_SCHEMA,
+            "expression_ids": {
+                "type": "array",
+                "items": {"type": "integer", "minimum": 1},
+                "maxItems": 4,
+                "uniqueItems": True,
+            },
             "decoration": {
                 "type": "string",
                 "enum": ["none", "quote", "mention", "quote_mention"],
             },
         },
-        "required": ["msg_id", "reply_reference"],
+        "required": ["msg_id", "reply_reference", "expression_ids"],
         "additionalProperties": False,
     },
     "wait": {
@@ -169,6 +176,7 @@ class PlannerSession:
         self.memory_ids = set()
         self.emojis = {}
         self.reacted = set()
+        self.expressions = {}
 
     def trace(self, action, **details):
         self.plugin.debug(
@@ -325,6 +333,9 @@ class PlannerSession:
                 return "错误：本轮由直接唤醒触发，请先处理 trigger.msg_id 的请求。"
             if name == "reply" and sequence in self.replied:
                 return "错误：这条消息已回复，请依据实际回复结果选择其他行动。"
+            expression_ids = arguments.get("expression_ids", [])
+            if any(identifier not in self.expressions for identifier in expression_ids):
+                return "错误：expression_ids 只能选 expression_candidates 实际提供的 ID；没有合适表达请填空数组。"
             plan = parse_plan(
                 json.dumps(
                     {
@@ -346,6 +357,7 @@ class PlannerSession:
                 reply_reference=reference,
                 reply_style=arguments.get("reply_style", "正常回复"),
                 planner_session=self.id,
+                selected_expressions=[self.expressions[i] for i in expression_ids],
                 attach_emoji=arguments.get("attach_emoji"),
                 media_only=name == "send_emoji",
                 planned_emoji={
@@ -455,16 +467,23 @@ class PlannerSession:
                 | {"recent_messages": [planner_message(m) for m in self.messages]}
             )
 
-    async def run(self, state):
-        anchor = self.plugin.context.persona_manager.get_persona_v3_by_id(self.persona)
+    async def recall(self, state):
+        """Use the same scoped context when starting and resuming a real wait."""
         query = "\n".join(m["text"][:300] for m in self.messages[-6:])[:1800]
         selected = await self.plugin.retriever.select(
             self.scope if self.settings["session_isolation"] else SHARED_SCOPE,
             state["traits"],
             query,
-            self.settings | {"selection_mode": "hybrid", "max_traits": 12},
+            self.settings | {
+                "selection_mode": "lexical" if self.settings["selection_mode"] == "lexical" else "hybrid",
+                "max_traits": 12,
+            },
+            recent_expression_ids=state.get("recent_expression_ids", []),
             record_status=False,
         )
+        self.expressions = {
+            trait["id"]: trait for trait in selected["traits"] if trait["kind"] == "expression"
+        }
         native = await self.plugin.room_memory.context(
             self.event, self.scope, self.persona, query
         )
@@ -484,6 +503,32 @@ class PlannerSession:
         people = await self.plugin.person_memory.context(
             self.event, self.scope, self.persona, self.messages
         )
+        return {
+            "behavior_guidance": build_guidance(
+                self.profile,
+                [t for t in selected["traits"] if t["kind"] != "expression"],
+                self.settings,
+                query,
+                selected=True,
+                templates=self.plugin.prompts,
+            ),
+            "expression_candidates": [
+                {
+                    "id": trait["id"],
+                    "situation": trait["situation"],
+                    "content": trait["content"],
+                    "examples": [e["text"] for e in trait.get("examples", [])],
+                }
+                for trait in self.expressions.values()
+            ],
+            "memory_context": memories,
+            "person_profiles": people,
+            "memory_status": memory_status,
+        }
+
+    async def run(self, state):
+        anchor = self.plugin.context.persona_manager.get_persona_v3_by_id(self.persona)
+        recalled = await self.recall(state)
         provider = (
             self.settings["planner_provider_id"]
             or self.settings["provider_id"]
@@ -551,14 +596,7 @@ class PlannerSession:
                         "time_context": native_time(
                             self.plugin.context, self.event.unified_msg_origin
                         ),
-                        "behavior_guidance": build_guidance(
-                            self.profile,
-                            selected["traits"],
-                            self.settings,
-                            query,
-                            selected=True,
-                            templates=self.plugin.prompts,
-                        ),
+                        **recalled,
                         "recent_messages": [planner_message(m) for m in self.messages],
                         "trigger": {
                             "chat_type": "private"
@@ -574,9 +612,6 @@ class PlannerSession:
                                 "",
                             ),
                         },
-                        "memory_context": memories,
-                        "person_profiles": people,
-                        "memory_status": memory_status,
                         "emoji_policy": emoji_policy,
                     },
                     ensure_ascii=False,
@@ -638,7 +673,9 @@ class ConversationPlanner:
                 session.event = event
                 session.messages = offered_messages(messages, settings)
                 session.waits = 0
-                session.acknowledge({"wait_result": "new_messages"})
+                recalled = await session.recall(state)
+                await session.check_current()
+                session.acknowledge({"wait_result": "new_messages", **recalled})
         if session is None:
             session = PlannerSession(
                 self, event, scope, persona, state, messages, settings

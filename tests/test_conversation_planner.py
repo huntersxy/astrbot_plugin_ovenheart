@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import sqlite3
 import weakref
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
@@ -182,6 +183,8 @@ async def test_native_send_failure_does_not_acknowledge_success_or_retry(
 
 
 def action(name, **arguments):
+    if name == "reply":
+        arguments.setdefault("expression_ids", [])
     return LLMResponse(
         role="assistant",
         tools_call_name=[name],
@@ -215,6 +218,53 @@ def native_planner(participant):
 async def send_reply(plugin, incoming, text):
     incoming.set_result(incoming.plain_result(text))
     await plugin.record_delivery(incoming)
+
+
+async def test_planned_expression_reaches_native_reply_without_reselection(native_planner):
+    plugin, provider = native_planner
+    plugin.settings.update(session_isolation=True, selection_mode="lexical")
+    incoming = event("planned-expression", text="我今天摆了，你说呢？")
+    scope, persona, label = await plugin.resolve_scope(incoming)
+    await plugin.store.call("touch_scope", scope, incoming.unified_msg_origin, persona, label)
+    with sqlite3.connect(plugin.store.path) as db:
+        for identifier, kind, situation, content, examples in (
+            (1, "expression", "朋友决定暂时休息时", "用短补句接住，不替对方作完整评价", [{"text": "歇着吧，还能咋地"}]),
+            (2, "expression", "正式评审时", "完整评价优点再作总结", []),
+            (3, "jargon", "说摆了时", "『摆了』：本群指暂时搁下这事，不是完成", []),
+        ):
+            db.execute(
+                "INSERT INTO traits(id,scope,kind,situation,content,examples,confidence,evidence,status,fingerprint,created,updated) VALUES (?,?,?,?,?,?,?,'[]','active',?,1,1)",
+                (identifier, scope, kind, situation, content, json.dumps(examples), 0.95, str(identifier)),
+            )
+    provider.text_chat.side_effect = [
+        action("reply", msg_id="1", reply_reference="接住这次休息", expression_ids=[999]),
+        action("reply", msg_id="1", reply_reference="接住这次休息", expression_ids=[1], reply_style="简短表达"),
+        action("stop"),
+    ]
+    calls = []
+    original = plugin.retriever.select
+
+    async def select(*args, **kwargs):
+        result = await original(*args, **kwargs)
+        calls.append((kwargs, result))
+        return result
+
+    plugin.retriever.select = select
+    replies = plugin.participate(incoming)
+    request = await anext(replies)
+    assert provider.text_chat.await_count == 2  # Unoffered IDs produce a tool error, not a reply.
+    assert [t["id"] for t in incoming.get_extra("ovenheart_decision")["selected_expressions"]] == [1]
+    await plugin.apply_persona(incoming, request)
+    await plugin.apply_participation(incoming, request)
+    assert len(calls) == 2 and calls[-1][1]["mode"] == "planner"
+    assert [t["id"] for t in calls[-1][1]["traits"]] == [3, 1]
+    injected = request.system_prompt + "\n".join(getattr(part, "text", "") for part in request.extra_user_content_parts)
+    assert "歇着吧，还能咋地" in injected and "暂时搁下这事" in injected
+    assert "完整评价优点再作总结" not in injected
+    assert set(incoming.get_extra("ovenheart_application")["ids"]) == {1, 3}
+    await send_reply(plugin, incoming, "歇着呗")
+    with pytest.raises(StopAsyncIteration):
+        await anext(replies)
 
 
 def private_event(identifier, text, sender="alice"):
@@ -502,10 +552,17 @@ async def test_partial_reply_keeps_target_available(native_planner, context_mode
 
 
 async def test_new_input_resumes_an_actual_wait_without_restarting(native_planner):
+    from tests.test_person_memory import fact, remember, source
+
     plugin, provider = native_planner
+    plugin.settings.update(person_memory_enabled=True, person_memory_min_messages=30, session_isolation=True)
+    alice = await source(plugin, "alice-wait-fact", "我是学生。")
+    await remember(plugin, alice, fact("alice-wait-fact", "我是学生", "职业：学生"))
+    bob = await source(plugin, "bob-wait-fact", "我是老师。", sender="bob")
+    await remember(plugin, bob, fact("bob-wait-fact", "我是老师", "职业：老师"))
     provider.text_chat.side_effect = [
         action("wait", seconds=30),
-        action("reply", msg_id="2", reply_reference="现在补充完整，回应后来的信息。"),
+        action("reply", msg_id="2", reply_reference="现在补充完整，回应后来的信息。", expression_ids=[7]),
         action("stop"),
     ]
     older = event("wait-for-more", text="我想说的是……")
@@ -520,7 +577,13 @@ async def test_new_input_resumes_an_actual_wait_without_restarting(native_planne
     else:
         pytest.fail("native wait was never reached")
     session = next(iter(plugin.participation.planner.sessions.values()))
-    incoming = event("wait-completed", text="我明天要答辩，有点紧张")
+    assert not session.expressions
+    with sqlite3.connect(plugin.store.path) as db:
+        db.execute(
+            "INSERT INTO traits(id,scope,kind,situation,content,confidence,evidence,status,fingerprint,created,updated) VALUES (7,?,'expression','对方紧张时','用短句接住，再留出说话空间',0.95,'[]','active','wait-expression',1,1)",
+            (alice[1],),
+        )
+    incoming = event("wait-completed", text="我明天要答辩，有点紧张", sender="bob")
     replies = plugin.participate(incoming)
     request = await anext(replies)
     assert await first is None
@@ -531,6 +594,12 @@ async def test_new_input_resumes_an_actual_wait_without_restarting(native_planne
         default=lambda m: m.model_dump(),
     )
     assert "new_messages" in serialized and "我明天要答辩，有点紧张" in serialized
+    contexts = json.loads(json.dumps(provider.text_chat.await_args.kwargs["contexts"], default=lambda m: m.model_dump()))
+    resumed = json.loads(next(m["content"] for m in reversed(contexts) if m["role"] == "tool"))
+    assert resumed["person_profiles"][0]["sender_id"] == "bob"
+    assert "老师" in resumed["person_profiles"][0]["profile"]
+    assert "学生" not in resumed["person_profiles"][0]["profile"]
+    assert [t["id"] for t in resumed["expression_candidates"]] == [7]
     await plugin.apply_participation(incoming, request)
     await send_reply(plugin, incoming, "紧张正常，先把开头顺一遍")
     with pytest.raises(StopAsyncIteration):
