@@ -6,7 +6,7 @@
 
 `query_image_memory(msg_id,image_index)` 只能定位本轮真实原生来源，复核作者、会话和人格；返回当前图片描述及原 SDK 的历史同图、相似图和关联记忆。没有描述模型时明确返回不可用，不能假装看懂图片。当前出现从历史候选中排除，跨会话不能通过猜图片编号访问。
 
-图片相似检索使用配置的 AstrBot 原生 DashScope 多模态嵌入提供商及其真实图片请求协议，复用已有提供商配置；未配置时仍支持真实字节哈希同图召回，不把描述文字向量当作图片向量。二进制 `input=[{"image":"data:image/...;base64,..."}]` 及返回结构已按[官方 API 文档](https://help.aliyun.com/en/model-studio/multimodal-embedding-api-reference)核对。沿用原三张探测图片、同图一致性与不同图可区分性验证、嵌入指纹和向量空间隔离。图片模型与正文/文字嵌入模型分别配置，不保存密钥。GIF 在原资产存储适配中保留原始动画，嵌入使用首帧并纳入协议指纹。
+图片相似检索使用 AstrBot 原生 DashScope 多模态嵌入提供商，或硅基流动的 `Qwen/Qwen3-VL-Embedding-8B` 提供商；未配置时仍支持真实字节哈希同图召回，不把描述文字向量当作图片向量。二进制 `input=[{"image":"data:image/...;base64,..."}]` 请求参照[阿里云](https://help.aliyun.com/en/model-studio/multimodal-embedding-api-reference)和[硅基流动](https://api-docs.siliconflow.cn/docs/api/embeddings-post)文档。沿用原三张探测图片、同图一致性与不同图可区分性验证、嵌入指纹和向量空间隔离。图片模型与正文/文字嵌入模型分别配置，不保存密钥。GIF 在原资产存储适配中保留原始动画，嵌入使用首帧并纳入协议指纹。
 
 写入、描述存储和后台图片索引受当前应用、学习、作者及原生会话权限控制；暂停学习后不再领取图片索引任务。图片模型请求前后复核权限。原 SDK 资产发布、恢复、租约及删除联动保持原实现。宿主自身图片理解和工具权限仍由 AstrBot 负责。
 

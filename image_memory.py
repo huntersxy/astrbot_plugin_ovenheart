@@ -9,6 +9,7 @@ import io
 import json
 from contextvars import ContextVar
 from types import SimpleNamespace
+from urllib.parse import urlparse
 
 from astrbot.api import logger
 from astrbot.core.message.components import Image
@@ -73,7 +74,7 @@ class NativeImageAssetStore(ImageAssetStore):
 
 
 class NativeImageEmbedding:
-    """Use the configured native DashScope provider's real binary-image protocol."""
+    """Use an AstrBot provider for the supported binary-image protocols."""
 
     def __init__(self, plugin, state, provider_id, loop):
         self.plugin, self.state = plugin, state
@@ -82,8 +83,12 @@ class NativeImageEmbedding:
         )
         self.loop = loop
         cfg = self.provider.provider_config if self.provider else {}
-        self.model = self.provider.get_model() if self.provider else ""
-        self.available = cfg.get("type") == "dashscope_embedding" and any(
+        self.model = (
+            cfg.get("embedding_model") or self.provider.get_model()
+            if self.provider
+            else ""
+        )
+        self.dashscope = cfg.get("type") == "dashscope_embedding" and any(
             marker in self.model
             for marker in (
                 "vl-embedding",
@@ -91,6 +96,13 @@ class NativeImageEmbedding:
                 "tongyi-embedding-vision",
             )
         )
+        self.siliconflow = (
+            cfg.get("type") == "openai_embedding"
+            and urlparse(str(cfg.get("embedding_api_base") or "")).hostname
+            == "api.siliconflow.cn"
+            and self.model.lower() == "qwen/qwen3-vl-embedding-8b"
+        )
+        self.available = self.dashscope or self.siliconflow
         self.key = hashlib.sha256(
             json.dumps(
                 [
@@ -107,12 +119,10 @@ class NativeImageEmbedding:
     async def embed_image(self, image_bytes, *, mime_type, **_):
         if not self.available:
             raise RuntimeError(
-                "图片相似检索需要配置原生 DashScope 多模态嵌入模型；当前可使用同图记忆。"
+                "图片相似检索需要配置 DashScope 或硅基流动多模态嵌入模型；当前可使用同图记忆。"
             )
 
         async def request():
-            from dashscope import MultiModalEmbedding
-
             if not await self.allowed(image_job.get()):
                 raise ValueError("当前图片模型权限已撤销。")
 
@@ -127,37 +137,47 @@ class NativeImageEmbedding:
             else:
                 image_mime = mime_type
             provider = self.provider
-            kwargs = {
-                "base_address": provider.base_url,
-                "headers": provider.request_headers.copy(),
-            }
-            dimensions = provider.provider_config.get("embedding_dimensions")
-            if dimensions:
-                kwargs["dimension"] = int(dimensions)
-            response = await asyncio.to_thread(
-                MultiModalEmbedding.call,
-                model=self.model,
-                input=[
-                    {
-                        "image": f"data:{image_mime};base64,"
-                        + base64.b64encode(payload).decode()
-                    }
-                ],
-                api_key=provider.api_key,
-                **kwargs,
-            )
-            if response.status_code != 200:
-                raise RuntimeError(f"图片嵌入请求失败（HTTP {response.status_code}）。")
-            rows = response.output.get("embeddings", []) if response.output else []
-            if len(rows) != 1:
+            image = f"data:{image_mime};base64," + base64.b64encode(payload).decode()
+            if self.siliconflow:
+                response = await provider.client.embeddings.create(
+                    model=self.model,
+                    input=[{"image": image}],
+                    **provider._embedding_kwargs(),
+                )
+                rows = response.data
+                provider_name = "siliconflow"
+                vector = rows[0].embedding if len(rows) == 1 else None
+            else:
+                from dashscope import MultiModalEmbedding
+
+                kwargs = {
+                    "base_address": provider.base_url,
+                    "headers": provider.request_headers.copy(),
+                }
+                dimensions = provider.provider_config.get("embedding_dimensions")
+                if dimensions:
+                    kwargs["dimension"] = int(dimensions)
+                response = await asyncio.to_thread(
+                    MultiModalEmbedding.call,
+                    model=self.model,
+                    input=[{"image": image}],
+                    api_key=provider.api_key,
+                    **kwargs,
+                )
+                if response.status_code != 200:
+                    raise RuntimeError(f"图片嵌入请求失败（HTTP {response.status_code}）。")
+                rows = response.output.get("embeddings", []) if response.output else []
+                provider_name = "dashscope"
+                vector = rows[0]["embedding"] if len(rows) == 1 else None
+            if vector is None:
                 raise ValueError("图片嵌入返回的向量数量不正确。")
             if not await self.allowed(image_job.get()):
                 raise ValueError("图片请求期间应用或学习权限已撤销。")
             return SimpleNamespace(
-                embedding=rows[0]["embedding"],
+                embedding=vector,
                 model_identifier=self.model,
                 model_name=self.model,
-                api_provider="dashscope",
+                api_provider=provider_name,
                 request_protocol_hash=self.key,
             )
 

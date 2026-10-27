@@ -501,7 +501,7 @@ function renderSettings(target = "#content") {
       ${switchField("memory_enabled", "参考长期记忆", "控制学习和回复时是否参考记忆；关闭后已有记忆仍保留。", s.memory_enabled)}
       ${switchField("native_memory_enabled", "A_memorix 通用记忆", "保存有真实来源的段落和关系，按会话和人格隔离；使用原版 BM25、图谱与双路检索，配置嵌入模型后启用双向量池。可独立于 LivingMemory 运行。", s.native_memory_enabled)}
       ${switchField("image_memory_enabled", "图片记忆", "保存当前会话中真实出现的图片、作者原话和模型观察；图片描述沿用宿主的图片描述模型，暂停学习后不再入库。", s.image_memory_enabled)}
-      ${field("image_embedding_provider_id", "图片嵌入模型 ID", s.image_embedding_provider_id ?? "", "原生 DashScope 多模态嵌入提供商；留空仍可回忆同一图片。", {type:"text"})}
+      ${field("image_embedding_provider_id", "图片嵌入模型 ID", s.image_embedding_provider_id ?? "", "AstrBot 的 DashScope 或硅基流动多模态嵌入提供商 ID；留空仍可回忆同一图片。", {type:"text"})}
       ${switchField("memory_feedback_enabled", "根据后续反馈维护记忆", "跟进已召回记忆的实际后续反馈，按原版窗口和置信度判断是否修正。暂停学习时停止更新，调用计入辅助用量。", s.memory_feedback_enabled)}
 <div class="number-fields">${field("memory_top_k", "最多参考记忆", s.memory_top_k, "条；仅在学习时检索", {type:"number", min:1, max:8})}${field("memory_runtime_max_rooms", "同时驻留的记忆会话", s.memory_runtime_max_rooms ?? 4, "个；超出时关闭不活跃会话，记忆保留，下次访问自动加载", {type:"number", min:1, max:16})}</div>
 <h3>检索模型</h3><p class="muted">以下两项与表达检索共用，修改后两处同步生效。</p>

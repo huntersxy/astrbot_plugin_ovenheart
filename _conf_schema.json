@@ -121,7 +121,7 @@
   },
   "image_embedding_provider_id": {
     "type": "string", "description": "图片嵌入模型 ID", "default": "",
-    "hint": "使用 AstrBot 原生 DashScope 多模态嵌入提供商，例如 qwen VL embedding；留空仍支持同图记忆，不用文字向量伪装图片相似度。"
+    "hint": "使用 AstrBot 的 DashScope 多模态嵌入，或硅基流动 OpenAI 嵌入提供商的 Qwen/Qwen3-VL-Embedding-8B。留空仍支持同图记忆。"
   },
   "person_memory_enabled": {
     "description": "人物记忆与画像",
