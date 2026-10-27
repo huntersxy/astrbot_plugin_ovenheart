@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock
 import pytest
 from astrbot.api.provider import ProviderRequest
 
-from astrbot_plugin_ovenheart.settings import (
+from astrbot_plugin_ovenheart.core.settings import (
     DEFAULTS,
     learning_blocked,
     validate_settings,

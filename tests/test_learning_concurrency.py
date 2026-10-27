@@ -7,8 +7,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from astrbot_plugin_ovenheart.learning import LEARNING_REVIEW_SYSTEM
-from astrbot_plugin_ovenheart.settings import (
+from astrbot_plugin_ovenheart.core.learning import LEARNING_REVIEW_SYSTEM
+from astrbot_plugin_ovenheart.core.settings import (
     LEARNING_REVIEW_RESERVE_SECONDS,
     LEARNING_TIMEOUT_SECONDS,
 )

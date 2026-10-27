@@ -10,10 +10,10 @@ from unittest.mock import AsyncMock
 import pytest
 from astrbot.core.provider.entities import TokenUsage
 
-from astrbot_plugin_ovenheart.auxiliary import AuxiliaryUsage
-from astrbot_plugin_ovenheart.participation import planner_message
-from astrbot_plugin_ovenheart.prompts import auxiliary_payload
-from astrbot_plugin_ovenheart.settings import DEFAULTS
+from astrbot_plugin_ovenheart.chat.participation import planner_message
+from astrbot_plugin_ovenheart.core.auxiliary import AuxiliaryUsage
+from astrbot_plugin_ovenheart.core.prompts import auxiliary_payload
+from astrbot_plugin_ovenheart.core.settings import DEFAULTS
 from tests.test_participation import decision, requests
 from tests.test_retrieval import TRAITS
 from tests.test_runtime import event, sources
@@ -351,7 +351,7 @@ async def test_real_learning_requests_keep_both_passes_and_same_system_prefix(pl
 async def test_background_model_deadline_cancels_transport_without_affecting_reply(
     plugin, monkeypatch
 ):
-    from astrbot_plugin_ovenheart.auxiliary import BACKGROUND_MODEL_TIMEOUTS
+    from astrbot_plugin_ovenheart.core.auxiliary import BACKGROUND_MODEL_TIMEOUTS
 
     cancelled = asyncio.Event()
 

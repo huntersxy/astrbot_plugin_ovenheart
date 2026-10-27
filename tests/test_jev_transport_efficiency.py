@@ -10,9 +10,7 @@ import pytest_asyncio
 from aiohttp import web
 
 root = Path(__file__).resolve().parents[1]
-source = root / "jev_transport.py"
-if not source.exists():
-    source = root / "features/jev_transport.py"
+source = root / "integrations/jev_transport.py"
 spec = importlib.util.spec_from_file_location("tested_jev_transport", source)
 transport = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(transport)

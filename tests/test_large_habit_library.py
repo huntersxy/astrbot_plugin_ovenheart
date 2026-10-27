@@ -7,7 +7,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from astrbot_plugin_ovenheart.settings import SHARED_SCOPE
+from astrbot_plugin_ovenheart.core.settings import SHARED_SCOPE
 from tests.test_store import seed
 
 pytest_plugins = [

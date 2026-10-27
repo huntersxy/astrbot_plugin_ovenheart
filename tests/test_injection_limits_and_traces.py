@@ -7,9 +7,9 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 from astrbot.api.provider import ProviderRequest
 
-from astrbot_plugin_ovenheart.participation import bound_reply_messages
-from astrbot_plugin_ovenheart.retrieval import HabitRetriever
-from astrbot_plugin_ovenheart.settings import DEFAULTS
+from astrbot_plugin_ovenheart.chat.participation import bound_reply_messages
+from astrbot_plugin_ovenheart.core.retrieval import HabitRetriever
+from astrbot_plugin_ovenheart.core.settings import DEFAULTS
 from tests.test_participation import decision, requests
 from tests.test_runtime import completion, event, sources
 

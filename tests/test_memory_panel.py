@@ -2,7 +2,7 @@
 
 import pytest
 
-from astrbot_plugin_ovenheart.memory_panel import MemoryPanel, read_console
+from astrbot_plugin_ovenheart.memory.memory_panel import MemoryPanel, read_console
 from tests.test_room_memory import SyntheticEmbedding, material
 
 pytest_plugins = ["tests.test_room_memory"]

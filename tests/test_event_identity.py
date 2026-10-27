@@ -8,7 +8,7 @@ import pytest
 
 pytest.importorskip("astrbot.api")
 
-from astrbot_plugin_ovenheart.participation import event_source  # noqa: E402
+from astrbot_plugin_ovenheart.chat.participation import event_source  # noqa: E402
 from tests.test_participation import decision, requests  # noqa: E402
 from tests.test_runtime import event  # noqa: E402
 

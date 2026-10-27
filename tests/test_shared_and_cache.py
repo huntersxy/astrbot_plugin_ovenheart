@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock
 import pytest
 from astrbot.api.provider import ProviderRequest
 
-from astrbot_plugin_ovenheart.settings import DEFAULTS, KINDS, SHARED_SCOPE
+from astrbot_plugin_ovenheart.core.settings import DEFAULTS, KINDS, SHARED_SCOPE
 from tests.test_runtime import api_call, completion, event, sources
 
 pytest_plugins = ["tests.test_runtime"]
@@ -88,7 +88,7 @@ async def test_recent_expression_hints_are_send_stage_scoped_and_keep_selector_p
 async def test_recent_expressions_expire_after_three_exposures_time_or_edit(
     shared_plugin, monkeypatch
 ):
-    from astrbot_plugin_ovenheart import store as store_module
+    from astrbot_plugin_ovenheart.core import store as store_module
 
     plugin = shared_plugin
     scope = await sources(plugin)

@@ -8,8 +8,8 @@ from unittest.mock import AsyncMock
 import pytest
 from aiohttp import web
 
-from astrbot_plugin_ovenheart.jev import participation_state
-from astrbot_plugin_ovenheart.jev_transport import SystemOne, probability
+from astrbot_plugin_ovenheart.integrations.jev import participation_state
+from astrbot_plugin_ovenheart.integrations.jev_transport import SystemOne, probability
 from tests.test_participation import requests
 from tests.test_runtime import api_call, event, sources
 

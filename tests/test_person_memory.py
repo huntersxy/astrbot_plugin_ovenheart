@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from astrbot_plugin_ovenheart.person_memory import PersonMemory
+from astrbot_plugin_ovenheart.memory.person_memory import PersonMemory
 from tests.test_participation import requests
 from tests.test_runtime import api_call, event
 

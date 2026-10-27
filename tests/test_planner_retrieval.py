@@ -9,7 +9,7 @@ import pytest
 
 pytest.importorskip("astrbot.api")
 
-from astrbot_plugin_ovenheart.participation import ParticipationFormatError  # noqa: E402
+from astrbot_plugin_ovenheart.chat.participation import ParticipationFormatError  # noqa: E402
 from tests.test_participation import requests  # noqa: E402
 from tests.test_runtime import event, sources  # noqa: E402
 

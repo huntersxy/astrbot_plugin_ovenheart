@@ -1,63 +1,16 @@
-# A_memorix source port
+# A_memorix source attribution
 
-Source: Mai-with-u/MaiBot `5c7637e6913c84d1c3d5e742fa9e95a7e70d3501`,
-`src/A_memorix/core`. Authors: A-Dawn/A_memorix and MaiBot contributors.
-The upstream AGPL-3.0 license is retained in `LICENSE-AGPL-3.0.txt`.
+Source: Mai-with-u/MaiBot commit `5c7637e6913c84d1c3d5e742fa9e95a7e70d3501`, `src/A_memorix/core`.
+Authors: A-Dawn/A_memorix and MaiBot contributors. The upstream AGPL-3.0 text is retained in `LICENSE-AGPL-3.0.txt`.
 
-`source_manifest.json` lists every upstream Git-blob SHA-256 and the corresponding
-ported file hash. The fact state machine, SQLite schema/storage, profile snapshot,
-classification, evidence ownership checks and text projection are upstream code.
+`source_manifest.json` records upstream Git-blob hashes and ported-file hashes. The fact ledger, profile services, metadata storage, graph/vector retrieval, summaries, episodes and image runtime are namespaced here for use by AstrBot.
 
-Modifications by OvenHeart contributors, 2026-10-25:
+OvenHeart contributors made the following adaptations:
 
-- Host imports use the explicit namespaced `host.py` bridge, never a global `src`
-  module or changes to an installed MaiBot/AstrBot/LivingMemory repository.
-- `person_profile_service.py` uses deferred annotations and its automatic graph
-  retriever constructor returns `None`. Optional graph/vector retrieval is not
-  included in this stage; the native adapter uses the original fact-ledger path.
-- Package initializers avoid eager imports of heavy vector/embedding modules.
-- `host.py` is the AstrBot identity/database/model interface adapter. The native
-  fact-only profile path does not require a classification model call; extraction
-  uses OvenHeart's metered auxiliary model path.
+- `host.py`, `sdk_host.py` and `summary_host.py` bind native identities, paths, authorized model transports and source snapshots. They do not register a global `src` package or modify an installed third-party repository.
+- Package initializers defer heavy imports. `embedding/__init__.py` points to `memory/memory_embedding.py`; providers and credentials remain owned by AstrBot.
+- Runtime lifecycle disk work uses the retained cancellation-aware `run_sync_work` boundary. Sparse warmup and vector loading run outside the host message event loop.
+- `memory/native_memory_kernel.py` supplies effective-version filtering, native episode evidence, bounded SQLite caches and transaction ownership around correction/graph persistence.
+- `utils/async_work.py` comes from MaiBot `src/common/async_work.py` under GPL-3.0; its license is retained in the parent MaiBot directory. Other A_memorix files retain AGPL-3.0.
 
-Remaining episode, image, and complete general long-term memory runtime work
-is tracked in `docs/design/maibot-parity.md`. Their SQLite tables being present is
-not a claim that those pipelines are integrated.
-
-The next local stage adds the original dual-path retrieval, graph and vector
-stores (37 upstream modules total). Their algorithms are unchanged; logger imports
-are namespaced. `storage/__init__.py` loads heavy modules lazily, and the explicit
-embedding transport in `memory_embedding.py` calls AstrBot's configured provider.
-The complete SDK runtime, ingestion/feedback orchestration and migration remain
-in progress; see `docs/design/room-memory.md`.
-
-The consolidation stage adds 9 original modules (46 modules total) and 3 original
-localized summary prompt templates. SummaryImporter retains the original
-incremental-review, model parsing, checkpoints and metadata/entity/relation writes;
-only its embedding runtime preflight is replaced by the initialized native room
-check. NativeSummaryImporter extends vector persistence and native provenance.
-EpisodeService, EpisodeSegmentationService, EpisodeRetrievalService and the
-MemoryIngestService job/lease/revision publication algorithms remain unchanged.
-The latter's complete service is ported, but only its episode job path is bound
-in this stage; this is not a claim that SDKMemoryKernel is integrated.
-`summary_host.py` binds real authorized retained text and AstrBot model transport.
-Image evidence is not yet supplied by this native text boundary.
-
-The SDK stage adds the original kernel and its runtime services/dependencies,
-plus localized correction-planning templates: 110 upstream Python modules and
-6 templates are now recorded. Host imports are rewritten within this namespace;
-SDK algorithms are otherwise unchanged and checked against the pinned Git blobs.
-`sdk_host.py` binds native paths, provider transport and snapshots. The original
-`src/common/async_work.py` helper is included under `utils/async_work.py` with
-its GPL-3.0 license (see the parent MaiBot license); it retains cancellation
-cleanup semantics. Other A_memorix source remains under the retained AGPL-3.0.
-The native subclass in `native_memory_kernel.py` wraps target supersession in
-a managed transaction to fix a reproduced database lock before graph persistence.
-The original correction service is not modified. Kernel-level validation is not
-production takeover; the remaining native routing/migration work is documented
-in `docs/design/native-memory-kernel.md`.
-
-The AstrBot lifecycle adapter also sends sparse warmup, vector-store construction
-and vector loading through the original cancellation-aware `run_sync_work`
-boundary. The initialization order, algorithms and storage ownership remain the
-same; cold-room disk work no longer blocks other rooms on the memory event loop.
+AstrBot adapters are maintained in the repository's `memory/` package. Source selection and retained licenses remain auditable independently of application data.

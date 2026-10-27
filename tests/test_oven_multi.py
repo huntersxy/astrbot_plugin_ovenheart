@@ -9,7 +9,7 @@ import pytest
 from astrbot.api.provider import ProviderRequest
 from astrbot.core.message.components import At
 
-from astrbot_plugin_ovenheart import oven_multi
+from astrbot_plugin_ovenheart.integrations import oven_multi
 from tests.test_participation import decision, requests
 from tests.test_structured_conversation import incoming
 

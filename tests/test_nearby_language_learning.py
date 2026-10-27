@@ -8,7 +8,7 @@ from types import SimpleNamespace
 
 from astrbot.core.message.components import Reply
 
-from astrbot_plugin_ovenheart.learning import LEARNING_RHYTHM_RULE
+from astrbot_plugin_ovenheart.core.learning import LEARNING_RHYTHM_RULE
 from tests.test_runtime import event
 
 pytest_plugins = ["tests.test_runtime"]

@@ -2,7 +2,7 @@
 
 import pytest
 
-from astrbot_plugin_ovenheart.learning import parse_candidates
+from astrbot_plugin_ovenheart.core.learning import parse_candidates
 from tests.test_learning import candidates
 from tests.test_runtime import api_call, event, sources
 

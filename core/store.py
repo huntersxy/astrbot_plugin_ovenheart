@@ -1,0 +1,2097 @@
+"""Transactional SQLite persistence, with all disk work off the event loop."""
+
+from __future__ import annotations
+
+import asyncio
+import hashlib
+import json
+import sqlite3
+import time
+from pathlib import Path
+from uuid import uuid4
+
+from .learning import jargon_term, normalize_quote, review_issue
+from .settings import (
+    KINDS,
+    PROFILE_DEFAULTS,
+    SHARED_SCOPE,
+    learning_blocked,
+)
+
+
+class Store:
+    """Serialize writes; serve reply/Panel reads from consistent WAL snapshots."""
+
+    def __init__(self, path: Path):
+        self.path = path
+        self.lock = asyncio.Lock()
+
+    async def call(self, operation: str, *args):
+        """Run one atomic operation in a worker thread.
+
+        Args:
+            operation: Name of an internal database operation.
+            *args: Arguments to that operation.
+
+        Returns:
+            The result produced by the operation.
+        """
+        if operation in {"guidance", "scope_profile"}:
+            return await self.read(operation, *args)
+        async with self.lock:
+            # Shield the worker so cancellation cannot release the lock mid-write.
+            task = asyncio.create_task(
+                asyncio.to_thread(self._transaction, operation, args)
+            )
+            try:
+                return await asyncio.shield(task)
+            except asyncio.CancelledError:
+                await task
+                raise
+
+    async def read(self, operation: str, *args):
+        """Consistent WAL reads never queue behind the write lock."""
+        if operation not in {
+            "state",
+            "library",
+            "auxiliary_usage",
+            "scope_profile",
+            "guidance",
+            "panel_history",
+            "history_detail",
+        }:
+            raise ValueError("Unsupported Panel read")
+        if operation == "auxiliary_usage" and args:
+            raise ValueError("Usage writes must use a transaction")
+        return await asyncio.to_thread(self._read, operation, args)
+
+    def _read(self, operation, args):
+        connection = sqlite3.connect(
+            self.path.as_uri() + "?mode=ro", uri=True, timeout=2
+        )
+        connection.row_factory = sqlite3.Row
+        try:
+            connection.execute("PRAGMA query_only=ON")
+            connection.execute("BEGIN")
+            return getattr(self, operation)(connection, *args)
+        finally:
+            connection.close()
+
+    def scope_profile(self, db, scope):
+        row = db.execute("SELECT * FROM scopes WHERE id=?", (scope,)).fetchone()
+        return dict(row) | {"profile": json.loads(row["profile"])} if row else None
+
+    def person_memory_inputs(self, db, scope, sender):
+        return [
+            dict(row)
+            for row in db.execute(
+                "SELECT id,source_id,sender,text,created FROM messages WHERE scope=? AND sender=? ORDER BY id",
+                (scope, sender),
+            )
+        ]
+
+    def room_memory_inputs(self, db, scope):
+        return [
+            dict(row)
+            for row in db.execute(
+                "SELECT id,source_id,sender,text,created FROM messages WHERE scope=? ORDER BY id",
+                (scope,),
+            )
+        ]
+
+    def _transaction(self, operation: str, args: tuple):
+        """Open, commit or roll back, and close one database transaction.
+
+        Args:
+            operation: Internal method name.
+            args: Operation arguments.
+
+        Returns:
+            The database operation result.
+        """
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        connection = sqlite3.connect(self.path, timeout=10)
+        connection.row_factory = sqlite3.Row
+        try:
+            with connection:
+                return getattr(self, operation)(connection, *args)
+        finally:
+            connection.close()
+
+    def initialize(self, db):
+        """Create the current schema and release interrupted learning jobs."""
+        db.executescript("""
+            PRAGMA journal_mode=WAL;
+            CREATE TABLE IF NOT EXISTS applications (
+                            id INTEGER PRIMARY KEY, scope TEXT NOT NULL, event_key TEXT NOT NULL UNIQUE,
+                            trait_ids TEXT NOT NULL, mode TEXT NOT NULL, created REAL NOT NULL
+                        );
+            CREATE TABLE IF NOT EXISTS auxiliary_usage (
+                            bucket INTEGER NOT NULL, stage TEXT NOT NULL, provider TEXT NOT NULL, model TEXT NOT NULL,
+                            calls INTEGER NOT NULL, successes INTEGER NOT NULL, errors INTEGER NOT NULL,
+                            cancelled INTEGER NOT NULL, reported INTEGER NOT NULL,
+                            input_cached INTEGER NOT NULL, input_other INTEGER NOT NULL, output INTEGER NOT NULL,
+                            system_chars INTEGER NOT NULL, prompt_chars INTEGER NOT NULL, seconds REAL NOT NULL,
+                            PRIMARY KEY(bucket,stage,provider,model)
+                        );
+            CREATE TABLE IF NOT EXISTS context_heads (
+                            scope TEXT PRIMARY KEY, cid TEXT NOT NULL, epoch TEXT NOT NULL,
+                            sequence INTEGER NOT NULL DEFAULT 0, updated REAL NOT NULL
+                        , native_seen INTEGER NOT NULL DEFAULT 0);
+            CREATE TABLE IF NOT EXISTS context_messages (
+                            scope TEXT NOT NULL, epoch TEXT NOT NULL, source TEXT NOT NULL,
+                            sequence INTEGER NOT NULL, created REAL NOT NULL, payload TEXT NOT NULL,
+                            PRIMARY KEY(scope,epoch,source)
+                        );
+            CREATE TABLE IF NOT EXISTS decisions (
+                            id INTEGER PRIMARY KEY, scope TEXT NOT NULL, action TEXT NOT NULL,
+                            confidence REAL NOT NULL, reason TEXT NOT NULL, intent TEXT NOT NULL,
+                            mode TEXT NOT NULL, outcome TEXT NOT NULL, created REAL NOT NULL,
+                            room TEXT NOT NULL DEFAULT ''
+                        );
+            CREATE TABLE IF NOT EXISTS embeddings (
+                            trait_id INTEGER NOT NULL, provider TEXT NOT NULL, digest TEXT NOT NULL,
+                            vector TEXT NOT NULL, PRIMARY KEY(trait_id, provider)
+                        );
+            CREATE TABLE IF NOT EXISTS learning_runtime (
+                            scope TEXT PRIMARY KEY, attempted REAL NOT NULL DEFAULT 0,
+                            failures INTEGER NOT NULL DEFAULT 0, draft_key TEXT NOT NULL DEFAULT '',
+                            draft TEXT NOT NULL DEFAULT '[]', draft_created REAL NOT NULL DEFAULT 0
+                        );
+            CREATE TABLE IF NOT EXISTS learning_sender_state (
+                            scope TEXT NOT NULL, sender TEXT NOT NULL, last_order INTEGER NOT NULL,
+                            updated REAL NOT NULL, PRIMARY KEY(scope,sender)
+                        );
+            CREATE TABLE IF NOT EXISTS messages (
+                            id INTEGER PRIMARY KEY, scope TEXT NOT NULL, source_id TEXT NOT NULL,
+                            sender TEXT NOT NULL, text TEXT NOT NULL, created REAL NOT NULL,
+                            consumed INTEGER NOT NULL DEFAULT 0,
+                            reply_context TEXT NOT NULL DEFAULT '{}', UNIQUE(scope, source_id)
+                        );
+            CREATE TABLE IF NOT EXISTS participation_state (
+                            scope TEXT PRIMARY KEY, last_reply REAL NOT NULL DEFAULT 0
+                        );
+            CREATE TABLE IF NOT EXISTS prompts (
+                            key TEXT PRIMARY KEY, body TEXT NOT NULL, updated REAL NOT NULL
+                        );
+            CREATE TABLE IF NOT EXISTS revisions (
+                            id INTEGER PRIMARY KEY, scope TEXT NOT NULL, action TEXT NOT NULL,
+                            snapshot TEXT NOT NULL, created REAL NOT NULL
+                        );
+            CREATE TABLE IF NOT EXISTS runs (
+                            id INTEGER PRIMARY KEY, scope TEXT NOT NULL, status TEXT NOT NULL,
+                            started REAL NOT NULL, finished REAL, count INTEGER NOT NULL DEFAULT 0,
+                            message TEXT NOT NULL DEFAULT '', memory TEXT NOT NULL DEFAULT ''
+                        , review TEXT NOT NULL DEFAULT '{}');
+            CREATE TABLE IF NOT EXISTS scopes (
+                            id TEXT PRIMARY KEY, umo TEXT NOT NULL, persona TEXT NOT NULL,
+                            label TEXT NOT NULL, profile TEXT NOT NULL, updated REAL NOT NULL
+                        );
+            CREATE TABLE IF NOT EXISTS settings (id INTEGER PRIMARY KEY CHECK(id=1), value TEXT NOT NULL);
+            CREATE TABLE IF NOT EXISTS trait_aliases (
+                            scope TEXT NOT NULL, fingerprint TEXT NOT NULL, trait_id INTEGER NOT NULL,
+                            PRIMARY KEY(scope, fingerprint)
+                        );
+            CREATE TABLE IF NOT EXISTS traits (
+                            id INTEGER PRIMARY KEY, scope TEXT NOT NULL, kind TEXT NOT NULL,
+                            situation TEXT NOT NULL, content TEXT NOT NULL, confidence REAL NOT NULL,
+                            evidence TEXT NOT NULL, status TEXT NOT NULL, fingerprint TEXT NOT NULL,
+                            created REAL NOT NULL, updated REAL NOT NULL, support_count INTEGER NOT NULL DEFAULT 1, evidence_count INTEGER NOT NULL DEFAULT 0, last_seen REAL NOT NULL DEFAULT 0, use_count INTEGER NOT NULL DEFAULT 0, last_used REAL NOT NULL DEFAULT 0, rating INTEGER NOT NULL DEFAULT 0, manual INTEGER NOT NULL DEFAULT 0, meaning_stage INTEGER NOT NULL DEFAULT 0, examples TEXT NOT NULL DEFAULT '[]', review_audit TEXT NOT NULL DEFAULT '{}', UNIQUE(scope, fingerprint)
+                        );
+            CREATE TABLE IF NOT EXISTS turn_traces (
+                            id INTEGER PRIMARY KEY, scope TEXT NOT NULL, event_key TEXT NOT NULL UNIQUE,
+                            status TEXT NOT NULL, details TEXT NOT NULL, created REAL NOT NULL,
+                            updated REAL NOT NULL
+                        );
+            CREATE INDEX IF NOT EXISTS context_messages_order ON context_messages(scope,epoch,created,sequence);
+            CREATE INDEX IF NOT EXISTS decisions_room_created ON decisions(room,created);
+            CREATE INDEX IF NOT EXISTS decisions_scope ON decisions(scope,created);
+            CREATE INDEX IF NOT EXISTS learning_sender_order ON learning_sender_state(scope,last_order);
+            CREATE INDEX IF NOT EXISTS learning_sender_updated ON learning_sender_state(updated);
+            CREATE INDEX IF NOT EXISTS messages_pending ON messages(scope, consumed, id);
+            CREATE INDEX IF NOT EXISTS messages_pending_sender ON messages(scope, consumed, sender);
+            CREATE INDEX IF NOT EXISTS revisions_panel ON revisions(scope,id,action,created);
+            CREATE INDEX IF NOT EXISTS runs_scope_id ON runs(scope,id);
+            CREATE INDEX IF NOT EXISTS traits_scope ON traits(scope, status);
+            CREATE INDEX IF NOT EXISTS turn_traces_scope ON turn_traces(scope,id);
+        """)
+        db.execute(
+            "INSERT OR IGNORE INTO scopes VALUES (?, '', '所有人格', '全会话共用', ?, ?)",
+            (SHARED_SCOPE, json.dumps(PROFILE_DEFAULTS), time.time()),
+        )
+        db.execute(
+            "UPDATE runs SET status='error', finished=?, message=? WHERE status='running'",
+            (time.time(), "插件重启中断了学习，素材已保留，可重新学习。"),
+        )
+        return {
+            row["scope"]: {"attempted": row["attempted"], "failures": row["failures"]}
+            for row in db.execute(
+                "SELECT scope,attempted,failures FROM learning_runtime"
+            )
+        }
+
+    def chat_context(self, db, scope, cid, record=None, seed=None, native_seen=None):
+        """Restore or append the one bounded room ledger, isolated by native dialog."""
+        head = db.execute(
+            "SELECT * FROM context_heads WHERE scope=?", (scope,)
+        ).fetchone()
+        reset = bool(
+            head
+            and (
+                (head["cid"] and head["cid"] != cid)
+                or (head["native_seen"] and native_seen is False)
+            )
+        )
+        fresh = head is None
+        if fresh or reset:
+            db.execute("DELETE FROM context_messages WHERE scope=?", (scope,))
+            db.execute(
+                "INSERT OR REPLACE INTO context_heads(scope,cid,epoch,sequence,updated) VALUES (?,?,?,0,?)",
+                (scope, cid, uuid4().hex, time.time()),
+            )
+            head = db.execute(
+                "SELECT * FROM context_heads WHERE scope=?", (scope,)
+            ).fetchone()
+        elif head["cid"] != cid:
+            db.execute("UPDATE context_heads SET cid=? WHERE scope=?", (cid, scope))
+        if native_seen is not None:
+            db.execute(
+                "UPDATE context_heads SET native_seen=? WHERE scope=?",
+                (int(native_seen), scope),
+            )
+        epoch, sequence = head["epoch"], head["sequence"]
+        for incoming in [*(seed or []), *([record] if record else [])]:
+            previous = db.execute(
+                "SELECT payload FROM context_messages WHERE scope=? AND epoch=? AND source=?",
+                (scope, epoch, incoming["source"]),
+            ).fetchone()
+            if previous:
+                previous = json.loads(previous[0])
+                value = previous | incoming
+                value.update(sequence=previous["sequence"], time=previous["time"])
+                if previous.get("media"):
+                    value["media"] = previous["media"]
+            else:
+                sequence += 1
+                value = incoming | {"sequence": sequence}
+            db.execute(
+                "INSERT OR REPLACE INTO context_messages VALUES (?,?,?,?,?,?)",
+                (
+                    scope,
+                    epoch,
+                    value["source"],
+                    value["sequence"],
+                    value["time"],
+                    json.dumps(value, ensure_ascii=False),
+                ),
+            )
+        db.execute(
+            "UPDATE context_heads SET sequence=?,updated=? WHERE scope=?",
+            (sequence, time.time(), scope),
+        )
+        db.execute(
+            "DELETE FROM context_messages WHERE scope=? AND epoch=? AND source NOT IN (SELECT source FROM context_messages WHERE scope=? AND epoch=? ORDER BY created DESC,sequence DESC LIMIT 160)",
+            (scope, epoch, scope, epoch),
+        )
+        # Bound inactive room metadata as well as each room's rows.
+        db.execute(
+            "DELETE FROM context_messages WHERE scope IN (SELECT scope FROM context_heads ORDER BY updated DESC LIMIT -1 OFFSET 128)"
+        )
+        db.execute(
+            "DELETE FROM context_heads WHERE scope NOT IN (SELECT scope FROM context_heads ORDER BY updated DESC LIMIT 128)"
+        )
+        messages = [
+            json.loads(r[0])
+            for r in db.execute(
+                "SELECT payload FROM context_messages WHERE scope=? AND epoch=? ORDER BY created,sequence",
+                (scope, epoch),
+            )
+        ]
+        return {
+            "epoch": epoch,
+            "cid": cid,
+            "sequence": sequence,
+            "messages": messages,
+            "fresh": fresh,
+            "reset": reset,
+        }
+
+    def context_media(self, db, scope, epoch, source, media):
+        """Update an existing media slot; late completions cannot recreate records."""
+        row = db.execute(
+            "SELECT payload FROM context_messages WHERE scope=? AND epoch=? AND source=?",
+            (scope, epoch, source),
+        ).fetchone()
+        if not row:
+            return None
+        value = json.loads(row[0]) | {"media": media}
+        db.execute(
+            "UPDATE context_messages SET payload=? WHERE scope=? AND epoch=? AND source=?",
+            (json.dumps(value, ensure_ascii=False), scope, epoch, source),
+        )
+        return value
+
+    def clear_chat_context(self, db, scope, cid):
+        """Honor native /reset without allowing later bootstrap of cleared rows."""
+        db.execute("DELETE FROM context_messages WHERE scope=?", (scope,))
+        db.execute(
+            "INSERT OR REPLACE INTO context_heads(scope,cid,epoch,sequence,updated,native_seen) VALUES (?,?,?,0,?,0)",
+            (scope, cid, uuid4().hex, time.time()),
+        )
+        return self.chat_context(db, scope, cid)
+
+    def settings(self, db, patch=None):
+        """Read or patch runtime settings.
+
+        Args:
+            db: Open database connection.
+            patch: Validated settings patch, or None for a read.
+
+        Returns:
+            Persisted settings overrides.
+        """
+        row = db.execute("SELECT value FROM settings WHERE id=1").fetchone()
+        settings = json.loads(row[0]) if row else {}
+        if patch is not None:
+            settings.update(patch)
+            db.execute(
+                "INSERT OR REPLACE INTO settings VALUES (1, ?)", (json.dumps(settings),)
+            )
+        return settings
+
+    def sync_config(self, db, config, values, initial=False, patch=None):
+        """Persist native configuration and its transaction-guard mirror together.
+
+        Args:
+            db: Open database connection.
+            config: Host configuration object, or a dictionary in isolated fixtures.
+            values: Complete validated host settings.
+            initial: Reset in-flight settings guards when loading native configuration.
+            patch: Settings changed during this instance, for stale-batch guards.
+
+        Returns:
+            Complete effective native settings.
+
+        Raises:
+            ValueError: If the settings are internally inconsistent.
+            OSError: If the native configuration cannot be persisted.
+        """
+        if values["min_messages"] > values["batch_size"]:
+            raise ValueError("自动学习的素材门槛不能大于每批素材数量。")
+        if values["min_evidence"] > values["batch_size"]:
+            raise ValueError("最少证据数量不能大于每批素材数量。")
+        # Only changes made during this instance can supersede an in-flight batch.
+        # A reload starts with the host values, never with old database overrides.
+        guards = (
+            {} if initial else self.settings(db) | (values if patch is None else patch)
+        )
+        db.execute(
+            "INSERT OR REPLACE INTO settings VALUES (1, ?)",
+            (json.dumps(guards, ensure_ascii=False),),
+        )
+        previous = dict(config)
+        try:
+            # AstrBot shallow-merges top-level keys; persist complete values,
+            # never the Panel patch (which is only used for batch guards above).
+            snapshot = json.loads(json.dumps(values))
+            if callable(getattr(config, "save_config", None)):
+                config.save_config(snapshot)
+            else:
+                config.update(snapshot)
+        except Exception:
+            # AstrBot updates its dictionary before attempting its atomic file write.
+            config.clear()
+            config.update(previous)
+            raise
+        return values
+
+    def prune(self, db, retention_days):
+        """Expire raw observations and derived speaker-sampling metadata.
+
+        Args:
+            db: Open database connection.
+            retention_days: Raw observation retention period.
+        """
+        db.execute(
+            "DELETE FROM messages WHERE created < ?",
+            (time.time() - retention_days * 86400,),
+        )
+        db.execute(
+            "DELETE FROM context_messages WHERE created < ?",
+            (time.time() - retention_days * 86400,),
+        )
+        db.execute(
+            "DELETE FROM learning_sender_state WHERE updated < ?",
+            (time.time() - retention_days * 86400,),
+        )
+        db.execute(
+            "DELETE FROM turn_traces WHERE created < ?",
+            (time.time() - retention_days * 86400,),
+        )
+        db.execute(
+            "DELETE FROM auxiliary_usage WHERE bucket<?", (time.time() - 30 * 86400,)
+        )
+        db.execute(
+            "UPDATE learning_runtime SET draft_key='',draft='[]',draft_created=0 WHERE draft_created>0 AND draft_created<?",
+            (time.time() - 3600,),
+        )
+
+    def capture(
+        self,
+        db,
+        scope,
+        umo,
+        persona,
+        label,
+        source_id,
+        sender,
+        text,
+        settings,
+        context_only=False,
+        reply_to=None,
+    ):
+        """Retain a bounded, deduplicated observation for a session and persona.
+
+        Args:
+            db: Open database connection.
+            scope: Stable session/persona key.
+            umo: AstrBot unified message origin.
+            persona: AstrBot persona name or sentinel.
+            label: Human-readable session label.
+            source_id: Platform message identity.
+            sender: Platform sender identity.
+            text: Truncated plain text observation.
+            settings: Effective runtime settings.
+            context_only: Check scoped learning permission without retaining raw text.
+            reply_to: Explicit native quote retained only with an eligible source.
+
+        Returns:
+            Whether an observation was inserted or context-only capture is permitted.
+        """
+        now = time.time()
+        settings = settings | self.settings(db)
+        if not settings["enabled"] or not settings["learning_enabled"]:
+            return False
+        if learning_blocked(umo, settings):
+            return False
+        if (
+            not context_only
+            and settings["target_senders"]
+            and sender not in settings["target_senders"]
+        ):
+            return False
+        if sender in settings["blocked_senders"]:
+            return False
+        profile_scope = scope if settings["session_isolation"] else SHARED_SCOPE
+        if context_only:
+            row = db.execute(
+                "SELECT profile FROM scopes WHERE id=?", (profile_scope,)
+            ).fetchone()
+            return not row or json.loads(row[0])["learning_enabled"]
+        db.execute(
+            "INSERT INTO scopes VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET label=excluded.label, updated=excluded.updated",
+            (scope, umo, persona, label, json.dumps(PROFILE_DEFAULTS), now),
+        )
+        profile = json.loads(
+            db.execute(
+                "SELECT profile FROM scopes WHERE id=?", (profile_scope,)
+            ).fetchone()[0]
+        )
+        if not profile["learning_enabled"]:
+            return False
+        cursor = db.execute(
+            "INSERT OR IGNORE INTO messages(scope, source_id, sender, text, created, reply_context) VALUES (?, ?, ?, ?, ?, ?)",
+            (
+                scope,
+                source_id,
+                sender,
+                text,
+                now,
+                json.dumps(
+                    normalize_quote(reply_to, settings["blocked_senders"]) or {},
+                    ensure_ascii=False,
+                ),
+            ),
+        )
+        db.execute(
+            "DELETE FROM messages WHERE created < ?",
+            (now - settings["retention_days"] * 86400,),
+        )
+        db.execute(
+            "DELETE FROM messages WHERE scope=? AND id NOT IN (SELECT id FROM messages WHERE scope=? ORDER BY id DESC LIMIT ?)",
+            (scope, scope, settings["max_messages_per_scope"]),
+        )
+        return cursor.rowcount == 1
+
+    def state(
+        self,
+        db,
+        scope=None,
+        target_senders=None,
+        blocked_senders=None,
+        shared=False,
+        view="full",
+    ):
+        """Load the bounded dashboard state or one scope's detail.
+
+        Args:
+            db: Open database connection.
+            scope: Optional selected scope.
+            target_senders: Current learning targets for pending-material counts.
+            blocked_senders: Excluded users, overriding learning targets.
+            shared: Read the shared profile and learning space for this source.
+
+        Returns:
+            A serializable dashboard state.
+        """
+        targets = list(dict.fromkeys(target_senders or []))
+        sender_filter = (
+            " AND m.sender IN (" + ",".join("?" for _ in targets) + ")"
+            if targets
+            else ""
+        )
+        blocked = list(
+            dict.fromkeys(
+                [
+                    *(blocked_senders or []),
+                    *self.settings(db).get("blocked_senders", []),
+                ]
+            )
+        )
+        if blocked:
+            sender_filter += (
+                " AND m.sender NOT IN (" + ",".join("?" for _ in blocked) + ")"
+            )
+        scopes = [
+            dict(row)
+            for row in db.execute(
+                f"SELECT s.*, (SELECT COUNT(*) FROM messages m WHERE m.scope=s.id AND m.consumed=0{sender_filter}) pending, (SELECT COUNT(*) FROM traits t WHERE t.scope=s.id AND t.status='pending') review_count FROM scopes s ORDER BY updated DESC",
+                (*targets, *blocked),
+            )
+        ]
+        for item in scopes:
+            item["profile"] = json.loads(item["profile"])
+        common = next(item for item in scopes if item["id"] == SHARED_SCOPE)
+        all_scopes = scopes
+        scopes = [item for item in scopes if item["id"] != SHARED_SCOPE]
+        if not scope and view != "full" and scopes:
+            scope = scopes[0]["id"]
+        if shared:
+            scopes = [item | {"profile": common["profile"]} for item in scopes]
+        result = {
+            "scopes": scopes,
+            "shared_scope": common,
+            "effect_scope": SHARED_SCOPE if shared else scope,
+            "active_count": db.execute(
+                "SELECT COUNT(*) FROM traits WHERE status='active' AND ((kind='jargon' AND scope=? AND scope<>?) OR (kind<>'jargon' AND (scope=? OR ?)))",
+                (scope, SHARED_SCOPE, scope, shared),
+            ).fetchone()[0],
+            "review_count": sum(item["review_count"] for item in all_scopes),
+            "scope": None,
+            "traits": [],
+            "runs": [],
+            "revisions": [],
+            "applications": [],
+            "turn_traces": [],
+            "decisions": [],
+        }
+        selected = next((s for s in scopes if s["id"] == scope), None)
+        if scope == SHARED_SCOPE or (shared and not scopes):
+            selected = common
+        trait_scope = SHARED_SCOPE if shared else scope
+        if shared and selected:
+            selected = selected | {"profile": common["profile"]}
+        if selected:
+            result["scope"] = selected
+            if view not in {"full", "history"}:
+                return result
+        if selected:
+            if view == "full":
+                result["traits"] = self._state_traits(db, scope, trait_scope, shared)
+            result["runs"] = [
+                dict(row) | {"review": json.loads(row["review"])}
+                for row in db.execute(
+                    "SELECT * FROM runs WHERE scope=? ORDER BY id DESC LIMIT 30",
+                    (scope,),
+                )
+            ]
+            result["revisions"] = [
+                dict(row)
+                for row in db.execute(
+                    "SELECT id, scope, action, created FROM revisions WHERE scope IN (?, ?) ORDER BY id DESC LIMIT 30",
+                    (trait_scope, scope),
+                )
+            ]
+            result["applications"] = [
+                dict(row) | {"trait_ids": json.loads(row["trait_ids"])}
+                for row in db.execute(
+                    "SELECT * FROM applications WHERE scope=? ORDER BY id DESC LIMIT 30",
+                    (scope,),
+                )
+            ]
+            result["decisions"] = [
+                dict(row)
+                for row in db.execute(
+                    "SELECT * FROM decisions WHERE scope=? ORDER BY id DESC LIMIT 30",
+                    (scope,),
+                )
+            ]
+            result["turn_traces"] = [
+                dict(row) | {"details": json.loads(row["details"])}
+                for row in db.execute(
+                    "SELECT * FROM turn_traces WHERE scope=? ORDER BY id DESC LIMIT 30",
+                    (scope,),
+                )
+            ]
+        return result
+
+    def _state_traits(self, db, scope, trait_scope, shared):
+        """Legacy full-state payload remains available to existing consumers."""
+        traits = [
+            dict(row)
+            for row in db.execute(
+                "SELECT * FROM traits WHERE "
+                + (
+                    "((scope=? AND kind<>'jargon') OR (scope=? AND scope<>? AND kind='jargon'))"
+                    if shared
+                    else "scope=?"
+                )
+                + " ORDER BY updated DESC LIMIT 1000",
+                (trait_scope, scope, SHARED_SCOPE) if shared else (trait_scope,),
+            )
+        ]
+        for trait in traits:
+            trait["evidence"] = json.loads(trait["evidence"])
+            trait["examples"] = json.loads(trait["examples"])
+        return traits
+
+    @staticmethod
+    def _history_spec(section):
+        specs = {
+            "learning": (
+                "runs",
+                "status",
+                {"success", "running", "error"},
+                "id,scope,status,started,finished,count,substr(message,1,240) message,json_extract(review,'$.passed') passed,json_extract(review,'$.flagged') flagged",
+            ),
+            "participation": (
+                "decisions",
+                "outcome",
+                {"admitted", "waiting", "observed", "limited", "cancelled", "error"},
+                "id,scope,action,confidence,mode,outcome,created,substr(reason,1,240) reason",
+            ),
+            "replies": (
+                "turn_traces",
+                "status",
+                {"prepared", "send_hook", "cancelled", "empty_response"},
+                "id,scope,status,created,updated,json_extract(details,'$.route') route,json_extract(details,'$.target_sender') target_sender",
+            ),
+            "applications": (
+                "applications",
+                "mode",
+                set(),
+                "id,scope,mode,created,json_array_length(trait_ids) trait_count",
+            ),
+            "versions": ("revisions", "action", set(), "id,scope,action,created"),
+        }
+        if section not in specs:
+            raise ValueError("记录分类无效，请重新选择。")
+        return specs[section]
+
+    @staticmethod
+    def _history_scopes(db, scope, section, shared):
+        if (
+            not isinstance(scope, str)
+            or len(scope) != 24
+            or not db.execute("SELECT 1 FROM scopes WHERE id=?", (scope,)).fetchone()
+        ):
+            raise ValueError("请先选择有效的来源会话。")
+        return list(
+            dict.fromkeys(
+                [scope, SHARED_SCOPE] if shared and section == "versions" else [scope]
+            )
+        )
+
+    def panel_history(
+        self,
+        db,
+        scope,
+        section="learning",
+        status="all",
+        offset=0,
+        anchor=0,
+        shared=False,
+    ):
+        """Read one bounded category; an ID anchor keeps older pages stable."""
+        table, column, choices, fields = self._history_spec(section)
+        if status != "all" and status not in choices:
+            raise ValueError("记录状态筛选无效。")
+        if (
+            type(offset) is not int
+            or not 0 <= offset < 2**63
+            or type(anchor) is not int
+            or not 0 <= anchor < 2**63
+        ):
+            raise ValueError("记录页码无效。")
+        scopes = self._history_scopes(db, scope, section, shared)
+        where = "scope IN (" + ",".join("?" for _ in scopes) + ")"
+        counts = {}
+        for kind in (
+            "learning",
+            "participation",
+            "replies",
+            "applications",
+            "versions",
+        ):
+            other = self._history_spec(kind)[0]
+            owners = self._history_scopes(db, scope, kind, shared)
+            counts[kind] = db.execute(
+                "SELECT COUNT(*) FROM "
+                + other
+                + " WHERE scope IN ("
+                + ",".join("?" for _ in owners)
+                + ")",
+                owners,
+            ).fetchone()[0]
+        if not anchor:
+            anchor = db.execute(
+                f"SELECT COALESCE(MAX(id),0) FROM {table} WHERE {where}", scopes
+            ).fetchone()[0]
+        values = [*scopes, anchor]
+        where += " AND id<=?"
+        if status != "all":
+            where += f" AND {column}=?"
+            values.append(status)
+        total = db.execute(
+            f"SELECT COUNT(*) FROM {table} WHERE {where}", values
+        ).fetchone()[0]
+        offset = min(offset // 10, max(0, (total - 1) // 10)) * 10
+        items = [
+            dict(r)
+            for r in db.execute(
+                f"SELECT {fields} FROM {table} WHERE {where} ORDER BY id DESC LIMIT 10 OFFSET ?",
+                (*values, offset),
+            )
+        ]
+        return {
+            "scope": scope,
+            "section": section,
+            "status": status,
+            "items": items,
+            "total": total,
+            "offset": offset,
+            "limit": 10,
+            "anchor": anchor,
+            "counts": counts,
+        }
+
+    def history_detail(self, db, scope, section, identifier, shared=False):
+        table, _, _, _ = self._history_spec(section)
+        owners = self._history_scopes(db, scope, section, shared)
+        if type(identifier) is not int or not 0 < identifier < 2**63:
+            raise ValueError("记录编号无效。")
+        fields = "id,scope,action,created" if section == "versions" else "*"
+        row = db.execute(
+            f"SELECT {fields} FROM {table} WHERE id=? AND scope IN ("
+            + ",".join("?" for _ in owners)
+            + ")",
+            (identifier, *owners),
+        ).fetchone()
+        if not row:
+            raise ValueError("这条记录已清理或不属于当前会话，请刷新后重选。")
+        result = dict(row)
+        for key in ("review", "details", "trait_ids"):
+            if key in result:
+                result[key] = json.loads(result[key])
+        return result
+
+    def library(
+        self, db, scope="all", kind="all", status="pending", offset=0, review="all"
+    ):
+        """Read a paginated library with independent extraction and review signals.
+
+        Args:
+            db: Open database connection.
+            scope: One native scope, or all scopes.
+            kind: Learned habit category.
+            status: Activation status, independent of review verdict.
+            offset: Zero-based page offset.
+            review: Review verdict or concern category filter.
+
+        Returns:
+            Entries, full-filter counts and stable pagination metadata.
+
+        Raises:
+            ValueError: If filters or pagination are invalid.
+        """
+        if (
+            not isinstance(scope, str)
+            or (scope != "all" and len(scope) != 24)
+            or kind not in ("all", "personality", "expression", "jargon", "behavior")
+            or status not in ("all", "pending", "active", "rejected", "disabled")
+            or review
+            not in (
+                "all",
+                "passed",
+                "flagged",
+                "unknown",
+                "learning_target",
+                "delivery",
+                "identity",
+                "merge",
+                "scope",
+                "evidence",
+                "other",
+            )
+            or type(offset) is not int
+            or offset < 0
+        ):
+            raise ValueError("学习库筛选无效，请刷新后重试。")
+        filters, values = [], []
+        for column, value in (("scope", scope), ("kind", kind), ("status", status)):
+            if value != "all":
+                filters.append(f"t.{column}=?")
+                values.append(value)
+        where = " AND ".join(filters) or "1=1"
+        verdict = "CASE json_extract(t.review_audit,'$.approved') WHEN 1 THEN 'passed' WHEN 0 THEN 'flagged' ELSE 'unknown' END"
+        counts = {"passed": 0, "flagged": 0, "unknown": 0}
+        issues = {}
+        for row in db.execute(
+            f"SELECT {verdict} verdict,json_extract(t.review_audit,'$.issue') issue,COUNT(*) count FROM traits t JOIN scopes s ON s.id=t.scope WHERE {where} GROUP BY verdict,issue",
+            values,
+        ):
+            counts[row["verdict"]] += row["count"]
+            if row["verdict"] == "flagged":
+                key = row["issue"] or "other"
+                issues[key] = issues.get(key, 0) + row["count"]
+        if review in counts:
+            where += f" AND ({verdict})=?"
+            values.append(review)
+        elif review != "all":
+            where += " AND json_extract(t.review_audit,'$.approved')=0 AND json_extract(t.review_audit,'$.issue')=?"
+            values.append(review)
+        total = db.execute(
+            f"SELECT COUNT(*) FROM traits t JOIN scopes s ON s.id=t.scope WHERE {where}",
+            values,
+        ).fetchone()[0]
+        offset = min(offset // 100, max(0, (total - 1) // 100)) * 100
+        traits = []
+        for row in db.execute(
+            f"SELECT t.*,s.label,s.persona FROM traits t JOIN scopes s ON s.id=t.scope WHERE {where} ORDER BY t.updated DESC,t.id DESC LIMIT 100 OFFSET ?",
+            (*values, offset),
+        ):
+            trait = dict(row)
+            audit = json.loads(trait.pop("review_audit"))
+            if audit and not audit.get("issue") and audit.get("approved") is False:
+                audit["issue"] = review_issue(audit.get("reason", ""))
+            trait.update(
+                evidence=json.loads(trait["evidence"]),
+                examples=json.loads(trait["examples"]),
+                review=audit or None,
+            )
+            traits.append(trait)
+        return {
+            "traits": traits,
+            "total": total,
+            "offset": offset,
+            "review_counts": counts,
+            "issue_counts": issues,
+        }
+
+    def review_batch(self, db, entries, status):
+        """Apply a bounded operator selection atomically with stale-entry checks.
+
+        Args:
+            db: Open database connection.
+            entries: At most 100 IDs, owner scopes and observed update times.
+            status: Explicit operator activation or rejection decision.
+
+        Returns:
+            Number of changed entries.
+
+        Raises:
+            ValueError: If the selection is stale, malformed or not pending.
+        """
+        if (
+            status not in ("active", "rejected")
+            or not isinstance(entries, list)
+            or not 1 <= len(entries) <= 100
+        ):
+            raise ValueError("请选择本页最多 100 条待审核条目。")
+        selected, seen = [], set()
+        for entry in entries:
+            if (
+                not isinstance(entry, dict)
+                or set(entry) != {"id", "scope", "updated"}
+                or type(entry["id"]) is not int
+                or entry["id"] in seen
+                or not isinstance(entry["scope"], str)
+                or type(entry["updated"]) not in (int, float)
+            ):
+                raise ValueError("批量审核条目无效，请刷新后重选。")
+            seen.add(entry["id"])
+            row = db.execute(
+                "SELECT * FROM traits WHERE id=? AND scope=?",
+                (entry["id"], entry["scope"]),
+            ).fetchone()
+            if (
+                row is None
+                or row["updated"] != entry["updated"]
+                or row["status"] != "pending"
+            ):
+                raise ValueError("所选条目已改变，本次全部未处理；请刷新后重选。")
+            if (
+                status == "active"
+                and row["kind"] == "jargon"
+                and row["scope"] == SHARED_SCOPE
+            ):
+                raise ValueError("旧共用词汇来源不明，不能批量生效。")
+            selected.append(dict(row))
+        now = time.time()
+        for scope in dict.fromkeys(row["scope"] for row in selected):
+            profile = db.execute(
+                "SELECT profile FROM scopes WHERE id=?", (scope,)
+            ).fetchone()
+            if profile is None:
+                raise ValueError("所属会话已改变，请刷新后重选。")
+            snapshot = {
+                "profile": json.loads(profile[0]),
+                "traits": [
+                    dict(t)
+                    for t in db.execute("SELECT * FROM traits WHERE scope=?", (scope,))
+                ],
+            }
+            db.execute(
+                "INSERT INTO revisions(scope,action,snapshot,created) VALUES (?,'review_batch',?,?)",
+                (scope, json.dumps(snapshot, ensure_ascii=False), now),
+            )
+            db.execute(
+                "DELETE FROM revisions WHERE scope=? AND id NOT IN (SELECT id FROM revisions WHERE scope=? ORDER BY id DESC LIMIT 30)",
+                (scope, scope),
+            )
+        db.executemany(
+            "UPDATE traits SET status=?,manual=1,updated=? WHERE id=?",
+            [(status, now, row["id"]) for row in selected],
+        )
+        return len(selected)
+
+    def touch_scope(self, db, scope, umo, persona, label):
+        """Create a scope even when raw-message learning is disabled.
+
+        Args:
+            db: Open database connection.
+            scope: Session/persona key.
+            umo: Native message origin.
+            persona: Effective host persona identifier.
+            label: Conversation display name.
+        """
+        db.execute(
+            "INSERT INTO scopes VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET label=excluded.label, updated=excluded.updated",
+            (scope, umo, persona, label, json.dumps(PROFILE_DEFAULTS), time.time()),
+        )
+
+    def participation_gate(self, db, scope, settings, room="", followup=False):
+        """Check observed replies and live reservations without counting cancellations.
+
+        Args:
+            db: Open database connection.
+            scope: Session/persona key.
+            settings: Effective timing and quota settings.
+            room: Physical group key, shared across isolated native sessions.
+            followup: Controller-validated same-member continuation. Only bypasses
+                cooldown when the operator also enables this feature.
+
+        Returns:
+            An empty string when another autonomous reply may be admitted.
+        """
+        now = time.time()
+        row = db.execute(
+            "SELECT MAX(last_reply) FROM participation_state WHERE scope=? OR scope=?",
+            (scope, room),
+        ).fetchone()
+        reservation = db.execute(
+            "SELECT MAX(created),COUNT(*) FROM decisions WHERE (scope=? OR (room<>'' AND room=?)) AND outcome='admitted' AND mode<>'direct' AND created>?",
+            (scope, room, now - 3600),
+        ).fetchone()
+        # Admission rows reserve both limits atomically. Cancelling a stale
+        # request releases that reservation without erasing a real send hook.
+        last_reply = max(row[0] or 0, reservation[0] or 0)
+        if (
+            last_reply
+            and settings.get("participation_rhythm", "fixed") == "fixed"
+            and now - last_reply < settings["participation_cooldown"]
+            and not (followup and settings["participation_followup"])
+        ):
+            return "距离上次回复或参与尝试过近，继续旁观。"
+        if reservation[1] >= settings["participation_hourly_limit"]:
+            return "已达到本小时自主参与上限，继续旁观。"
+        return ""
+
+    def decide(self, db, scope, plan, mode, outcome, settings):
+        """Log a decision and reserve automatic participation atomically.
+
+        Args:
+            db: Open database connection.
+            scope: Session/persona key.
+            plan: Validated decision and human-readable reason.
+            mode: Observe or auto mode at commit time.
+            outcome: Outcome such as admitted, wait, observed or error.
+            settings: Effective settings for final quota and pause checks.
+
+        Returns:
+            Decision identifier and the actual outcome.
+        """
+        if outcome == "admitted":
+            settings = settings | self.settings(db)
+            profile = db.execute(
+                "SELECT profile FROM scopes WHERE id=?", (scope,)
+            ).fetchone()
+            reason = (
+                ""
+                if plan.get("direct")
+                else self.participation_gate(
+                    db,
+                    scope,
+                    settings,
+                    plan.get("room", ""),
+                    plan.get("followup", False),
+                )
+            )
+            if plan.get("followup") and not settings["participation_followup"]:
+                reason = "连续接话已关闭，取消排队中的回复。"
+            if (
+                not settings["enabled"]
+                or (not plan.get("direct") and settings["participation_mode"] != "auto")
+                or not settings["apply_enabled"]
+                or not profile
+                or not json.loads(profile[0])["apply_enabled"]
+            ):
+                reason = "自主参与已关闭或当前会话暂停应用，取消回复。"
+            if reason:
+                outcome = "cancelled"
+                plan = plan | {"reason": reason}
+        cursor = db.execute(
+            "INSERT INTO decisions(scope,action,confidence,reason,intent,mode,outcome,created,room) VALUES (?,?,?,?,?,?,?,?,?)",
+            (
+                scope,
+                plan["action"],
+                plan["confidence"],
+                plan["reason"],
+                plan.get("intent", ""),
+                mode,
+                outcome,
+                time.time(),
+                plan.get("room", ""),
+            ),
+        )
+        # Keep every admission inside the rolling hour even if many decisions arrive.
+        db.execute(
+            "DELETE FROM decisions WHERE scope=? AND id NOT IN (SELECT id FROM decisions WHERE scope=? ORDER BY id DESC LIMIT 100) AND (outcome<>'admitted' OR created<?)",
+            (scope, scope, time.time() - 3600),
+        )
+        return {"id": cursor.lastrowid, "outcome": outcome}
+
+    def cancel_decision(self, db, scope, identifier, reason):
+        """Mark an admission cancelled if its native request became stale in queue.
+
+        Args:
+            db: Open database connection.
+            scope: Session/persona key.
+            identifier: Original admitted decision identifier.
+            reason: Actionable cancellation reason without provider internals.
+        """
+        db.execute(
+            "UPDATE decisions SET outcome='cancelled',reason=? WHERE scope=? AND id=? AND outcome='admitted'",
+            (reason, scope, identifier),
+        )
+
+    def note_reply(self, db, scope, room=""):
+        """Update autonomous cooldown after any native host send-stage reply.
+
+        Args:
+            db: Open database connection.
+            scope: Session/persona key.
+            room: Optional physical-group cooldown shared across isolated sessions.
+        """
+        for key in {scope, room} - {""}:
+            db.execute(
+                "INSERT INTO participation_state VALUES (?, ?) ON CONFLICT(scope) DO UPDATE SET last_reply=excluded.last_reply",
+                (key, time.time()),
+            )
+
+    def prompt_overrides(self, db, patch=None):
+        """Read or replace operator-edited prompt templates.
+
+        Args:
+            db: Open database connection.
+            patch: Template bodies keyed by identifier; a None body restores the
+                shipped default by deleting the override.
+
+        Returns:
+            Persisted overrides keyed by template identifier.
+        """
+        if patch is not None:
+            for key, body in patch.items():
+                if body is None:
+                    db.execute("DELETE FROM prompts WHERE key=?", (key,))
+                else:
+                    db.execute(
+                        "INSERT OR REPLACE INTO prompts VALUES (?, ?, ?)",
+                        (key, body, time.time()),
+                    )
+        return {
+            row["key"]: row["body"]
+            for row in db.execute("SELECT key, body FROM prompts")
+        }
+
+    def batch(
+        self, db, scope, size, target_senders=None, blocked_senders=None, min_evidence=2
+    ):
+        """Read bounded source materials, balancing explicitly selected speakers.
+
+        Args:
+            db: Open database connection.
+            scope: Session/persona key.
+            size: Batch size limit.
+            target_senders: Current eligible senders, including after settings changes.
+            blocked_senders: Users excluded even if also selected as targets.
+            min_evidence: Size of each speaker's evidence group when multiple
+                speakers are explicitly selected; capacity still bounds coverage.
+
+        Returns:
+            Retained observations in arrival order, with private sampling
+            positions for successful-commit ordering, never model evidence.
+        """
+        targets = list(dict.fromkeys(target_senders or []))
+        sender_filter = (
+            " AND sender IN (" + ",".join("?" for _ in targets) + ")" if targets else ""
+        )
+        blocked = list(
+            dict.fromkeys(
+                [
+                    *(blocked_senders or []),
+                    *self.settings(db).get("blocked_senders", []),
+                ]
+            )
+        )
+        if blocked:
+            sender_filter += (
+                " AND sender NOT IN (" + ",".join("?" for _ in blocked) + ")"
+            )
+        messages = []
+        order = (
+            "(ROW_NUMBER() OVER (PARTITION BY sender ORDER BY id) - 1) / ?, "
+            "COALESCE((SELECT last_order FROM learning_sender_state s WHERE s.scope=messages.scope AND s.sender=messages.sender),0), id"
+            if len(targets) > 1
+            else "id"
+        )
+        for row in db.execute(
+            f"SELECT * FROM messages WHERE scope=? AND consumed=0{sender_filter} ORDER BY {order} LIMIT ?",
+            (
+                scope,
+                *targets,
+                *blocked,
+                *([max(1, min_evidence)] if len(targets) > 1 else []),
+                size,
+            ),
+        ):
+            item = dict(row)
+            item["_sampling_order"] = len(messages)
+            try:
+                quote = normalize_quote(json.loads(item.pop("reply_context")), blocked)
+            except (ValueError, TypeError):
+                quote = None
+            if quote:
+                item["reply_to"] = quote
+            messages.append(item)
+        return sorted(messages, key=lambda m: m["id"])
+
+    def guidance(self, db, scope, shared=False, include_inactive=False):
+        """Load only the fields needed on the reply path, excluding evidence bodies.
+
+        Args:
+            db: Open database connection.
+            scope: Source session/persona key.
+            shared: Share non-jargon habits and profile, keeping jargon source-local.
+            include_inactive: Include stored decisions for learning references.
+                Shared learning may merge only shared non-jargon entries, while
+                runtime application retains its existing cross-source sharing.
+
+        Returns:
+            Profile/source origin, all eligible compact ranking records and
+            recent expression IDs, without evidence bodies or dashboard history.
+        """
+        row = db.execute(
+            "SELECT profile, (SELECT umo FROM scopes WHERE id=?) AS source_umo FROM scopes WHERE id=?",
+            (scope, SHARED_SCOPE if shared else scope),
+        ).fetchone()
+        traits = [
+            dict(t) | {"examples": json.loads(t["examples"])}
+            for t in db.execute(
+                "SELECT id,kind,situation,content,confidence,status,created,updated,support_count,evidence_count,last_seen,use_count,rating,meaning_stage,examples FROM traits WHERE (status='active' OR ?) AND ((kind='jargon' AND scope=? AND scope<>?) OR (kind<>'jargon' AND (scope=? OR ?))) ORDER BY updated DESC, id DESC",
+                (
+                    include_inactive,
+                    scope,
+                    SHARED_SCOPE,
+                    SHARED_SCOPE if shared else scope,
+                    shared and not include_inactive,
+                ),
+            )
+        ]
+        expressions = {
+            t["id"]: t["updated"]
+            for t in traits
+            if t["kind"] == "expression" and t["status"] == "active"
+        }
+        recent = list(
+            dict.fromkeys(
+                identifier
+                for application in db.execute(
+                    "SELECT trait_ids,created FROM applications WHERE scope=? AND created>? ORDER BY id DESC LIMIT 3",
+                    (scope, time.time() - 600),
+                )
+                for identifier in json.loads(application["trait_ids"])
+                if identifier in expressions
+                and expressions[identifier] <= application["created"]
+            )
+        )
+        return {
+            "scope": {"profile": json.loads(row[0]), "umo": row["source_umo"] or ""}
+            if row
+            else None,
+            "traits": traits,
+            "recent_expression_ids": recent,
+        }
+
+    def start_run(self, db, scope):
+        """Create a running batch record.
+
+        Args:
+            db: Open database connection.
+            scope: Session/persona key.
+
+        Returns:
+            New run identifier.
+        """
+        now = time.time()
+        db.execute(
+            "INSERT INTO learning_runtime(scope,attempted) VALUES (?,?) ON CONFLICT(scope) DO UPDATE SET attempted=excluded.attempted",
+            (scope, now),
+        )
+        return db.execute(
+            "INSERT INTO runs(scope, status, started) VALUES (?, 'running', ?)",
+            (scope, now),
+        ).lastrowid
+
+    def learning_draft(self, db, scope, fingerprint, traits=None):
+        """Read or replace a short-lived validated, unreviewed extraction draft.
+
+        Args:
+            db: Open database connection.
+            scope: Native source scope, never the shared habit pool.
+            fingerprint: Opaque digest of exact inputs, code and provider settings.
+            traits: Validated extraction candidates to save, or None to read.
+
+        Returns:
+            Cached traits on a matching read, None on a miss, or whether a write
+            fit the bounded cache. A draft never consumes sources or activates habits.
+        """
+        now = time.time()
+        if traits is not None:
+            value = json.dumps(traits, ensure_ascii=False)
+            if len(value) > 250000:
+                return False
+            cursor = db.execute(
+                "UPDATE learning_runtime SET draft_key=?,draft=?,draft_created=? WHERE scope=?",
+                (fingerprint, value, now, scope),
+            )
+            return cursor.rowcount == 1
+        row = db.execute(
+            "SELECT draft,draft_created FROM learning_runtime WHERE scope=? AND draft_key=?",
+            (scope, fingerprint),
+        ).fetchone()
+        return (
+            json.loads(row["draft"])
+            if row and 0 <= now - row["draft_created"] <= 3600
+            else None
+        )
+
+    def finish_run(
+        self,
+        db,
+        run_id,
+        scope,
+        messages,
+        traits,
+        settings,
+        memory,
+        error="",
+        expected_profile=None,
+        expected_targets=None,
+        review=None,
+        expected_review_enabled=None,
+        expected_blocked=None,
+        shared=False,
+        expected_isolation=None,
+        expected_prompts=None,
+    ):
+        """Commit candidates and consume exactly the successful batch atomically.
+
+        Args:
+            db: Open database connection.
+            run_id: Run being completed.
+            scope: Session/persona key.
+            messages: Exact batch snapshot including private sampling positions
+                when available, never newly arrived messages.
+            traits: Validated candidates.
+            settings: Activation settings at commit time.
+            memory: Integration status description.
+            error: Actionable failure description, if any.
+            expected_profile: Identity anchor at the start of generation.
+            expected_targets: Learning targets at the start of generation.
+            review: Server-assembled semantic review audit and safe failure timing.
+                A retry_backoff failure marker persists the scheduler streak.
+            expected_review_enabled: Review switch captured before generation.
+            expected_blocked: Blacklist captured before generation.
+            shared: Share non-jargon learning while keeping jargon and sources local.
+            expected_isolation: Mode captured before generation.
+            expected_prompts: Prompt overrides captured before generation.
+
+        Returns:
+            Count of newly inserted candidates.
+        """
+        profile_scope = SHARED_SCOPE if shared else scope
+        now = time.time()
+        added = 0
+        reinforced = set()
+        batch_support = {}
+        run = db.execute(
+            "SELECT status FROM runs WHERE id=? AND scope=?", (run_id, scope)
+        ).fetchone()
+        if not run:
+            raise ValueError("学习批次不存在或不属于当前会话。")
+        if run["status"] != "running":
+            return 0
+        if not error:
+            if (
+                expected_prompts is not None
+                and self.prompt_overrides(db) != expected_prompts
+            ):
+                raise ValueError("提示词在学习期间已修改，旧结果未保存，素材保留。")
+            settings = settings | self.settings(db)
+            source_scope = db.execute(
+                "SELECT umo FROM scopes WHERE id=?", (scope,)
+            ).fetchone()
+            if source_scope and learning_blocked(source_scope["umo"], settings):
+                raise ValueError("当前群聊已加入学习黑名单，结果未保存、素材保留。")
+            if (
+                expected_isolation is not None
+                and settings["session_isolation"] != expected_isolation
+            ):
+                raise ValueError("会话隔离模式在学习期间已修改，结果未保存，素材保留。")
+            if not any(settings[f"learn_{kind}"] for kind in KINDS):
+                raise ValueError("全部学习类别已关闭，结果未保存，素材保留。")
+            if (
+                expected_review_enabled is not None
+                and settings["learning_review_enabled"] != expected_review_enabled
+            ):
+                raise ValueError(
+                    "入库自检开关在提交前已修改，旧结果未保存、素材已保留。"
+                )
+            if expected_targets is not None and set(settings["target_senders"]) != set(
+                expected_targets
+            ):
+                raise ValueError("学习对象在学习期间已修改，旧结果未保存，素材保留。")
+            if (
+                expected_blocked is not None
+                and set(settings["blocked_senders"]) != set(expected_blocked)
+            ) or any(m["sender"] in settings["blocked_senders"] for m in messages):
+                raise ValueError("学习黑名单在学习期间已修改，旧结果未保存，素材保留。")
+            profile = json.loads(
+                db.execute(
+                    "SELECT profile FROM scopes WHERE id=?", (profile_scope,)
+                ).fetchone()[0]
+            )
+            if (
+                not settings["enabled"]
+                or not settings["learning_enabled"]
+                or not profile["learning_enabled"]
+            ):
+                raise ValueError("学习过程中已暂停，结果未保存，素材保留。")
+            if expected_profile is not None and any(
+                profile[k] != expected_profile[k]
+                for k in ("identity", "reply_style", "behavior")
+            ):
+                raise ValueError("人格底稿在学习期间已修改，旧结果未保存，请重新学习。")
+            traits = [
+                t
+                for t in traits
+                if settings[f"learn_{t['kind']}"]
+                and len(t["evidence"]) >= settings["min_evidence"]
+            ]
+            # Compare review inputs before this batch can update a shared target.
+            for trait in traits:
+                trait_scope = (
+                    SHARED_SCOPE if shared and trait["kind"] != "jargon" else scope
+                )
+                expected = trait.get("_merge_target")
+                if expected is not None:
+                    current = db.execute(
+                        "SELECT * FROM traits WHERE scope=? AND id=?",
+                        (trait_scope, expected["id"]),
+                    ).fetchone()
+                    if current is None or any(
+                        (
+                            [e["text"] for e in json.loads(current["examples"])]
+                            != value
+                            if key == "examples"
+                            else current[key] != value
+                        )
+                        for key, value in expected.items()
+                    ):
+                        raise ValueError(
+                            "合并目标在自检后已修改，旧结果未保存、素材已保留，请重新学习。"
+                        )
+            for trait_scope in sorted(
+                {
+                    SHARED_SCOPE if shared and t["kind"] != "jargon" else scope
+                    for t in traits
+                }
+            ):
+                snapshot = {
+                    "profile": json.loads(
+                        db.execute(
+                            "SELECT profile FROM scopes WHERE id=?", (trait_scope,)
+                        ).fetchone()[0]
+                    ),
+                    "traits": [
+                        dict(t)
+                        for t in db.execute(
+                            "SELECT * FROM traits WHERE scope=?", (trait_scope,)
+                        )
+                    ],
+                }
+                db.execute(
+                    "INSERT INTO revisions(scope, action, snapshot, created) VALUES (?, 'learning', ?, ?)",
+                    (trait_scope, json.dumps(snapshot, ensure_ascii=False), now),
+                )
+                db.execute(
+                    "DELETE FROM revisions WHERE scope=? AND id NOT IN (SELECT id FROM revisions WHERE scope=? ORDER BY id DESC LIMIT 30)",
+                    (trait_scope, trait_scope),
+                )
+            for trait in traits:
+                trait_scope = (
+                    SHARED_SCOPE if shared and trait["kind"] != "jargon" else scope
+                )
+                fingerprint = hashlib.sha256(
+                    json.dumps(
+                        [
+                            trait["kind"],
+                            trait["situation"].casefold(),
+                            trait["content"].casefold(),
+                        ],
+                        ensure_ascii=False,
+                    ).encode()
+                ).hexdigest()
+                target = db.execute(
+                    "SELECT t.* FROM traits t JOIN trait_aliases a ON a.trait_id=t.id WHERE a.scope=? AND a.fingerprint=?",
+                    (trait_scope, fingerprint),
+                ).fetchone()
+                if target is None and trait.get("merge_id") is not None:
+                    target = db.execute(
+                        "SELECT * FROM traits WHERE scope=? AND id=? AND kind=?",
+                        (trait_scope, trait["merge_id"], trait["kind"]),
+                    ).fetchone()
+                    if target is None:
+                        raise ValueError("合并目标已不存在，素材保留，请重新学习。")
+                # Similar spelling cannot establish compatible conditions or meaning.
+                # Only exact aliases or an explicitly offered model merge may consolidate.
+                if target is not None:
+                    if (
+                        trait.get("_merge_target") is not None
+                        and target["id"] != trait["_merge_target"]["id"]
+                    ):
+                        raise ValueError(
+                            "候选的既有别名与合并目标冲突，结果未保存、素材已保留，请重新学习。"
+                        )
+                    # A flagged proposal cannot modify or reinforce a stored entry.
+                    if trait.get("_review_approved") is False and target[
+                        "status"
+                    ] not in ("rejected", "disabled"):
+                        continue
+                    db.execute(
+                        "INSERT OR IGNORE INTO trait_aliases VALUES (?, ?, ?)",
+                        (trait_scope, fingerprint, target["id"]),
+                    )
+                    # Human decisions are authoritative, even for paraphrased candidates.
+                    if target["status"] in ("rejected", "disabled"):
+                        continue
+                    evidence = json.loads(target["evidence"])
+                    keys = {
+                        (
+                            e.get("scope") or target["scope"],
+                            e.get("source_id") or f"{e['id']}:{e['created']}",
+                        )
+                        for e in evidence
+                    }
+                    new_evidence = []
+                    for item in trait["evidence"]:
+                        key = (
+                            item.get("scope") or scope,
+                            item.get("source_id") or f"{item['id']}:{item['created']}",
+                        )
+                        if key not in keys:
+                            keys.add(key)
+                            new_evidence.append(item)
+                    if not new_evidence:
+                        continue
+                    # Multiple candidates from one response are one independent batch.
+                    support = batch_support.setdefault(
+                        target["id"],
+                        {
+                            "count": target["support_count"],
+                            "confidence": target["confidence"],
+                            "scores": [],
+                            "status": target["status"],
+                        },
+                    )
+                    scores = support["scores"]
+                    scores.append(trait["confidence"])
+                    count = support["count"] + 1
+                    confidence = (
+                        support["confidence"] * support["count"]
+                        + sum(scores) / len(scores)
+                    ) / count
+                    stage = target["meaning_stage"]
+                    situation, content, status = (
+                        target["situation"],
+                        target["content"],
+                        support["status"],
+                    )
+                    # Reuse bounded independent-batch stages for reviewed refinements.
+                    # Active wording remains stable when the operator returns to review mode.
+                    refine_habit = (
+                        trait["kind"] != "jargon"
+                        and trait.get("refine") is True
+                        and trait.get("merge_id") == target["id"]
+                        and trait.get("_review_approved") is True
+                        and settings["learning_review_enabled"]
+                        and (
+                            status == "pending"
+                            or (
+                                settings["activation_mode"] == "auto"
+                                and confidence >= settings["auto_confidence"]
+                            )
+                        )
+                        and (
+                            settings["activation_mode"] != "auto"
+                            or trait["confidence"] >= settings["auto_confidence"]
+                        )
+                        and (
+                            trait["content"] != content
+                            or trait["situation"] != situation
+                        )
+                    )
+                    if (
+                        not target["manual"]
+                        and stage < 4
+                        and count >= 2 ** (stage + 1)
+                        and (trait["kind"] == "jargon" or refine_habit)
+                    ):
+                        old_term = jargon_term(content)
+                        new_term = jargon_term(trait["content"])
+                        if refine_habit or (old_term and old_term == new_term):
+                            stage += 1
+                            situation, content = trait["situation"], trait["content"]
+                            if (
+                                content != target["content"]
+                                or situation != target["situation"]
+                            ):
+                                status = "pending"
+                                support["status"] = status
+                    if (
+                        not target["manual"]
+                        and status == "pending"
+                        and settings["activation_mode"] == "auto"
+                        and confidence >= settings["auto_confidence"]
+                    ):
+                        status = "active"
+                    examples = json.loads(target["examples"])
+                    if not target["manual"] and (
+                        status == "pending"
+                        or (
+                            settings["activation_mode"] == "auto"
+                            and confidence >= settings["auto_confidence"]
+                            and trait["confidence"] >= settings["auto_confidence"]
+                        )
+                    ):
+                        if (
+                            situation != target["situation"]
+                            or content != target["content"]
+                        ):
+                            examples = []
+                        for example in trait.get("examples", []):
+                            if example["text"] not in {e["text"] for e in examples}:
+                                examples.append(example)
+                        examples = examples[:3]
+                    db.execute(
+                        "UPDATE traits SET evidence=?, evidence_count=evidence_count+?, support_count=?, last_seen=?, confidence=?, situation=?, content=?, status=?, meaning_stage=?, examples=?, updated=? WHERE id=?",
+                        (
+                            json.dumps(
+                                (evidence + new_evidence)[-32:], ensure_ascii=False
+                            ),
+                            len(new_evidence),
+                            count,
+                            now,
+                            target["confidence"] if target["manual"] else confidence,
+                            situation,
+                            content,
+                            status,
+                            stage,
+                            json.dumps(examples, ensure_ascii=False),
+                            now,
+                            target["id"],
+                        ),
+                    )
+                    audit = trait.get("_review_audit")
+                    if (
+                        audit
+                        and situation == trait["situation"]
+                        and content == trait["content"]
+                        and [e["text"] for e in examples]
+                        == [e["text"] for e in trait.get("examples", [])]
+                    ):
+                        db.execute(
+                            "UPDATE traits SET review_audit=? WHERE id=?",
+                            (
+                                json.dumps(
+                                    audit | {"run_id": run_id, "checked_at": now},
+                                    ensure_ascii=False,
+                                ),
+                                target["id"],
+                            ),
+                        )
+                    elif (
+                        situation != target["situation"]
+                        or content != target["content"]
+                        or [e["text"] for e in examples]
+                        != [e["text"] for e in json.loads(target["examples"])]
+                    ):
+                        db.execute(
+                            "UPDATE traits SET review_audit='{}' WHERE id=?",
+                            (target["id"],),
+                        )
+                    reinforced.add(target["id"])
+                    continue
+                status = (
+                    "active"
+                    if settings["activation_mode"] == "auto"
+                    and trait.get("_review_approved") is not False
+                    and trait["confidence"] >= settings["auto_confidence"]
+                    and len(trait["evidence"]) >= settings["min_evidence"]
+                    else "pending"
+                )
+                cursor = db.execute(
+                    "INSERT OR IGNORE INTO traits(scope, kind, situation, content, confidence, evidence, status, fingerprint, created, updated, examples) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        trait_scope,
+                        trait["kind"],
+                        trait["situation"],
+                        trait["content"],
+                        trait["confidence"],
+                        json.dumps(trait["evidence"], ensure_ascii=False),
+                        status,
+                        fingerprint,
+                        now,
+                        now,
+                        json.dumps(trait.get("examples", []), ensure_ascii=False),
+                    ),
+                )
+                if cursor.rowcount:
+                    audit = trait.get("_review_audit")
+                    if audit:
+                        db.execute(
+                            "UPDATE traits SET review_audit=? WHERE id=?",
+                            (
+                                json.dumps(
+                                    audit | {"run_id": run_id, "checked_at": now},
+                                    ensure_ascii=False,
+                                ),
+                                cursor.lastrowid,
+                            ),
+                        )
+                    added += 1
+                    batch_support[cursor.lastrowid] = {
+                        "count": 0,
+                        "confidence": 0,
+                        "scores": [trait["confidence"]],
+                        "status": "pending",
+                    }
+                    db.execute(
+                        "UPDATE traits SET evidence_count=?, last_seen=? WHERE id=?",
+                        (len(trait["evidence"]), now, cursor.lastrowid),
+                    )
+                    db.execute(
+                        "INSERT OR IGNORE INTO trait_aliases VALUES (?, ?, ?)",
+                        (trait_scope, fingerprint, cursor.lastrowid),
+                    )
+            db.executemany(
+                "UPDATE messages SET consumed=1 WHERE scope=? AND id=?",
+                [(scope, m["id"]) for m in messages],
+            )
+            if messages:
+                previous = db.execute(
+                    "SELECT COALESCE(MAX(last_order),0) FROM learning_sender_state WHERE scope=?",
+                    (scope,),
+                ).fetchone()[0]
+                # Use the last position in scheduler order, not restored chat
+                # chronology, so arrival-order ties cannot repeatedly favor one
+                # early speaker after a capacity-limited successful batch.
+                positions = {
+                    m["sender"]: m.get("_sampling_order", index)
+                    for index, m in enumerate(messages)
+                    if m.get("sender")
+                }
+                db.executemany(
+                    "INSERT INTO learning_sender_state VALUES (?,?,?,?) ON CONFLICT(scope,sender) DO UPDATE SET last_order=excluded.last_order, updated=excluded.updated",
+                    [
+                        (scope, sender, previous + index, now)
+                        for index, sender in enumerate(
+                            sorted(positions, key=positions.get), 1
+                        )
+                    ],
+                )
+        if not error:
+            db.execute(
+                "UPDATE learning_runtime SET failures=0,draft_key='',draft='[]',draft_created=0 WHERE scope=?",
+                (scope,),
+            )
+        elif (review or {}).get("failure", {}).get("retry_backoff") is True:
+            db.execute(
+                "UPDATE learning_runtime SET failures=failures+1 WHERE scope=?",
+                (scope,),
+            )
+        db.execute(
+            "UPDATE runs SET status=?, finished=?, count=?, message=?, memory=?, review=? WHERE id=?",
+            (
+                "error" if error else "success",
+                now,
+                added,
+                error
+                or (
+                    f"分析 {len(messages)} 条素材，新增 {added} 条，补充证据 {len(reinforced)} 条。"
+                    + (
+                        "已复用提取草稿。"
+                        if (review or {}).get("extraction_cache", {}).get("hit")
+                        else ""
+                    )
+                ),
+                memory,
+                json.dumps(review or {}, ensure_ascii=False),
+                run_id,
+            ),
+        )
+        db.execute(
+            "DELETE FROM runs WHERE scope=? AND id NOT IN (SELECT id FROM runs WHERE scope=? ORDER BY id DESC LIMIT 100)",
+            (scope, scope),
+        )
+        return added
+
+    def vectors(self, db, provider, scope, entries=None):
+        """Read or update content-addressed vectors for one model signature.
+
+        Args:
+            db: Open database connection.
+            provider: Non-secret provider/model signature.
+            scope: Session/persona scope to isolate vector reads.
+            entries: Optional validated vector records.
+
+        Returns:
+            Cached vectors indexed by trait identifier.
+        """
+        if entries is not None:
+            for item in entries:
+                db.execute(
+                    "DELETE FROM embeddings WHERE trait_id=? AND provider<>?",
+                    (item["id"], provider),
+                )
+                db.execute(
+                    "INSERT OR REPLACE INTO embeddings VALUES (?, ?, ?, ?)",
+                    (item["id"], provider, item["digest"], json.dumps(item["vector"])),
+                )
+        return {
+            r["trait_id"]: {"digest": r["digest"], "vector": json.loads(r["vector"])}
+            for r in db.execute(
+                "SELECT e.* FROM embeddings e JOIN traits t ON t.id=e.trait_id WHERE provider=? AND (t.scope=? OR ?=?)",
+                (provider, scope, scope, SHARED_SCOPE),
+            )
+        }
+
+    def auxiliary_usage(self, db, rows=None):
+        """Persist bounded hourly totals only; unknown/cancelled usage stays unreported."""
+        fields = (
+            "calls",
+            "successes",
+            "errors",
+            "cancelled",
+            "reported",
+            "input_cached",
+            "input_other",
+            "output",
+            "system_chars",
+            "prompt_chars",
+            "seconds",
+        )
+        if rows:
+            columns = ("bucket", "stage", "provider", "model", *fields)
+            db.executemany(
+                f"INSERT INTO auxiliary_usage({','.join(columns)}) VALUES ({','.join('?' for _ in columns)}) "
+                "ON CONFLICT(bucket,stage,provider,model) DO UPDATE SET "
+                + ",".join(f"{key}={key}+excluded.{key}" for key in fields),
+                [tuple(row[key] for key in columns) for row in rows],
+            )
+            db.execute(
+                "DELETE FROM auxiliary_usage WHERE bucket<?",
+                (time.time() - 30 * 86400,),
+            )
+        return [
+            dict(row)
+            for row in db.execute(
+                "SELECT stage,provider,model,"
+                + ",".join(f"SUM({key}) AS {key}" for key in fields)
+                + " FROM auxiliary_usage WHERE bucket>=? GROUP BY stage,provider,model ORDER BY stage,provider,model",
+                ((int(time.time() // 3600) - 23) * 3600,),
+            )
+        ]
+
+    def trace_turn(self, db, scope, event_key, status, details):
+        """Store bounded request metadata without counting it as habit exposure.
+
+        Args:
+            db: Open database connection.
+            scope: Native session/persona identity.
+            event_key: One identity retained across request and send hooks.
+            status: prepared, send_hook, cancelled or empty_response; never proof of delivery.
+            details: Metadata assembled by the runtime, without prompt/chat bodies.
+        """
+        if status not in {"prepared", "send_hook", "cancelled", "empty_response"}:
+            raise ValueError("Unknown turn trace status")
+        now = time.time()
+        db.execute(
+            "INSERT INTO turn_traces(scope,event_key,status,details,created,updated) VALUES (?,?,?,?,?,?) "
+            "ON CONFLICT(event_key) DO UPDATE SET "
+            "status=CASE WHEN turn_traces.status='cancelled' OR excluded.status='prepared' THEN turn_traces.status ELSE excluded.status END,"
+            "details=CASE WHEN turn_traces.status='cancelled' OR (excluded.status='prepared' AND turn_traces.status<>'prepared') "
+            "THEN turn_traces.details ELSE excluded.details END,updated=excluded.updated WHERE turn_traces.scope=excluded.scope",
+            (
+                scope,
+                event_key,
+                status,
+                json.dumps(details, ensure_ascii=False),
+                now,
+                now,
+            ),
+        )
+        db.execute(
+            "DELETE FROM turn_traces WHERE scope=? AND id NOT IN "
+            "(SELECT id FROM turn_traces WHERE scope=? ORDER BY id DESC LIMIT 200)",
+            (scope, scope),
+        )
+
+    def applied(self, db, scope, event_key, ids, mode, shared=False):
+        """Record delivery once, without treating exposure as positive feedback.
+
+        Args:
+            db: Open database connection.
+            scope: Session/persona key.
+            event_key: Unique delivery identity shared by repeated hooks.
+            ids: Habits that fit the actual prompt budget.
+            mode: Retrieval mode used for selection.
+            shared: Whether the actual injected habits came from the common pool.
+
+        Returns:
+            Whether a new delivery was recorded.
+        """
+        now = time.time()
+        valid = [
+            r[0]
+            for r in db.execute(
+                "SELECT id FROM traits WHERE status='active' AND ((kind='jargon' AND scope=? AND scope<>?) OR (kind<>'jargon' AND (scope=? OR ?)))",
+                (scope, SHARED_SCOPE, scope, shared),
+            )
+            if r[0] in ids
+        ]
+        if not valid:
+            return False
+        cursor = db.execute(
+            "INSERT OR IGNORE INTO applications(scope, event_key, trait_ids, mode, created) VALUES (?, ?, ?, ?, ?)",
+            (scope, event_key, json.dumps(valid), mode, now),
+        )
+        if cursor.rowcount:
+            db.executemany(
+                "UPDATE traits SET use_count=use_count+1, last_used=? WHERE id=?",
+                [(now, i) for i in valid],
+            )
+        db.execute(
+            "DELETE FROM applications WHERE scope=? AND id NOT IN (SELECT id FROM applications WHERE scope=? ORDER BY id DESC LIMIT 200)",
+            (scope, scope),
+        )
+        return cursor.rowcount == 1
+
+    def mutate(self, db, scope, action, payload):
+        """Version and mutate a profile or learned entries in one transaction.
+
+        Args:
+            db: Open database connection.
+            scope: Target session/persona key.
+            action: Profile, trait, restore or clear action.
+            payload: Validated operation payload.
+
+        Returns:
+            True when the operation succeeds.
+
+        Raises:
+            ValueError: If the scope, entry or revision does not exist.
+        """
+        row = db.execute("SELECT profile FROM scopes WHERE id=?", (scope,)).fetchone()
+        if not row:
+            raise ValueError("会话不存在，请刷新后重新选择。")
+        snapshot = {
+            "profile": json.loads(row[0]),
+            "traits": [
+                dict(t)
+                for t in db.execute("SELECT * FROM traits WHERE scope=?", (scope,))
+            ],
+        }
+        db.execute(
+            "INSERT INTO revisions(scope, action, snapshot, created) VALUES (?, ?, ?, ?)",
+            (scope, action, json.dumps(snapshot, ensure_ascii=False), time.time()),
+        )
+        if action == "profile":
+            profile = snapshot["profile"] | payload
+            db.execute(
+                "UPDATE scopes SET profile=?, updated=? WHERE id=?",
+                (json.dumps(profile, ensure_ascii=False), time.time(), scope),
+            )
+        elif action in ("trait", "feedback"):
+            row = db.execute(
+                "SELECT id,kind,situation,content,examples FROM traits WHERE scope=? AND id=?",
+                (scope, payload["id"]),
+            ).fetchone()
+            if not row:
+                raise ValueError("学习条目不存在或不属于当前会话。")
+            removals = payload.get("remove_examples", [])
+            examples = json.loads(row["examples"])
+            if removals and (
+                row["kind"] != "expression"
+                or not set(removals).issubset(e["text"] for e in examples)
+            ):
+                raise ValueError("原话片段已改变或不存在，请刷新学习条目后重新选择。")
+            if (
+                row["kind"] == "jargon"
+                and scope == SHARED_SCOPE
+                and payload.get("status") == "active"
+            ):
+                raise ValueError(
+                    "旧共用词汇的来源尚未确定，原条目与证据已保留；请在来源会话重新学习后审核。"
+                )
+            updates = {
+                k: v
+                for k, v in payload.items()
+                if k
+                in (
+                    ("rating",)
+                    if action == "feedback"
+                    else ("content", "situation", "status")
+                )
+            }
+            for key, value in updates.items():
+                db.execute(
+                    f"UPDATE traits SET {key}=?, updated=? WHERE scope=? AND id=?",
+                    (value, time.time(), scope, payload["id"]),
+                )
+            if action == "trait":
+                if any(
+                    key in updates and updates[key] != row[key]
+                    for key in ("situation", "content")
+                ):
+                    db.execute(
+                        "UPDATE traits SET examples='[]',review_audit='{}' WHERE scope=? AND id=?",
+                        (scope, payload["id"]),
+                    )
+                elif removals:
+                    db.execute(
+                        "UPDATE traits SET examples=?, updated=?,review_audit='{}' WHERE scope=? AND id=?",
+                        (
+                            json.dumps(
+                                [e for e in examples if e["text"] not in removals],
+                                ensure_ascii=False,
+                            ),
+                            time.time(),
+                            scope,
+                            payload["id"],
+                        ),
+                    )
+                db.execute(
+                    "UPDATE traits SET manual=1 WHERE scope=? AND id=?",
+                    (scope, payload["id"]),
+                )
+        elif action == "restore":
+            revision = db.execute(
+                "SELECT snapshot FROM revisions WHERE scope=? AND id=?",
+                (scope, payload["id"]),
+            ).fetchone()
+            if not revision:
+                raise ValueError("版本不存在或不属于当前会话。")
+            data = json.loads(revision[0])
+            db.execute(
+                "UPDATE scopes SET profile=? WHERE id=?",
+                (json.dumps(data["profile"], ensure_ascii=False), scope),
+            )
+            # Keep later entries as disabled tombstones so relearning cannot undo rollback.
+            db.execute(
+                "UPDATE traits SET status='disabled', manual=1 WHERE scope=?", (scope,)
+            )
+            for trait in data["traits"]:
+                db.execute(
+                    "UPDATE traits SET situation=?, content=?, confidence=?, evidence=?, status=?, examples=?, review_audit=?, updated=? WHERE scope=? AND id=?",
+                    (
+                        trait["situation"],
+                        trait["content"],
+                        trait["confidence"],
+                        trait["evidence"],
+                        trait["status"],
+                        trait.get("examples", "[]"),
+                        trait.get("review_audit", "{}"),
+                        time.time(),
+                        scope,
+                        trait["id"],
+                    ),
+                )
+                for key in (
+                    "support_count",
+                    "evidence_count",
+                    "last_seen",
+                    "rating",
+                    "manual",
+                    "meaning_stage",
+                ):
+                    if key in trait:
+                        db.execute(
+                            f"UPDATE traits SET {key}=? WHERE scope=? AND id=?",
+                            (trait[key], scope, trait["id"]),
+                        )
+        elif action == "clear_messages":
+            db.execute("DELETE FROM messages WHERE scope=?", (scope,))
+            db.execute("DELETE FROM learning_sender_state WHERE scope=?", (scope,))
+            db.execute(
+                "UPDATE learning_runtime SET draft_key='',draft='[]',draft_created=0 WHERE scope=?",
+                (scope,),
+            )
+        else:
+            raise ValueError("不支持的操作。")
+        db.execute(
+            "DELETE FROM revisions WHERE scope=? AND id NOT IN (SELECT id FROM revisions WHERE scope=? ORDER BY id DESC LIMIT 30)",
+            (scope, scope),
+        )
+        return True

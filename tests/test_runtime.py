@@ -841,6 +841,12 @@ async def test_background_learning_rechecks_current_host_plugin_set(plugin):
 async def test_native_page_validation_and_teardown(plugin):
     assert {route[0] for route in plugin.context.registered_web_apis} == {
         "/astrbot_plugin_ovenheart/state",
+        "/astrbot_plugin_ovenheart/runtime",
+        "/astrbot_plugin_ovenheart/runtime/generators",
+        "/astrbot_plugin_ovenheart/runtime/memory",
+        "/astrbot_plugin_ovenheart/memory",
+        "/astrbot_plugin_ovenheart/memory/image",
+        "/astrbot_plugin_ovenheart/memory/action",
         "/astrbot_plugin_ovenheart/library",
         "/astrbot_plugin_ovenheart/tools",
         "/astrbot_plugin_ovenheart/history",

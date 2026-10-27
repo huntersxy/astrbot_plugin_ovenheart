@@ -5,7 +5,7 @@ import threading
 
 import pytest
 
-from astrbot_plugin_ovenheart.room_memory import RoomMemory
+from astrbot_plugin_ovenheart.memory.room_memory import RoomMemory
 from tests.test_runtime import event
 
 pytest_plugins = ["tests.test_participation"]
@@ -424,7 +424,7 @@ async def test_embedding_model_change_rebuilds_from_metadata_without_crossing_sp
 async def test_openai_embedding_config_model_identifies_vector_space():
     from types import SimpleNamespace
 
-    from astrbot_plugin_ovenheart.memory_embedding import EmbeddingAPIAdapter
+    from astrbot_plugin_ovenheart.memory.memory_embedding import EmbeddingAPIAdapter
 
     class Provider(SyntheticEmbedding):
         provider_config = {"embedding_model": "first-model"}
@@ -442,70 +442,6 @@ async def test_openai_embedding_config_model_identifies_vector_space():
     assert before.get_embedding_configuration_key() != after.get_embedding_configuration_key()
 
 
-async def test_sdk_takes_ownership_and_keeps_legacy_evidence_graph_and_vector_files(
-    memories,
-):
-    import json
-    import sqlite3
-
-    import numpy as np
-
-    from astrbot_plugin_ovenheart.native_memory_kernel import NativeMemoryKernel
-    from astrbot_plugin_ovenheart.vendor.maibot.amemorix.storage import (
-        GraphStore,
-        MetadataStore,
-        VectorStore,
-    )
-
-    incoming, scope, persona, _ = await material(memories)
-    directory = memories.room_memory.directory / scope
-    old = MetadataStore(directory / "metadata")
-    old.connect()
-    proofs = [
-        {"source_id": "memory-source", "sender": "alice", "quote": "Neko喜欢猫咪"}
-    ]
-    paragraph = old.add_paragraph(
-        "Neko喜欢猫咪。",
-        source="chat_summary:astrbot",
-        metadata={"evidence": proofs, "participants": ["alice"]},
-    )
-    entity = old.add_entity("猫咪", source_paragraph=paragraph)
-    graph = GraphStore(data_dir=directory / "graph")
-    graph.add_nodes([entity])
-    graph.save()
-    old.close()
-    legacy = directory / "vectors" / "legacy-model" / "paragraphs"
-    vectors = VectorStore(4, data_dir=legacy)
-    vectors.add(np.asarray([[1.0, 0.0, 0.0, 0.0]], dtype=np.float32), [paragraph])
-    vectors.save()
-    previous = {
-        p.relative_to(legacy): p.read_bytes() for p in legacy.rglob("*") if p.is_file()
-    }
-    assert previous
-    found = await memories.room_memory.search(incoming, scope, persona, "猫咪")
-    assert any(
-        row["id"] == paragraph and row["metadata"]["evidence"] == proofs
-        for row in found
-    )
-    state = memories.room_memory.rooms[scope]
-    kernel = state.kernel
-    assert isinstance(kernel, NativeMemoryKernel)
-    assert kernel.metadata_store is state.metadata and kernel.graph_store is state.graph
-    assert kernel._runtime_writer_lock.held and state.graph.num_nodes == 1
-    backup = directory / "native-kernel-backup"
-    with sqlite3.connect(backup / "metadata.db") as snapshot:
-        source, metadata = snapshot.execute(
-            "SELECT source,metadata FROM paragraphs WHERE hash=?", (paragraph,)
-        ).fetchone()
-    assert (
-        source == "chat_summary:astrbot" and json.loads(metadata)["evidence"] == proofs
-    )
-    assert (backup / "graph").is_dir()
-    assert {
-        p.relative_to(legacy): p.read_bytes() for p in legacy.rglob("*") if p.is_file()
-    } == previous
-    await memories.room_memory.close()
-    assert not kernel._runtime_writer_lock.held
 
 
 async def test_concurrent_first_writes_share_one_original_graph(memories):

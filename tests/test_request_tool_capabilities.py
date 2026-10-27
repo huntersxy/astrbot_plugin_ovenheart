@@ -9,7 +9,7 @@ from astrbot.api.provider import ProviderRequest
 from astrbot.core.agent.runners.tool_loop_agent_runner import ToolLoopAgentRunner
 from astrbot.core.agent.tool import FunctionTool, ToolSet
 
-from astrbot_plugin_ovenheart import prompts
+from astrbot_plugin_ovenheart.core import prompts
 from astrbot_plugin_ovenheart.main import narrow_toolset
 from tests.test_runtime import event
 

@@ -41,12 +41,12 @@ async def main(args):
             name: hashlib.sha256((ROOT / name).read_bytes()).hexdigest()
             for name in (
                 "main.py",
-                "learning.py",
-                "prompts.py",
-                "settings.py",
-                "participation.py",
-                "retrieval.py",
-                "store.py",
+                "core/learning.py",
+                "core/prompts.py",
+                "core/settings.py",
+                "chat/participation.py",
+                "core/retrieval.py",
+                "core/store.py",
                 "tests/native_harness.py",
             )
         },
@@ -86,7 +86,7 @@ async def main(args):
         ]:
             shutil.copyfile(path, destination / path.name)
             assert path.read_bytes() == (destination / path.name).read_bytes()
-        for name in ("views", ".astrbot-plugin", "vendor"):
+        for name in ("core", "chat", "memory", "integrations", "views", ".astrbot-plugin", "vendor"):
             shutil.copytree(ROOT / name, destination / name)
         (data / "cmd_config.json").write_text(
             json.dumps(

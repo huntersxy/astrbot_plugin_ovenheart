@@ -5,7 +5,7 @@ from collections import Counter
 
 import pytest
 
-from astrbot_plugin_ovenheart.store import Store
+from astrbot_plugin_ovenheart.core.store import Store
 from tests.test_store import DEFAULTS
 
 pytest_plugins = ["tests.test_store"]

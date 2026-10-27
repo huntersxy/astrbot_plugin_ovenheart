@@ -1,7 +1,6 @@
 """Exercise physical-group coordination with native per-user session isolation."""
 
 import asyncio
-import sqlite3
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -161,7 +160,7 @@ async def test_native_event_bus_and_scheduler_prioritize_direct_reply(participan
 async def test_shared_group_quota_survives_reload_without_sharing_learning(
     participant, monkeypatch
 ):
-    from astrbot_plugin_ovenheart import store as store_module
+    from astrbot_plugin_ovenheart.core import store as store_module
 
     now = [1000000.0]
     monkeypatch.setattr(store_module.time, "time", lambda: now[0])
@@ -230,22 +229,6 @@ async def test_older_delayed_capture_and_same_event_do_not_cancel_latest(partici
     assert not latest.is_stopped()
 
 
-async def test_old_decision_table_migrates_to_group_coordination(participant):
-    with sqlite3.connect(participant.store.path) as db:
-        db.execute("DROP TABLE decisions")
-        db.execute(
-            "CREATE TABLE decisions(id INTEGER PRIMARY KEY,scope TEXT NOT NULL,action TEXT NOT NULL,confidence REAL NOT NULL,reason TEXT NOT NULL,intent TEXT NOT NULL,mode TEXT NOT NULL,outcome TEXT NOT NULL,created REAL NOT NULL)"
-        )
-        db.execute(
-            "INSERT INTO decisions VALUES(1,'legacy-scope','observe',.9,'preserved','', 'observe','observed',1)"
-        )
-    await participant.store.call("initialize")
-    first = isolated("migrated", "alice")
-    assert len(await requests(participant, first)) == 1
-    with sqlite3.connect(participant.store.path) as db:
-        assert db.execute(
-            "SELECT reason,room FROM decisions WHERE id=1"
-        ).fetchone() == ("preserved", "")
 
 
 async def test_denied_input_does_not_interrupt_an_allowed_group_reply(

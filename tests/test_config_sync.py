@@ -2,7 +2,6 @@
 
 import asyncio
 import json
-import sqlite3
 import threading
 from pathlib import Path
 from types import SimpleNamespace
@@ -12,7 +11,7 @@ import pytest
 from astrbot.api import AstrBotConfig
 from astrbot.dashboard.services import config_service
 
-from astrbot_plugin_ovenheart.jev import host_settings
+from astrbot_plugin_ovenheart.integrations.jev import host_settings
 from astrbot_plugin_ovenheart.main import PLUGIN_NAME, PersonaPlugin
 from tests.test_runtime import api_call
 
@@ -181,42 +180,6 @@ async def test_native_config_save_and_reload_replaces_old_panel_guards(
             await holder["plugin"].terminate()
 
 
-async def test_legacy_panel_values_migrate_exactly_once(native_plugin):
-    plugin = native_plugin
-    legacy = {"debug_enabled": True, "blocked_senders": ["987654"], "memory_top_k": 7}
-    await plugin.store.call("settings", legacy)
-    with sqlite3.connect(plugin.store.path) as db:
-        db.execute("DELETE FROM config_sync")
-    await plugin.terminate()
-    first = PersonaPlugin(
-        plugin.context, AstrBotConfig(plugin.config.config_path, schema=SCHEMA)
-    )
-    second = None
-    try:
-        await first.initialize()
-        assert all(first.settings[k] == v for k, v in legacy.items())
-        assert all(first.config[k] == v for k, v in legacy.items())
-        with sqlite3.connect(first.store.path) as db:
-            backup = json.loads(
-                db.execute("SELECT legacy_settings FROM config_sync").fetchone()[0]
-            )
-        assert all(backup[k] == v for k, v in legacy.items())
-        first.config.save_config(
-            {"debug_enabled": False, "blocked_senders": [], "memory_top_k": 2}
-        )
-        await first.terminate()
-        second = PersonaPlugin(
-            plugin.context, AstrBotConfig(first.config.config_path, schema=SCHEMA)
-        )
-        await second.initialize()
-        assert second.settings["debug_enabled"] is False
-        assert second.settings["blocked_senders"] == []
-        assert second.settings["memory_top_k"] == 2
-        assert not await second.store.call("settings")
-    finally:
-        await first.terminate()
-        if second:
-            await second.terminate()
 
 
 async def test_native_write_failure_does_not_report_success_or_publish_changes(

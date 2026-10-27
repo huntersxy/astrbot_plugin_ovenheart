@@ -30,12 +30,12 @@ from astrbot.core.agent.tool import FunctionTool, ToolSet  # noqa: E402
 from fastapi import FastAPI, Request  # noqa: E402
 from fastapi.responses import FileResponse, HTMLResponse, Response  # noqa: E402
 
+from astrbot_plugin_ovenheart.core.settings import DEFAULTS, SHARED_SCOPE  # noqa: E402
 from astrbot_plugin_ovenheart.main import (  # noqa: E402
     PersonaPlugin,
     SessionPluginManager,
     SessionServiceManager,
 )
-from astrbot_plugin_ovenheart.settings import DEFAULTS, SHARED_SCOPE  # noqa: E402
 
 
 @asynccontextmanager
@@ -510,7 +510,7 @@ async def decoration_simulation(decoration: str, body: str) -> dict:
     from astrbot.core.message.components import At, Plain, Reply
     from astrbot.core.pipeline.result_decorate.stage import ResultDecorateStage
 
-    from astrbot_plugin_ovenheart.participation import parse_plan
+    from astrbot_plugin_ovenheart.chat.participation import parse_plan
     from tests.test_runtime import event
 
     messages = [

@@ -4,7 +4,7 @@ import sqlite3
 
 import pytest
 
-from astrbot_plugin_ovenheart.learning import (
+from astrbot_plugin_ovenheart.core.learning import (
     LEARNING_REVIEW_SYSTEM,
     LEARNING_SYSTEM,
     LEARNING_TRANSFER_RULE,
@@ -106,28 +106,6 @@ async def test_bulk_review_rejects_entire_stale_cross_scope_selection(store):
     ] == 1
 
 
-async def test_legacy_backfill_reads_beyond_thirty_runs_and_survives_history_pruning(
-    store,
-):
-    first = await add(store)
-    await add(store, "b" * 24, approved=True)
-    # Simulate an upgrade from 0.55, including old audits outside the old 30-run window.
-    with sqlite3.connect(store.path) as db:
-        for _ in range(35):
-            db.execute(
-                "INSERT INTO runs(scope,status,started,finished,count,message,memory,review) VALUES (?,'success',1,2,0,'','','{}')",
-                (first["scope"],),
-            )
-        db.execute("ALTER TABLE traits DROP COLUMN review_audit")
-    await store.call("initialize")
-    triage = await store.call("library")
-    assert triage["review_counts"] == {"passed": 1, "flagged": 1, "unknown": 0}
-    recovered = next(t for t in triage["traits"] if t["id"] == first["id"])
-    assert recovered["review"]["issue"] == "learning_target"
-    with sqlite3.connect(store.path) as db:
-        db.execute("DELETE FROM runs")
-    await store.call("initialize")
-    assert (await store.call("library"))["review_counts"] == triage["review_counts"]
 
 
 async def test_counts_cover_all_237_entries_before_review_filter_and_pagination(store):

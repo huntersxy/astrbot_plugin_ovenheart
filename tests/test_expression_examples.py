@@ -8,8 +8,8 @@ from unittest.mock import AsyncMock
 import pytest
 from astrbot.api.provider import ProviderRequest
 
-from astrbot_plugin_ovenheart.learning import habit_text, parse_candidates
-from astrbot_plugin_ovenheart.settings import DEFAULTS
+from astrbot_plugin_ovenheart.core.learning import habit_text, parse_candidates
+from astrbot_plugin_ovenheart.core.settings import DEFAULTS
 from tests.test_learning import MESSAGES, candidates
 from tests.test_runtime import event, sources
 
@@ -43,10 +43,10 @@ def test_examples_must_be_literal_spans_of_this_candidates_own_evidence():
     ):
         with pytest.raises(ValueError):
             parse_candidates(candidates(examples=invalid), MESSAGES, DEFAULTS)
-    with pytest.raises(ValueError):
-        parse_candidates(
-            candidates(kind="behavior", examples=valid), MESSAGES, DEFAULTS
-        )
+    behavior = parse_candidates(
+        candidates(kind="behavior", examples=valid), MESSAGES, DEFAULTS
+    )
+    assert behavior[0]["examples"] == []
     long = [MESSAGES[0] | {"text": "x" * 301 + "尾部片段"}, MESSAGES[1]]
     with pytest.raises(ValueError):
         parse_candidates(
@@ -183,8 +183,3 @@ async def test_examples_invalidate_vector_text_and_survive_approval_but_not_rewr
         if t["id"] == trait["id"]
     )
     assert restored["examples"] == [example]
-    with sqlite3.connect(retriever.store.path) as db:
-        db.execute("ALTER TABLE traits DROP COLUMN examples")
-    await retriever.store.call("initialize")
-    legacy = await retriever.store.call("guidance", "scope-a")
-    assert all(t["examples"] == [] for t in legacy["traits"])

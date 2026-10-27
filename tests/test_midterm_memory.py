@@ -18,7 +18,7 @@ pytest_plugins = ["tests.test_structured_conversation"]
 
 
 def test_midterm_cutoff_includes_older_rows_outside_the_result_limit(tmp_path):
-    from astrbot_plugin_ovenheart.room_memory import RoomState
+    from astrbot_plugin_ovenheart.memory.room_memory import RoomState
 
     db = sqlite3.connect(":memory:")
     db.row_factory = sqlite3.Row

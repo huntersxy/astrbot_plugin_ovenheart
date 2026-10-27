@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from astrbot_plugin_ovenheart.learning import (
+from astrbot_plugin_ovenheart.core.learning import (
     LEARNING_REVIEW_SYSTEM,
     LearningFormatError,
     parse_learning_review,

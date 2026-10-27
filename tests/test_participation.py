@@ -14,12 +14,12 @@ from astrbot.core.agent.tool import FunctionTool, ToolSet  # noqa: E402
 from astrbot.core.db.po import Conversation  # noqa: E402
 from astrbot.core.message.components import At, Plain, Reply  # noqa: E402
 
-from astrbot_plugin_ovenheart.main import ParticipationFilter  # noqa: E402
-from astrbot_plugin_ovenheart.participation import (  # noqa: E402
+from astrbot_plugin_ovenheart.chat.participation import (  # noqa: E402
     ParticipationFormatError,
     parse_plan,
 )
-from astrbot_plugin_ovenheart.settings import DEFAULTS  # noqa: E402
+from astrbot_plugin_ovenheart.core.settings import DEFAULTS  # noqa: E402
+from astrbot_plugin_ovenheart.main import ParticipationFilter  # noqa: E402
 from tests.test_runtime import (  # noqa: E402
     SessionServiceManager,
     api_call,
@@ -1285,7 +1285,7 @@ async def test_mention_checks_permissions_commands_and_late_switches(
 
 
 async def test_mention_settings_save_through_native_panel(participant):
-    from astrbot_plugin_ovenheart.page_api import PageAPI
+    from astrbot_plugin_ovenheart.core.page_api import PageAPI
 
     api = PageAPI(participant)
     response = await api_call(

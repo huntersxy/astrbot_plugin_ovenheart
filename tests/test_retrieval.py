@@ -8,14 +8,14 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from astrbot_plugin_ovenheart.learning import build_guidance
-from astrbot_plugin_ovenheart.retrieval import (
+from astrbot_plugin_ovenheart.core.learning import build_guidance
+from astrbot_plugin_ovenheart.core.retrieval import (
     HabitRetriever,
     normalized_vector,
     rank_traits,
 )
-from astrbot_plugin_ovenheart.settings import DEFAULTS, PROFILE_DEFAULTS
-from astrbot_plugin_ovenheart.store import Store
+from astrbot_plugin_ovenheart.core.settings import DEFAULTS, PROFILE_DEFAULTS
+from astrbot_plugin_ovenheart.core.store import Store
 
 TRAITS = [
     {

@@ -244,7 +244,7 @@ async def test_upstream_reload_reattaches_without_changing_class_methods(native_
 async def test_recover_abandoned_own_hooks_without_stacking_or_using_stale_owner(
     native_memory,
 ):
-    from astrbot_plugin_ovenheart.memory_bridge import MemoryBridge
+    from astrbot_plugin_ovenheart.integrations.memory_bridge import MemoryBridge
 
     plugin, owner, metadata, entries = native_memory
     previous = MemoryBridge(plugin.context)
@@ -305,7 +305,9 @@ async def test_changed_runtime_policy_suppresses_both_memory_hooks(
     else:
         from unittest.mock import AsyncMock
 
-        from astrbot_plugin_ovenheart.memory_bridge import SessionPluginManager
+        from astrbot_plugin_ovenheart.integrations.memory_bridge import (
+            SessionPluginManager,
+        )
 
         monkeypatch.setattr(
             SessionPluginManager,
@@ -314,16 +316,4 @@ async def test_changed_runtime_policy_suppresses_both_memory_hooks(
         )
     await entries[0].handler(trigger, object())
     await entries[1].handler(trigger, object())
-    assert owner.calls == []
-
-
-async def test_queued_private_build_request_is_not_misattributed_after_upgrade(
-    native_memory,
-):
-    plugin, owner, _, entries = native_memory
-    plugin.memory.install()
-    incoming = event("legacy-queued", sender="bob")
-    incoming.set_extra("livingmemory_reply_source_requested", True)
-    await entries[0].handler(incoming, object())
-    await entries[1].handler(incoming, object())
     assert owner.calls == []

@@ -8,7 +8,7 @@ from types import SimpleNamespace
 import pytest
 from astrbot.api.provider import ProviderRequest
 
-from astrbot_plugin_ovenheart.store import Store
+from astrbot_plugin_ovenheart.core.store import Store
 from tests.test_runtime import api_call, completion, event, sources
 
 pytest_plugins = ["tests.test_runtime"]

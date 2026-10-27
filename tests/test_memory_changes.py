@@ -22,7 +22,7 @@ async def changed_source(plugin, source, text, **kwargs):
 async def test_superseded_paragraphs_leave_episode_recall_rebuild_and_active_console(
     memories,
 ):
-    from astrbot_plugin_ovenheart.memory_panel import read_console
+    from astrbot_plugin_ovenheart.memory.memory_panel import read_console
 
     plugin = memories
     incoming, scope, persona, messages = await material(plugin)
@@ -189,7 +189,7 @@ async def test_correct_forget_and_author_undo_use_original_runtime_and_keep_proo
     assert not await plugin.room_memory.search(incoming, scope, persona, "小猫")
     # Closing and reopening must keep the native journal usable without the
     # planner retaining its previous tool results or process-local state.
-    from astrbot_plugin_ovenheart.room_memory import RoomMemory
+    from astrbot_plugin_ovenheart.memory.room_memory import RoomMemory
 
     await plugin.room_memory.close()
     plugin.room_memory = RoomMemory(plugin)

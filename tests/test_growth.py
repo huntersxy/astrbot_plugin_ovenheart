@@ -1,13 +1,12 @@
 """Verify evidence accumulation, old-database migration and rollback semantics."""
 
 import json
-import sqlite3
 
 import pytest
 
-from astrbot_plugin_ovenheart.learning import parse_candidates
-from astrbot_plugin_ovenheart.settings import DEFAULTS
-from astrbot_plugin_ovenheart.store import Store
+from astrbot_plugin_ovenheart.core.learning import parse_candidates
+from astrbot_plugin_ovenheart.core.settings import DEFAULTS
+from astrbot_plugin_ovenheart.core.store import Store
 
 SCOPE = "a" * 24
 
@@ -260,45 +259,6 @@ async def test_learning_snapshot_restores_evidence_and_suppresses_later_aliases(
     assert state["traits"][0]["evidence_count"] == 2
 
 
-async def test_legacy_database_is_copied_once_and_original_is_preserved(tmp_path):
-    legacy = tmp_path / "old.sqlite3"
-    with sqlite3.connect(legacy) as db:
-        db.executescript("""
-        CREATE TABLE traits (id INTEGER PRIMARY KEY, scope TEXT, kind TEXT, situation TEXT,
-            content TEXT, confidence REAL, evidence TEXT, status TEXT, fingerprint TEXT,
-            created REAL, updated REAL, UNIQUE(scope,fingerprint));
-        """)
-        db.execute(
-            "INSERT INTO traits VALUES (1,?,?,?,?,?,?,?,?,?,?)",
-            (
-                SCOPE,
-                "expression",
-                "日常",
-                "人工调整的旧习惯",
-                0.9,
-                json.dumps([{"id": 1, "created": 1, "text": "证据", "sender": "u"}]),
-                "active",
-                "legacy",
-                1.0,
-                1.0,
-            ),
-        )
-    store = Store(tmp_path / "new.sqlite3")
-    await store.call("initialize", legacy)
-    with sqlite3.connect(store.path) as db:
-        row = db.execute("SELECT content,manual,evidence_count FROM traits").fetchone()
-        assert row == ("人工调整的旧习惯", 1, 1)
-        db.execute("UPDATE traits SET content='新目录中的改动'")
-    await store.call("initialize", legacy)
-    with sqlite3.connect(store.path) as db:
-        assert (
-            db.execute("SELECT content FROM traits").fetchone()[0] == "新目录中的改动"
-        )
-    with sqlite3.connect(legacy) as db:
-        assert "manual" not in {r[1] for r in db.execute("PRAGMA table_info(traits)")}
-        assert (
-            db.execute("SELECT content FROM traits").fetchone()[0] == "人工调整的旧习惯"
-        )
 
 
 async def test_jargon_evidence_excerpts_stay_bounded(store):
@@ -397,22 +357,3 @@ async def test_duplicate_jargon_candidates_do_not_advance_multiple_refinement_st
     assert habit["support_count"] == 2 and habit["meaning_stage"] == 1
     assert habit["evidence_count"] == 8
     assert habit["content"].endswith("同批释义0")
-
-
-async def test_legacy_import_includes_uncheckpointed_wal(tmp_path):
-    legacy = Store(tmp_path / "old.sqlite3")
-    await legacy.call("initialize")
-    source = sqlite3.connect(legacy.path)
-    try:
-        source.execute("PRAGMA journal_mode=WAL")
-        source.execute(
-            "INSERT INTO settings VALUES (1, ?)",
-            (json.dumps({"activation_mode": "auto"}),),
-        )
-        source.commit()
-        assert legacy.path.with_suffix(".sqlite3-wal").stat().st_size > 0
-        current = Store(tmp_path / "new.sqlite3")
-        await current.call("initialize", legacy.path)
-        assert (await current.call("settings"))["activation_mode"] == "auto"
-    finally:
-        source.close()

@@ -78,7 +78,6 @@ async function afterWrite(context) {
   load(!dirty).catch(error => notify(`修改已提交，但本页刷新失败：${error.message}。可稍后点击刷新。`, true));
 }
 function updateHeader() {
-  updateLegacyImportStatus();
   const scopeSelect = $("#scope");
   scopeSelect.innerHTML = data.scopes.length ? data.scopes.map(s => `<option value="${escape(s.id)}">${escape(s.label)} / ${escape(s.persona === "[%None]" ? "未设置人格" : s.persona)}</option>`).join("") : '<option value="">尚无学习会话</option>';
   scopeSelect.value = selectedScope;
@@ -434,21 +433,6 @@ function renderHistory() {
   bindHistoryRestore();
 }
 
-function updateLegacyImportStatus() {
-  const element = $("#legacy-import-status");
-  if (!element) return;
-  const status = data?.legacy_import || {};
-  const states = {waiting_source:"等待真实消息后迁入",preview:"预览就绪",running:"正在迁入",completed:"迁入完成",completed_with_conflicts:"已有内容存在冲突",empty:"没有匹配的旧记忆，旧来源保持可用",cancelled:"任务已停止",error:"迁入未完成"};
-  const counts = status.state === "preview" ? `旧记忆 ${status.documents || 0} 条，有效内容 ${status.units || 0} 条，排除失效原子 ${status.excluded_atoms || 0} 条；预计可写 ${status.native?.ready || 0} 条，已映射 ${status.native?.skipped || 0} 条，冲突 ${status.native?.conflicts || 0} 条。` : `已处理 ${status.processed || 0}/${status.units || 0}，写入 ${status.stored || 0}，跳过 ${status.skipped || 0}，冲突 ${status.conflicts || 0}。`;
-  element.textContent = status.state ? `${states[status.state] || status.state}：${status.state === "waiting_source" ? "" : counts}${status.message ? ` ${status.message}` : ""}` : "先预览当前会话和人格可迁入的旧记忆。原库保留，实际写入前自动备份。";
-  if (!status.state && !data.memory?.available) element.textContent = "LivingMemory 未启用，暂不能读取旧库；原生记忆可独立使用。";
-  if (status.state === "completed" && status.legacy_hooks_bound === false && data.memory?.available) element.textContent += " 数据已迁入，旧插件钩子尚未绑定，请在运行核验中确认切换。";
-  for (const id of ["#legacy-preview", "#legacy-import"]) {
-    const button = $(id);
-    if (button) button.disabled = !data.memory?.available || ["running","waiting_source"].includes(status.state);
-  }
-  if ($("#legacy-cancel")) $("#legacy-cancel").disabled = !["running","waiting_source"].includes(status.state);
-}
 
 function bindSettingsTabs(active, memoryPage) {
   const buttons = [...document.querySelectorAll("[data-settings-tab]")];
@@ -492,9 +476,9 @@ function renderSettings(target = "#content") {
   const s = data.settings;
   const settingsRevision = data.settings_revision;
   const memoryPage = tab === "memory";
-  const tabs = memoryPage ? {core:"通用与图片", background:"经历与人物", legacy:"旧库迁入"} : {learning:"学习与生效", participation:"群聊参与", expression:"表达与检索", maintenance:"调试与维护"};
+  const tabs = memoryPage ? {core:"通用与图片", background:"经历与人物"} : {learning:"学习与生效", participation:"群聊参与", expression:"表达与检索", maintenance:"调试与维护"};
   const active = memoryPage ? memorySection : settingsSection;
-  $(target).innerHTML = `<div class="settings-heading"><h2>${memoryPage ? "记忆设置" : "设置"}</h2><p>${memoryPage ? "管理记忆能力、后台整理和旧库迁入。记忆始终按会话与人格隔离。" : "按用途调整学习与聊天方式。页内切换标签会保留未保存的修改。"}</p></div>
+  $(target).innerHTML = `<div class="settings-heading"><h2>${memoryPage ? "记忆设置" : "设置"}</h2><p>${memoryPage ? "管理记忆能力与后台整理。记忆始终按会话与人格隔离。" : "按用途调整学习与聊天方式。页内切换标签会保留未保存的修改。"}</p></div>
     <form id="settings-form"><div class="settings-tabs" role="tablist" aria-label="${memoryPage ? "记忆分类" : "设置分类"}">${Object.entries(tabs).map(([key,label]) => `<button type="button" id="settings-tab-${key}" role="tab" aria-controls="settings-panel-${key}" aria-selected="${key === active}" tabindex="${key === active ? 0 : -1}" data-settings-tab="${key}">${label}</button>`).join("")}</div>
     ${memoryPage ? `<div class="settings-panel settings-grid" id="settings-panel-core" role="tabpanel" aria-labelledby="settings-tab-core" data-settings-panel="core">
 <section class="settings-group"><h2>通用与图片记忆</h2><p>按当前会话与人格保存、检索记忆，独立于旧记忆插件运行。</p>
@@ -522,9 +506,7 @@ function renderSettings(target = "#content") {
 </section>
 </div>
 <div class="settings-panel settings-grid" id="settings-panel-legacy" role="tabpanel" aria-labelledby="settings-tab-legacy" data-settings-panel="legacy">
-<section class="settings-group"><h2>迁入旧 LivingMemory 记忆</h2><p>此入口读取已启用的 LivingMemory；旧插件停用不影响原生记忆。</p>
-      ${data.scope && data.scope.id !== data.shared_scope?.id ? '<div class="legacy-import"><p class="muted">按当前会话、人格与旧插件访问规则迁入有效内容。保留完整原库备份；重复执行会跳过已有记录，不恢复原生侧已遗忘的内容。成功完成后，此作用域改用原生记忆。</p><div class="actions"><button type="button" id="legacy-preview">预览旧记忆</button><button type="button" id="legacy-import">迁入当前会话</button><button type="button" id="legacy-cancel">取消迁入</button></div><p id="legacy-import-status" class="muted" role="status" aria-live="polite"></p></div>' : '<p class="muted">选择具体会话与人格后，可预览并迁入旧 LivingMemory 记忆。</p>'}
-</section>
+
 </div>` : `<div class="settings-panel settings-grid" id="settings-panel-learning" role="tabpanel" aria-labelledby="settings-tab-learning" data-settings-panel="learning">
 <section class="settings-group"><h2>学习与生效</h2><p>可以先审核，也可以让证据充足的结果自动加入习惯。</p>
       ${switchField("enabled", "启用人格工坊", "关闭后停止采集、学习和应用", s.enabled)}${switchField("learning_enabled", "启用素材采集与后台学习", "关闭后继续保留并应用已生效的习惯", s.learning_enabled)}${switchField("apply_enabled", "应用人格与学习结果", "可先积累，准备好后再启用", s.apply_enabled)}
@@ -549,7 +531,7 @@ function renderSettings(target = "#content") {
 <section class="settings-group participation-settings"><h2>自主参与群聊</h2><p>根据最近聊天与已生效的习惯，决定参与、等待或旁观。直接唤醒、私聊和命令继续按宿主原有规则处理。自动回复使用 AstrBot 本地 Agent 运行器。</p><div class="two-col"><div>
       <div class="field"><label for="participation_mode">参与方式</label><select id="participation_mode" name="participation_mode"><option value="off" ${s.participation_mode === "off" ? "selected" : ""}>关闭自主参与</option><option value="observe" ${s.participation_mode === "observe" ? "selected" : ""}>仅观察，记录决策</option><option value="auto" ${s.participation_mode === "auto" ? "selected" : ""}>自动参与，交由宿主回复</option></select><small>建议先用「仅观察」检查决策。记录在「学习与参与」中。</small></div>
       <div class="number-fields">${field("participation_min_messages","最少新消息",s.participation_min_messages,"条；十分钟内保留最多 30 条上下文",{type:"number",min:1,max:30})}${field("participation_debounce","判断前输入合并",s.participation_debounce,"秒；尚未发请求时合并连续输入",{type:"number",min:0,max:10})}${field("participation_silence_seconds","决定参与后的静默",s.participation_silence_seconds ?? 8,"秒；固定窗口收集新消息，到期统一判断；无新输入不重复请求，0 为即时模式",{type:"number",min:0,max:120})}${field("participation_cooldown","回复冷却",s.participation_cooldown,"秒；直接唤醒的回复也会推迟自主参与",{type:"number",min:5,max:3600})}${field("participation_hourly_limit","每小时参与上限",s.participation_hourly_limit,"次；同群的隔离会话共享限额",{type:"number",min:1,max:120})}</div>
-      <div class="field"><label for="planner_mode">聊天规划</label><select id="planner_mode" name="planner_mode"><option value="maibot" ${s.planner_mode === "maibot" ? "selected" : ""}>MaiBot 持续工具规划</option><option value="legacy" ${s.planner_mode === "legacy" ? "selected" : ""}>原 Jev / JSON 单次判断</option></select><small>持续规划支持记忆查询、回复结果回流、等待恢复和结束参与；由决策模型规划，Jev 继续辅助表达筛选。固定静默收集仅用于原判断方式。</small></div>
+      <div class="field"><label for="planner_mode">聊天规划</label><select id="planner_mode" name="planner_mode"><option value="maibot" ${s.planner_mode === "maibot" ? "selected" : ""}>MaiBot 持续工具规划</option><option value="legacy" ${s.planner_mode === "legacy" ? "selected" : ""}>Jev / JSON 单次判读</option></select><small>持续规划支持记忆查询、回复结果回流、等待恢复和结束参与；由决策模型规划，Jev 继续辅助表达筛选。固定静默收集仅用于单次判读方式。</small></div>
       <div class="field"><label for="participation_rhythm">参与节奏</label><select id="participation_rhythm" name="participation_rhythm"><option value="maibot" ${s.participation_rhythm === "maibot" ? "selected" : ""}>MaiBot 动态节奏</option><option value="fixed" ${s.participation_rhythm === "fixed" ? "selected" : ""}>固定门槛与冷却</option></select><small>动态模式使用 MaiBot 原版评分与频率反馈，不叠加固定消息数、判断间隔和冷却；权限与每小时上限继续生效。</small></div>
       ${field("participation_frequency", "动态回复频率", s.participation_frequency ?? .5, "0停止普通自主参与，1允许每批进入规划；不是随机回复概率。仅动态节奏生效。", {type:"number",min:0,max:1,step:.05})}
       ${switchField("participation_followup", "允许连续接话", "刚回复的成员在 120 秒内继续说话时，允许一次跳过新消息门槛与冷却；中间夹有其他成员发言也能衔接。续接收集窗口最多 2 秒，仍判断是否需要回应，保留每小时限额。", s.participation_followup)}
@@ -606,10 +588,6 @@ function renderSettings(target = "#content") {
     Object.assign(patch, tools);
     mutate("settings", patch, selectedScope, settingsRevision);
   };
-  if ($("#legacy-preview")) $("#legacy-preview").onclick = () => mutate("legacy_preview");
-  if ($("#legacy-import")) $("#legacy-import").onclick = () => mutate("legacy_import");
-  if ($("#legacy-cancel")) $("#legacy-cancel").onclick = () => mutate("legacy_cancel");
-  updateLegacyImportStatus();
   if ($("#clear-messages")) $("#clear-messages").onclick = async () => { if (await confirmAction("永久清除当前会话所有原始聊天素材？学习条目及其证据摘录会保留。")) mutate("clear_messages"); };
 }
 
@@ -748,9 +726,9 @@ async function mutate(action, payload = {}, scope = selectedScope, settingsRevis
   const context = writeContext();
   return guarded(async () => {
     const result = await api("action", {action, scope, payload, ...(action === "profile" ? {effect_scope:scope} : {}), ...(settingsRevision !== undefined ? {settings_revision:settingsRevision} : {})});
-    notify(result.message || (action === "legacy_preview" ? "旧记忆预览已更新。" : action === "legacy_import" ? "已开始迁入，原库保持不变。" : "已保存。"));
+    notify(result.message || "已保存。");
     await afterWrite(context);
-    if (action === "learn" || action === "legacy_import") schedulePoll(1500);
+    if (action === "learn") schedulePoll(1500);
   });
 }
 
@@ -792,7 +770,7 @@ window.addEventListener("beforeunload", event => { if (dirty) { event.preventDef
 function schedulePoll(delay) {
   clearTimeout(pollTimer);
   if (!bridge || document.hidden) return;
-  const interval = delay ?? (data?.busy?.length || data?.legacy_import?.state === "running" ? 8000 : 30000) * Math.min(4, 2 ** pollErrors);
+  const interval = delay ?? (data?.busy?.length ? 8000 : 30000) * Math.min(4, 2 ** pollErrors);
   pollTimer = setTimeout(async () => {
     if (pending || polling || document.hidden) { schedulePoll(); return; }
     polling = true;

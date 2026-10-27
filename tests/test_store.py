@@ -5,8 +5,8 @@ import sqlite3
 
 import pytest
 
-from astrbot_plugin_ovenheart.settings import DEFAULTS as BASE_DEFAULTS
-from astrbot_plugin_ovenheart.store import Store
+from astrbot_plugin_ovenheart.core.settings import DEFAULTS as BASE_DEFAULTS
+from astrbot_plugin_ovenheart.core.store import Store
 
 DEFAULTS = BASE_DEFAULTS | {"session_isolation": True}
 

@@ -59,7 +59,7 @@ async def test_siliconflow_binary_embedding_reuses_native_openai_provider():
     )
     from openai import AsyncOpenAI
 
-    from astrbot_plugin_ovenheart.image_memory import NativeImageEmbedding
+    from astrbot_plugin_ovenheart.memory.image_memory import NativeImageEmbedding
 
     requests = []
 

@@ -10,7 +10,7 @@ from pathlib import Path
 def test_release_imports_without_modules_from_the_source_checkout(tmp_path):
     root = Path(__file__).resolve().parents[1]
     built = subprocess.run(
-        [sys.executable, str(root / "scripts/package.py")],
+        [sys.executable, str(root / "tools/package.py")],
         cwd=root,
         capture_output=True,
         text=True,
@@ -29,28 +29,26 @@ sys.modules[spec.name] = module
 spec.loader.exec_module(module)
 main = importlib.import_module(spec.name+'.main')
 assert main.PersonaPlugin
-planner = importlib.import_module(spec.name+'.planner')
+planner = importlib.import_module(spec.name+'.chat.planner')
 assert planner.ConversationPlanner
-people = importlib.import_module(spec.name+'.person_memory')
+people = importlib.import_module(spec.name+'.memory.person_memory')
 assert people.PersonMemory
 retrieval = importlib.import_module(spec.name+'.vendor.maibot.amemorix.retrieval')
 assert retrieval.DualPathRetriever
-summary = importlib.import_module(spec.name+'.memory_summary')
+summary = importlib.import_module(spec.name+'.memory.memory_summary')
 assert summary.NativeSummaryImporter
 kernel = importlib.import_module(spec.name+'.vendor.maibot.amemorix.runtime.sdk_memory_kernel')
 assert kernel.SDKMemoryKernel
-native = importlib.import_module(spec.name+'.native_memory_kernel')
+native = importlib.import_module(spec.name+'.memory.native_memory_kernel')
 assert native.NativeMemoryKernel
-midterm = importlib.import_module(spec.name+'.midterm')
+midterm = importlib.import_module(spec.name+'.memory.midterm')
 assert midterm.MidTermMemory(None).template
-emoji = importlib.import_module(spec.name+'.emoji_actions')
+emoji = importlib.import_module(spec.name+'.memory.emoji_actions')
 assert emoji.EmojiActions
-images = importlib.import_module(spec.name+'.image_memory')
+images = importlib.import_module(spec.name+'.memory.image_memory')
 assert images.ImageMemory
-rhythm = importlib.import_module(spec.name+'.reply_rhythm')
+rhythm = importlib.import_module(spec.name+'.chat.reply_rhythm')
 assert rhythm.ReplyRhythm
-legacy = importlib.import_module(spec.name+'.legacy_import')
-assert legacy.LivingMemoryImport
 """
     result = subprocess.run(
         [sys.executable, "-I", "-c", code, str(extracted)],

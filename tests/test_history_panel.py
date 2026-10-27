@@ -5,7 +5,7 @@ import sqlite3
 
 import pytest
 
-from astrbot_plugin_ovenheart.settings import SHARED_SCOPE
+from astrbot_plugin_ovenheart.core.settings import SHARED_SCOPE
 from tests.test_runtime import api_call, sources
 
 pytest_plugins = ["tests.test_runtime"]

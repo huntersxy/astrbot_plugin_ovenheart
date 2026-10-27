@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from astrbot_plugin_ovenheart.settings import DEFAULTS
+from astrbot_plugin_ovenheart.core.settings import DEFAULTS
 from tests.test_retrieval import TRAITS
 
 pytest_plugins = ["tests.test_retrieval"]

@@ -4,14 +4,14 @@ import json
 
 import pytest
 
-from astrbot_plugin_ovenheart.learning import (
+from astrbot_plugin_ovenheart.core.learning import (
     LearningFormatError,
     build_guidance,
     jargon_term,
     mentions_jargon,
     parse_candidates,
 )
-from astrbot_plugin_ovenheart.settings import (
+from astrbot_plugin_ovenheart.core.settings import (
     DEFAULTS,
     PROFILE_DEFAULTS,
     validate_settings,
@@ -101,7 +101,7 @@ def test_model_explanations_and_closed_reasoning_are_accepted(wrapper):
     ],
 )
 def test_schema_drift_and_truncation_are_repairable_without_guessing(text):
-    from astrbot_plugin_ovenheart.learning import LearningFormatError
+    from astrbot_plugin_ovenheart.core.learning import LearningFormatError
 
     with pytest.raises(LearningFormatError):
         parse_candidates(text, MESSAGES, DEFAULTS)

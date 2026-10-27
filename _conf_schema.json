@@ -86,48 +86,66 @@
     "description": "A_memorix 通用记忆",
     "type": "bool",
     "default": true,
-    "hint": "按当前会话和人格隔离段落与关系，使用原双路检索、BM25和图谱；配置嵌入模型后使用双向量池。LivingMemory 的旧数据继续保留。"
+    "hint": "按会话和人格保存段落与关系；使用 BM25、图谱和配置的嵌入提供商检索。"
   },
   "image_memory_enabled": {
-    "type": "bool", "description": "图片记忆", "default": true,
+    "type": "bool",
+    "description": "图片记忆",
+    "default": true,
     "hint": "保存当前会话中有真实来源的图片与描述，支持同图召回及配置后的相似图召回。暂停学习后不再入库。"
   },
   "emoji_enabled": {
-    "type": "bool", "description": "Planner表情动作", "default": true,
+    "type": "bool",
+    "description": "Planner表情动作",
+    "default": true,
     "hint": "Planner从当前会话已识别的表情包中选择，随文字回复后单独发送；自己的真实媒体发送进入后续规划。"
   },
   "reply_rhythm_enabled": {
-    "type": "bool", "description": "语义分段与回复节奏", "default": true,
+    "type": "bool",
+    "description": "语义分段与回复节奏",
+    "default": true,
     "hint": "Planner正文按原版语义切分并用原文发送，模拟有限打字间隔。宿主已启用分段时沿用宿主，不叠加。"
   },
   "reply_split_provider_id": {
-    "type": "string", "description": "语义断句模型 ID", "default": "",
+    "type": "string",
+    "description": "语义断句模型 ID",
+    "default": "",
     "hint": "留空使用Planner模型或当前会话模型；推荐填写已有快速模型，调用计入reply_split用量。"
   },
   "reply_split_max_messages": {
-    "type": "int", "description": "每次正文最多分段数", "default": 3
+    "type": "int",
+    "description": "每次正文最多分段数",
+    "default": 3
   },
   "reply_typing_speed": {
-    "type": "float", "description": "模拟打字时间倍率", "default": 0.25,
+    "type": "float",
+    "description": "模拟打字时间倍率",
+    "default": 0.25,
     "hint": "0关闭等待；按原版中英文字时间计算，每段最多等待5秒。不会修改正文。"
   },
   "emoji_provider_id": {
-    "type": "string", "description": "独立表情选择模型 ID", "default": "",
+    "type": "string",
+    "description": "独立表情选择模型 ID",
+    "default": "",
     "hint": "应使用支持图片的模型。留空优先使用已启用视觉的Planner模型，否则使用宿主图片描述模型；子代理调用计入emoji_select用量。"
   },
   "planner_visual_enabled": {
-    "type": "bool", "description": "Planner视觉候选拼图", "default": false,
+    "type": "bool",
+    "description": "Planner视觉候选拼图",
+    "default": false,
     "hint": "仅当Planner模型支持图片输入时开启。开启后候选拼图进入内部工具上下文；关闭时使用已有描述选择，不假装看到了候选图。"
   },
   "image_embedding_provider_id": {
-    "type": "string", "description": "图片嵌入模型 ID", "default": "",
+    "type": "string",
+    "description": "图片嵌入模型 ID",
+    "default": "",
     "hint": "使用 AstrBot 的 DashScope 多模态嵌入，或硅基流动 OpenAI 嵌入提供商的 Qwen/Qwen3-VL-Embedding-8B。留空仍支持同图记忆。"
   },
   "person_memory_enabled": {
     "description": "人物记忆与画像",
     "type": "bool",
     "default": true,
-    "hint": "使用移植的 A_memorix 事实账本维护有来源的人物画像，按真实会话和人格隔离；独立于 LivingMemory 回忆召回。暂停学习时停止自动更新。"
+    "hint": "按真实成员、会话和人格保存有来源的事实与画像，暂停学习时停止自动更新。"
   },
   "person_memory_min_messages": {
     "description": "人物记忆最少新发言",
@@ -188,7 +206,7 @@
     "default": true
   },
   "memory_enabled": {
-    "description": "参考 LivingMemory 记忆",
+    "description": "使用记忆辅助聊天",
     "hint": "学习与自主参与判断可参考记忆；参与阶段与习惯召回共用检索预算，用户独立记忆留待确定回复对象后读取。",
     "type": "bool",
     "default": true
@@ -198,7 +216,11 @@
     "type": "int",
     "default": 4,
     "hint": "限制同时打开的记忆内核；不活跃会话按最近使用顺序关闭，记忆数据保留，重新访问时自动加载。忙碌会话不会被关闭。",
-    "slider": {"min": 1, "max": 16, "step": 1}
+    "slider": {
+      "min": 1,
+      "max": 16,
+      "step": 1
+    }
   },
   "memory_top_k": {
     "description": "每批最多参考记忆数",
@@ -363,7 +385,7 @@
       "maibot",
       "legacy"
     ],
-    "hint": "maibot 使用持续工具规划，支持查询、回复、等待和结束；legacy 保留原 Jev/JSON 单次判断。"
+    "hint": "持续工具规划支持查询、回复、等待和结束；单次判读用于独立的一次参与决策。"
   },
   "planner_provider_id": {
     "description": "参与决策模型 ID",

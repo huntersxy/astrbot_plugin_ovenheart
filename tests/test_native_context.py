@@ -7,7 +7,7 @@ from astrbot.core.db.po import ConversationV2
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from astrbot_plugin_ovenheart.native_context import conversation_metadata
+from astrbot_plugin_ovenheart.chat.native_context import conversation_metadata
 from tests.test_runtime import event
 
 pytest_plugins = ["tests.test_runtime"]

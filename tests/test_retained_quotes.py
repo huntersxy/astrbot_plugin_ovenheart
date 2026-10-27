@@ -2,7 +2,6 @@
 
 import json
 import sqlite3
-import time
 from types import SimpleNamespace
 
 import pytest
@@ -11,8 +10,7 @@ pytest.importorskip("astrbot.api")
 
 from astrbot.core.message.components import Reply  # noqa: E402
 
-from astrbot_plugin_ovenheart.settings import DEFAULTS  # noqa: E402
-from astrbot_plugin_ovenheart.store import Store  # noqa: E402
+from astrbot_plugin_ovenheart.core.store import Store  # noqa: E402
 from tests.test_runtime import api_call, completion, event  # noqa: E402
 
 pytest_plugins = ["tests.test_runtime"]
@@ -116,59 +114,3 @@ async def test_current_blacklist_filters_previously_stored_quotes(plugin, author
         "QUOTED_DENY" not in call.kwargs["prompt"]
         for call in plugin.context.llm_generate.await_args_list
     )
-
-
-async def test_legacy_message_schema_preserves_ids_and_quotes_follow_source_retention(
-    tmp_path,
-):
-    path = tmp_path / "old.sqlite3"
-    scope, now = "a" * 24, time.time()
-    with sqlite3.connect(path) as db:
-        db.execute(
-            "CREATE TABLE messages (id INTEGER PRIMARY KEY,scope TEXT NOT NULL,source_id TEXT NOT NULL,sender TEXT NOT NULL,text TEXT NOT NULL,created REAL NOT NULL,consumed INTEGER NOT NULL DEFAULT 0,UNIQUE(scope,source_id))"
-        )
-        db.execute(
-            "INSERT INTO messages VALUES (23,?,?,?,?,?,0)",
-            (scope, "legacy", "alice", "原始素材", now),
-        )
-    store = Store(path)
-    await store.call("initialize")
-    before = await store.call("batch", scope, 30)
-    assert (
-        before[0]["id"] == 23
-        and before[0]["source_id"] == "legacy"
-        and "reply_to" not in before[0]
-    )
-    settings = DEFAULTS | {"session_isolation": True}
-    assert not await store.call(
-        "capture",
-        scope,
-        "qq:g:1",
-        "default",
-        "test",
-        "legacy",
-        "alice",
-        "原始素材",
-        settings,
-    )
-    assert await store.call(
-        "capture",
-        scope,
-        "qq:g:1",
-        "default",
-        "test",
-        "new",
-        "alice",
-        "新的回应",
-        settings,
-        False,
-        {"sender": "bob", "text": "引用前提"},
-    )
-    await store.call("initialize")
-    batch = await store.call("batch", scope, 30)
-    assert [m["id"] for m in batch] == [23, 24]
-    assert batch[1]["reply_to"] == {"sender": "bob", "text": "引用前提", "self": False}
-    with sqlite3.connect(path) as db:
-        db.execute("UPDATE messages SET created=?", (now - 15 * 86400,))
-    await store.call("prune", 14)
-    assert await store.call("batch", scope, 30) == []

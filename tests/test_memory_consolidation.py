@@ -11,7 +11,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from astrbot_plugin_ovenheart.room_memory import RoomMemory
+from astrbot_plugin_ovenheart.memory.room_memory import RoomMemory
 from tests.test_room_memory import SyntheticEmbedding
 from tests.test_runtime import event
 
@@ -19,7 +19,7 @@ pytest_plugins = ["tests.test_participation"]
 
 
 async def test_new_small_session_does_not_open_memory_but_existing_session_is_checked(tmp_path):
-    from astrbot_plugin_ovenheart.memory_consolidation import MemoryConsolidation
+    from astrbot_plugin_ovenheart.memory.memory_consolidation import MemoryConsolidation
 
     rooms = SimpleNamespace(
         directory=tmp_path,

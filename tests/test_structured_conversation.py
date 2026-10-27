@@ -14,7 +14,7 @@ from astrbot.core.db.po import Conversation
 from astrbot.core.message.components import At, Image, Plain, Reply
 from astrbot.core.provider.entities import LLMResponse
 
-from astrbot_plugin_ovenheart.participation import (
+from astrbot_plugin_ovenheart.chat.participation import (
     ParticipationFormatError,
     parse_plan,
     planner_message,
@@ -447,7 +447,7 @@ async def test_empty_generation_is_visible_in_audit_without_repeating_tools(stru
 async def test_reply_window_obeys_settings_without_trimming_planner_or_native_history(
     structured, autonomous, limit
 ):
-    from astrbot_plugin_ovenheart.reply_payload import dumps
+    from astrbot_plugin_ovenheart.chat.reply_payload import dumps
 
     plugin = structured
     plugin.settings.update(reply_context_messages=limit, reply_context_budget=1000)

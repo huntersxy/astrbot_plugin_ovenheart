@@ -579,7 +579,7 @@
     "utils/async_work.py": {
       "source": "src/common/async_work.py",
       "upstream_sha256": "d540bb38e1866717e9e38a1f4cb1490c9af827c85b061e3300201c73864b1fb6",
-      "ported_sha256": "fb78b3c33bfdaba840723612f552c858840a8bef3150b578f723278e566c6522"
+      "ported_sha256": "589ca30a1f228b4cf59e45b3e056072454225ab7b1de2880df3bc72b8feb155d"
     }
   }
 }

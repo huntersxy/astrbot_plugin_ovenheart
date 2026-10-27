@@ -8,7 +8,7 @@ import pytest
 from astrbot.api.provider import ProviderRequest
 from astrbot.core.provider.func_tool_manager import FunctionToolManager
 
-from astrbot_plugin_ovenheart.settings import DEFAULTS, validate_settings
+from astrbot_plugin_ovenheart.core.settings import DEFAULTS, validate_settings
 from tests.test_participation import build_tools, requests, skills_like_config
 from tests.test_runtime import api_call, event
 

@@ -8,8 +8,11 @@ from unittest.mock import AsyncMock
 import pytest
 from astrbot.core.message.components import Reply
 
-from astrbot_plugin_ovenheart.participation import ParticipationFormatError, parse_plan
-from astrbot_plugin_ovenheart.settings import DEFAULTS
+from astrbot_plugin_ovenheart.chat.participation import (
+    ParticipationFormatError,
+    parse_plan,
+)
+from astrbot_plugin_ovenheart.core.settings import DEFAULTS
 from tests.test_participation import decision, requests
 from tests.test_retrieval import TRAITS
 from tests.test_runtime import event

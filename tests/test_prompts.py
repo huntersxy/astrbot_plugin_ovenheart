@@ -2,8 +2,8 @@
 
 import pytest
 
-from astrbot_plugin_ovenheart import prompts
-from astrbot_plugin_ovenheart.store import Store
+from astrbot_plugin_ovenheart.core import prompts
+from astrbot_plugin_ovenheart.core.store import Store
 
 
 @pytest.fixture

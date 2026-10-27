@@ -11,7 +11,7 @@ from astrbot.builtin_stars.astrbot.main import Main
 from astrbot.core.agent.tool import FunctionTool, ToolSet
 from astrbot.core.message.components import At, Image, Plain, Reply
 
-from astrbot_plugin_ovenheart import prompts
+from astrbot_plugin_ovenheart.core import prompts
 from astrbot_plugin_ovenheart.main import NATIVE_EMPTY_MENTION_PROMPT
 from tests.test_runtime import event
 

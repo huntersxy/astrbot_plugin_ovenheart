@@ -10,8 +10,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from astrbot_plugin_ovenheart.memory_embedding import EmbeddingAPIAdapter
-from astrbot_plugin_ovenheart.native_memory_kernel import NativeMemoryKernel
+from astrbot_plugin_ovenheart.memory.memory_embedding import EmbeddingAPIAdapter
+from astrbot_plugin_ovenheart.memory.native_memory_kernel import NativeMemoryKernel
 from astrbot_plugin_ovenheart.vendor.maibot.amemorix import host
 from astrbot_plugin_ovenheart.vendor.maibot.amemorix.runtime.models import (
     KernelSearchRequest,

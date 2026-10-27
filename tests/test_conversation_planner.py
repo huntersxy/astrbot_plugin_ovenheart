@@ -89,7 +89,7 @@ async def test_retired_turn_cleanup_releases_its_native_lock_and_keeps_other_tur
 ):
     from astrbot.core.utils.session_lock import session_lock_manager
 
-    from astrbot_plugin_ovenheart.runtime_diagnostics import close_retired_turns
+    from astrbot_plugin_ovenheart.core.runtime_diagnostics import close_retired_turns
 
     plugin, provider = native_planner
     provider.text_chat.side_effect = [
@@ -388,7 +388,7 @@ async def test_reply_can_continue_to_another_real_target(native_planner):
     assert incoming.get_extra("ovenheart_decision")["target"]["source"] == "older"
     await plugin.apply_participation(incoming, first)
     await send_reply(plugin, incoming, "bob，你先看下载目录")
-    from astrbot_plugin_ovenheart.participation import offered_messages
+    from astrbot_plugin_ovenheart.chat.participation import offered_messages
 
     scope = incoming.get_extra("ovenheart_decision")["scope"]
     offered = offered_messages(list(plugin.participation.windows[scope]["messages"]), plugin.settings)
@@ -423,7 +423,7 @@ async def test_wait_timeout_resumes_the_same_native_tool_loop(native_planner):
 
 
 async def test_partial_reply_keeps_target_available(native_planner):
-    from astrbot_plugin_ovenheart.participation import offered_messages
+    from astrbot_plugin_ovenheart.chat.participation import offered_messages
 
     plugin, provider = native_planner
     provider.text_chat.side_effect = [action("reply", msg_id="1", reply_reference="回答问题")]
@@ -478,8 +478,8 @@ async def test_new_input_resumes_an_actual_wait_without_restarting(native_planne
 
 
 async def test_direct_trigger_remains_reply_target_after_wait_is_resumed():
-    from astrbot_plugin_ovenheart.planner import PlannerSession
-    from astrbot_plugin_ovenheart.settings import DEFAULTS
+    from astrbot_plugin_ovenheart.chat.planner import PlannerSession
+    from astrbot_plugin_ovenheart.core.settings import DEFAULTS
 
     original = event("direct-original", text="帮我看看", sender="alice")
     original.is_at_or_wake_command = True

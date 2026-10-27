@@ -2,7 +2,7 @@
 
 from unittest.mock import AsyncMock
 
-from astrbot_plugin_ovenheart.rhythm import ConversationRhythm
+from astrbot_plugin_ovenheart.chat.rhythm import ConversationRhythm
 from astrbot_plugin_ovenheart.vendor.maibot.dynamic_gate import DynamicReplyGate
 from astrbot_plugin_ovenheart.vendor.maibot.reply_likelihood import (
     ReplyLikelihoodInput,

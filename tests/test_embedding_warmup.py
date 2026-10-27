@@ -11,7 +11,7 @@ import pytest
 
 pytest.importorskip("astrbot.api")
 
-from astrbot_plugin_ovenheart.settings import DEFAULTS  # noqa: E402
+from astrbot_plugin_ovenheart.core.settings import DEFAULTS  # noqa: E402
 from tests.test_retrieval import TRAITS  # noqa: E402
 from tests.test_runtime import api_call, event, sources  # noqa: E402
 
