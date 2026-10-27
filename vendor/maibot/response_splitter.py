@@ -4,10 +4,9 @@ from typing import List, Tuple
 
 import json
 
-from logging import getLogger as get_logger
+from astrbot.api import logger
 from .response_host import LLMServiceClient
 
-logger = get_logger("llm_sentence_splitter")
 
 _NO_SPLIT_MARKER = "no_split"
 

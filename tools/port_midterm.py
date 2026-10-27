@@ -57,12 +57,11 @@ from datetime import datetime
 from hashlib import sha1
 from math import sqrt
 from typing import Any, Sequence
-from logging import getLogger
+from astrbot.api import logger
 
 from json_repair import repair_json
 from pydantic import BaseModel
 
-logger = getLogger(__name__)
 MID_TERM_MEMORY_REFERENCE_MARKER = "【聊天回想-内部参考】"
 MID_TERM_MEMORY_RECALL_SUMMARY_TEXT_LIMIT = 1400
 MID_TERM_MEMORY_DEFAULT_RECALL_THRESHOLD = 0.8

@@ -12,6 +12,7 @@ The rest of OvenHeart remains under its repository AGPL-3.0 license.
 `mid_term.py` contains the original pure summary parser, cue normalization,
 cosine ranking and reference formatting from `src/maisaka/memory/mid_term.py`.
 Its native internal identity DTO replaces MaiBot's context-message dependency;
+logging uses `astrbot.api.logger` instead of Python's standard logger;
 the original algorithm bodies and the Chinese summary prompt are preserved.
 File and per-symbol AST hashes are recorded in `mid_term_source.json`;
 `tools/port_midterm.py` reproduces the selection. Native compression scheduling,

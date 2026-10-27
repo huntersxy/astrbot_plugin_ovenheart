@@ -13,11 +13,11 @@ def main():
     splitter = (SOURCE / "llm_sentence_splitter.py").read_text(encoding="utf-8")
     ported = splitter.replace(
         "from src.common.logger import get_logger",
-        "from logging import getLogger as get_logger",
+        "from astrbot.api import logger",
     ).replace(
         "from src.services.llm_service import LLMServiceClient",
         "from .response_host import LLMServiceClient",
-    )
+    ).replace('logger = get_logger("llm_sentence_splitter")\n', "")
     target = ROOT / "vendor/maibot/response_splitter.py"
     target.write_text(ported, encoding="utf-8", newline="\n")
     source = (SOURCE / "utils.py").read_text(encoding="utf-8")

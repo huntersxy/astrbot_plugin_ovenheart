@@ -3,7 +3,7 @@
   "splitter": {
     "source": "src/chat/utils/llm_sentence_splitter.py",
     "source_sha256": "11b3739947919f20b11596c7875595a88ee1b204765c8a11431b32475466501a",
-    "ported_sha256": "2485d900532bfe68effc9570a9453f64965172cac9b6d49db8611c1d1cede9fd",
+    "ported_sha256": "095619b3e25965549a076eed782d198d86405bb3e769433ed7087cc8e469a8a8",
     "symbol_ast_sha256": {
       "_normalize_json_payload": "fa9d7a8058f1d9c5fba675760bfbb77182b2f20d0d482ab1417a226085c8eca9",
       "_is_no_split_marker": "cf893bdf1995b29e905697631e724f2fbbe6047f5805c758af85bf06f6a0a346",
