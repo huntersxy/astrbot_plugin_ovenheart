@@ -1498,7 +1498,7 @@ class RoomMemory:
                 raise ValueError("记忆运行时正在关闭。")
             state = self.rooms.get(scope)
             if state is None:
-                if len(self.rooms) >= 64:
+                while len(self.rooms) >= self.plugin.settings["memory_runtime_max_rooms"]:
                     candidate = next(
                         (
                             k

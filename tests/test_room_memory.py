@@ -84,6 +84,30 @@ async def test_original_sparse_graph_search_retains_native_evidence(memories):
     )
 
 
+async def test_room_limit_closes_idle_runtime_and_reopens_persisted_memory(memories):
+    memories.settings.update(
+        memory_runtime_max_rooms=1,
+        memory_summary_enabled=False,
+        person_memory_enabled=False,
+    )
+    first, first_scope, first_persona, first_messages = await material(
+        memories, "first-room", session="123"
+    )
+    saved = await memories.room_memory.remember(
+        first, first_scope, first_persona, note(), first_messages
+    )
+    second, second_scope, second_persona, second_messages = await material(
+        memories, "second-room", session="456"
+    )
+    await memories.room_memory.remember(
+        second, second_scope, second_persona, note(), second_messages
+    )
+    assert list(memories.room_memory.rooms) == [second_scope]
+    recovered = await memories.room_memory.search(first, first_scope, first_persona, "Neko 猫咪")
+    assert any(row["id"] == saved["id"] for row in recovered)
+    assert list(memories.room_memory.rooms) == [first_scope]
+
+
 async def test_cold_room_warmup_does_not_block_existing_room_recall(
     memories, monkeypatch
 ):

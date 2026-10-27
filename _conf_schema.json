@@ -193,6 +193,13 @@
     "type": "bool",
     "default": true
   },
+  "memory_runtime_max_rooms": {
+    "description": "同时驻留的记忆会话上限",
+    "type": "int",
+    "default": 4,
+    "hint": "限制同时打开的记忆内核；不活跃会话按最近使用顺序关闭，记忆数据保留，重新访问时自动加载。忙碌会话不会被关闭。",
+    "slider": {"min": 1, "max": 16, "step": 1}
+  },
   "memory_top_k": {
     "description": "每批最多参考记忆数",
     "type": "int",

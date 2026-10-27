@@ -7,6 +7,7 @@ import json
 import subprocess
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -15,6 +16,30 @@ from tests.test_room_memory import SyntheticEmbedding
 from tests.test_runtime import event
 
 pytest_plugins = ["tests.test_participation"]
+
+
+async def test_new_small_session_does_not_open_memory_but_existing_session_is_checked(tmp_path):
+    from astrbot_plugin_ovenheart.memory_consolidation import MemoryConsolidation
+
+    rooms = SimpleNamespace(
+        directory=tmp_path,
+        rooms={},
+        call=AsyncMock(return_value={"attempted": 0, "processed": [], "episode_pending": False}),
+    )
+    plugin = SimpleNamespace(
+        room_memory=rooms,
+        settings={"memory_summary_min_messages": 12, "memory_summary_interval": 600},
+    )
+    consolidation = MemoryConsolidation(plugin)
+    consolidation.permitted = AsyncMock(return_value=True)
+    consolidation.inputs = AsyncMock(return_value=[{"source_id": "source"}])
+    await consolidation.observe(object(), "scope", "persona")
+    rooms.call.assert_not_awaited()
+    metadata = tmp_path / "scope" / "metadata" / "metadata.db"
+    metadata.parent.mkdir(parents=True)
+    metadata.touch()
+    await consolidation.observe(object(), "scope", "persona")
+    rooms.call.assert_awaited_once()
 
 
 def summary(

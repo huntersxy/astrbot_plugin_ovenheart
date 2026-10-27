@@ -79,6 +79,12 @@ class MemoryConsolidation:
         if self.busy or not await self.permitted(event, scope, persona):
             return
         messages = await self.inputs(scope)
+        if (
+            len(messages) < self.plugin.settings["memory_summary_min_messages"]
+            and scope not in self.plugin.room_memory.rooms
+            and not (self.plugin.room_memory.directory / scope / "metadata" / "metadata.db").exists()
+        ):
+            return
         status = await self.plugin.room_memory.call(
             scope, "summary_status", [m["source_id"] for m in messages], event=event
         )
