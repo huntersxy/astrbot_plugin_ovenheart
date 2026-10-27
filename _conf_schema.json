@@ -118,6 +118,12 @@
     "default": true,
     "hint": "在独立表情页管理公共图库与本会话候选。Planner按描述选择，随文字附图或单独发送；自己的规划回复不再重复调用meme_manager情感检索。"
   },
+  "emoji_static_to_gif": {
+    "type": "bool",
+    "description": "静态图转 GIF 发送",
+    "default": false,
+    "hint": "开启后，烤箱之心托管回复中的静态图片会转换为 1 帧 GIF 发送。已有 GIF 和其他动态图保持原样；不修改图库原文件，不生成临时文件。"
+  },
   "emoji_frequency": {
     "type": "float",
     "description": "主动表情推荐比例",

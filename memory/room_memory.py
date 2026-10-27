@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import sqlite3
 import threading
 import time
 import weakref
@@ -651,20 +652,26 @@ class RoomState:
         }
 
     async def image_candidates(self, query=""):
+        from .emoji_retrieval import rank_candidates
+
         rows = self.metadata._conn.execute(
             """
-            SELECT o.asset_id, MAX(v.created_at) AS recent FROM image_occurrences o
+            SELECT o.asset_id, v.text AS caption FROM image_occurrences o
             JOIN image_observations v ON v.occurrence_id=o.occurrence_id
-            WHERE o.chat_id=? AND o.status='active' AND v.superseded_by=''
+            JOIN image_assets a ON a.asset_id=o.asset_id
+            WHERE o.chat_id=? AND o.status='active' AND a.status='active' AND v.superseded_by=''
               AND json_extract(v.evidence_json,'$.is_emoji')=1
-              AND (?='' OR instr(lower(v.text),lower(?))>0)
-            GROUP BY o.asset_id ORDER BY recent DESC LIMIT 64
+            ORDER BY v.created_at DESC, v.observation_id DESC
         """,
-            (self.path.name, query, query),
+            (self.path.name,),
         ).fetchall()
+        catalog = {}
+        for row in rows:
+            catalog.setdefault(row["asset_id"], dict(row))
+        ranked = await rank_candidates(self, list(catalog.values()), query[:240], 12)
         return [
-            result
-            for row in rows
+            result | {"score": row.get("score", 0), "caption": row["caption"]}
+            for row in ranked
             if (result := await self.image_asset(row["asset_id"]))["success"]
         ]
 
@@ -1013,6 +1020,28 @@ class RoomState:
             self.kernel = None
 
 
+def read_summary_status(path, retained):
+    """Inspect an unloaded room's committed progress without starting its SDK."""
+    empty = {"attempted": 0, "processed": set(), "episode_pending": False}
+    if not path.is_file():
+        return empty
+    db = sqlite3.connect(path.as_uri() + "?mode=ro", uri=True, timeout=0.2)
+    try:
+        db.execute("BEGIN")
+        tables = {row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        if not {"ovenheart_summary_runtime", "ovenheart_summary_processed", "episode_rebuild_sources"} <= tables:
+            return empty
+        row = db.execute("SELECT attempted FROM ovenheart_summary_runtime WHERE singleton=1").fetchone()
+        processed = {row[0] for row in db.execute("SELECT source_id FROM ovenheart_summary_processed")}
+        return {
+            "attempted": row[0] if row else 0,
+            "processed": processed if retained is None else processed.intersection(retained),
+            "episode_pending": db.execute("SELECT 1 FROM episode_rebuild_sources WHERE status IN ('pending','failed','running') LIMIT 1").fetchone() is not None,
+        }
+    finally:
+        db.close()
+
+
 class RoomMemory:
     def __init__(self, plugin):
         self.plugin = plugin
@@ -1337,6 +1366,14 @@ class RoomMemory:
         revision = self.plugin.settings_revision
         if self.closing or self.plugin.closing:
             raise ValueError("记忆运行时正在关闭。")
+        if operation == "summary_status" and scope not in self.rooms:
+            status = await asyncio.to_thread(
+                read_summary_status, self.directory / scope / "metadata" / "metadata.db",
+                args[0] if args else None,
+            )
+            if revision != self.plugin.settings_revision or self.closing or self.plugin.closing:
+                raise ValueError("读取摘要进度期间配置或运行状态已改变。")
+            return status
         empty_reads = {
             "search": [],
             "image_candidates": [],

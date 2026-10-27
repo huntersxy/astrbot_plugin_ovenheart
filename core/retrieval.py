@@ -93,6 +93,14 @@ def normalized_vector(value) -> list[float]:
     return [x / norm for x in value]
 
 
+def query_terms(query):
+    query = query.casefold()
+    terms = set(re.findall(r"[a-z0-9_]{2,}", query))
+    for part in re.findall(r"[\u3400-\u9fff]+", query):
+        terms.update(part[i : i + 2] for i in range(len(part) - 1))
+    return terms
+
+
 def rank_traits(
     traits: list[dict], query: str, settings: dict, similarities=None
 ) -> list[dict]:
@@ -108,9 +116,7 @@ def rank_traits(
         Ordered copies with scores and human-readable selection reasons.
     """
     query = query[:2400].casefold()
-    terms = set(re.findall(r"[a-z0-9_]{2,}", query))
-    for part in re.findall(r"[\u3400-\u9fff]+", query):
-        terms.update(part[i : i + 2] for i in range(len(part) - 1))
+    terms = query_terms(query)
     ranked = []
     now = time.time()
     for trait in traits:

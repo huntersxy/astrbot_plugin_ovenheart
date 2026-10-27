@@ -159,8 +159,26 @@ class OutgoingMediaBridge:
             text = any(
                 isinstance(part, Plain) and part.text.strip() for part in message.chain
             )
+            wire = message
+            if self.plugin.settings["emoji_static_to_gif"]:
+                from .image_delivery import single_frame_gif
+
+                parts = []
+                for part in message.chain:
+                    converted = None
+                    if isinstance(part, Image):
+                        try:
+                            encoded = await asyncio.wait_for(part.convert_to_base64(), 3)
+                            converted = await asyncio.to_thread(single_frame_gif, base64.b64decode(encoded))
+                        except Exception as exc:
+                            logger.warning("静态图转 GIF 未完成，使用原图发送 (%s)", type(exc).__name__)
+                    parts.append(Image.fromBytes(converted) if converted is not None else part)
+                wire = copy.copy(message)
+                wire.chain = parts
+                # Transport encoding does not create another library asset.
+                # Keep captions and memory references tied to the original.
             try:
-                result = await original(message)
+                result = await original(wire)
             except Exception:
                 if text:
                     failed()

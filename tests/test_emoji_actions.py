@@ -40,7 +40,7 @@ async def test_proactive_candidates_attach_without_an_extra_lookup_and_obey_cont
         },
     )
     assert uploaded["status"] == "ok", uploaded
-    incoming = event("happy-news", text="终于考过啦！")
+    incoming = event("happy-news", text="好消息，终于考过啦！")
     incoming.is_at_or_wake_command = True
     incoming.send = AsyncMock(return_value=True)
     sent = incoming.send
@@ -282,14 +282,15 @@ async def test_direct_selected_emoji_needs_no_text_or_visual_subagent(native_pla
     p.context.llm_generate.assert_not_awaited()
 
 
-async def test_standalone_emoji_uses_original_visual_selector_and_returns_media_only_receipt(
-    native_planner,
+@pytest.mark.parametrize("selected_index", [1, 999])
+async def test_standalone_emoji_validates_visual_selection_before_sending(
+    native_planner, selected_index,
 ):
     p, provider = native_planner
     await seed_emoji_library(p)
     p.context.llm_generate = AsyncMock(
         return_value=SimpleNamespace(
-            completion_text='{"emoji_index":999,"reason":"回应开心的语气"}'
+            completion_text=json.dumps({"emoji_index": selected_index, "reason": "回应当前语气"})
         )
     )
     provider.text_chat.side_effect = [action("send_emoji"), action("stop")]
@@ -298,15 +299,15 @@ async def test_standalone_emoji_uses_original_visual_selector_and_returns_media_
     sent = AsyncMock(return_value=True)
     incoming.send = sent
     assert not [request async for request in p.participate(incoming)]
-    assert sent.await_count == 1
+    assert sent.await_count == (1 if selected_index == 1 else 0)
     assert p.context.llm_generate.await_count == 1
     selection_call = p.context.llm_generate.await_args.kwargs
     assert selection_call["chat_provider_id"] == "selector-vision"
     assert selection_call["image_urls"][0].startswith("data:image/png;base64,")
     assert "哈哈哈太棒了" in selection_call["prompt"]
     receipt = incoming.get_extra("ovenheart_planner_receipt")
-    assert receipt["send_hook"] and receipt["media_only"] and not receipt["reply_text"]
-    assert receipt["media"]["selection"]["fallback_to_first"]
+    assert receipt["media_only"] and not receipt["reply_text"]
+    assert receipt["media"]["sent"] is (selected_index == 1)
     assert "media_only" in str(provider.text_chat.await_args.kwargs["contexts"])
     await p.auxiliary.flush()
     assert (

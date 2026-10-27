@@ -26,6 +26,7 @@ DEFAULTS = {
     "native_memory_enabled": True,
     "image_memory_enabled": True,
     "emoji_enabled": True,
+    "emoji_static_to_gif": False,
     "emoji_frequency": 0.5,
     "emoji_cooldown": 30,
     "reply_rhythm_enabled": True,
