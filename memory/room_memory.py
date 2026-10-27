@@ -18,6 +18,7 @@ from astrbot.api import logger
 
 from ..chat.native_context import conversation_metadata
 from ..chat.participation import event_source
+from ..core.message_source import own_message_text
 from ..core.runtime_diagnostics import await_path
 from ..core.settings import SHARED_SCOPE, learning_blocked
 
@@ -1566,7 +1567,7 @@ class RoomMemory:
                 or event_source(source) != message["source"]
                 or source.unified_msg_origin != event.unified_msg_origin
                 or not citation["quote"].strip()
-                or citation["quote"] not in source.get_message_str()
+                or citation["quote"] not in own_message_text(source)
                 or not await self.permitted(source, scope, persona, learning=True)
             ):
                 raise ValueError("记忆操作需要本轮真实作者的原文和学习权限。")

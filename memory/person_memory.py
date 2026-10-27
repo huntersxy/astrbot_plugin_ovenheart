@@ -12,7 +12,8 @@ from astrbot.api import logger
 from sqlmodel import Session, create_engine
 
 from ..chat.participation import event_source
-from ..core.learning import decode_model_object
+from ..core.learning import decode_model_object, normalize_quote
+from ..core.message_source import own_message_text
 from ..core.runtime_diagnostics import limit_metadata_cache
 from ..core.settings import learning_blocked
 from ..vendor.maibot.amemorix.host import PersonInfo, bind
@@ -109,6 +110,7 @@ FACTS_SCHEMA = {
 }
 EXTRACT_SYSTEM = """从指定人物自己的真实发言更新人物事实。只输出符合契约的 JSON {"facts": [...]}，没有可靠信息时 facts 为空。
 只能归纳这个人的自我陈述、明确互动偏好或与自己的互动；引用、转述、别人发言和旧回忆不证明是此人的事实。不要推测身份、关系或好感。
+messages[].sender 是正文作者；reply_to 是另一个来源，sender 为引用作者，message_id 为被引用消息ID。引用中的“我”属于引用作者，不属于当前发言者；作者未知时不得猜测。reply_to 只帮助理解正文的回答、更正和否定，不能作为当前人物的事实证据，也不自动给引用作者建档。证据只能复制 messages[].text 本人正文。
 稳定身份和明确偏好用 stable；今天的情绪、计划和当下事件用 temporal/recent_interactions；玩笑、推测或归属不明用 uncertain/uncertain_notes，不能提升为稳定事实。
 每条 evidence 必须引用 source_id 对应的原文子串。key 是同一属性的稳定语义键；单值属性用 single，多项喜好用 set。
 明确更正旧事实时，corrects 填已有同属性 claim_id；没有明确更正填空。不能引用别人的 claim，也不能因未提到就删除旧事实。
@@ -482,8 +484,18 @@ class PersonMemory:
             )
             inputs = {
                 "person": event.get_sender_name(),
+                "sender": event.get_sender_id(),
                 "messages": [
-                    {key: message[key] for key in ("source_id", "text", "created")}
+                    {
+                        **{
+                            key: message[key]
+                            for key in ("source_id", "sender", "text", "created")
+                        },
+                        "reply_to": normalize_quote(
+                            message.get("reply_to"),
+                            self.plugin.settings["blocked_senders"],
+                        ),
+                    }
                     for message in messages
                 ],
                 "existing_facts": [
@@ -605,7 +617,7 @@ class PersonMemory:
             {
                 "source_id": event_source(source),
                 "sender": source.get_sender_id(),
-                "text": source.get_message_str(),
+                "text": own_message_text(source),
                 "created": source.created_at,
             }
         ]

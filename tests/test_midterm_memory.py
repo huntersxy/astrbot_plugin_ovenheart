@@ -9,6 +9,7 @@ from types import SimpleNamespace
 
 from astrbot.core.db.po import PlatformMessageHistory
 from astrbot.core.db.sqlite import SQLiteDatabase
+from astrbot.core.message.components import Reply
 from astrbot.core.platform_message_history_mgr import PlatformMessageHistoryManager
 
 from tests.test_room_memory import SyntheticEmbedding, material
@@ -75,12 +76,22 @@ async def test_evicted_native_context_compresses_recalls_and_obeys_forgetting(
     )
     for index in range(52):
         message = incoming(f"history-{index}", f"周六去书店买绘画书，讨论细节{index}。")
+        if index == 0:
+            message.message_obj.message.insert(
+                0, Reply(id="peer-trip", sender_id="peer", message_str="我周日去医院。")
+            )
+            message.message_str = message.get_message_outline()
         await p.capture(message)
     await asyncio.gather(*tuple(p.midterm_memory.busy.values()))
     scope, persona, _ = await p.resolve_scope(message)
     status = await p.room_memory.call(scope, "midterm_records", "dialog-a", 10)
     assert len(status["records"]) == 1
     record = status["records"][0]
+    model_input = json.loads(p.context.llm_generate.call_args.kwargs["prompt"])
+    assert model_input[0]["reply_to"]["sender"] == "peer"
+    assert model_input[0]["reply_to"]["message_id"] == "peer-trip"
+    assert "医院" not in model_input[0]["text"]
+    assert "医院" not in record["metadata"]["evidence"][0]["quote"]
     assert len(record["metadata"]["evidence"]) == 12
     assert {e["source_id"] for e in record["metadata"]["evidence"]} == {
         f"history-{i}" for i in range(12)

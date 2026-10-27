@@ -21,6 +21,7 @@ from ..core.learning import (
     decode_model_object,
     habit_text,
 )
+from ..core.message_source import own_message_text
 from ..core.prompts import auxiliary_payload
 from ..core.settings import SHARED_SCOPE
 from .rhythm import ConversationRhythm
@@ -625,7 +626,7 @@ class ParticipationController:
                             if native_id is not None
                             else "",
                             "self": False,
-                            "text": event.get_message_str()[:1200],
+                            "text": own_message_text(event)[:1200],
                             "reply_to": reply_to,
                             "media": plugin.conversation.record(event)["media"],
                             "time": event.created_at,

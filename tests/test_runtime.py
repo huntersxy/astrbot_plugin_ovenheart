@@ -345,7 +345,8 @@ async def test_learning_and_review_receive_linked_quote_context_without_new_evid
                 chain=[Plain("QUOTED_ONLY：我只想倾诉，先不用建议。")]
                 if chain_only
                 else [],
-            )
+            ),
+            Plain("我先听你说，慢慢来。"),
         ]
         await plugin.capture(incoming)
     scope, _, _ = await plugin.resolve_scope(incoming)

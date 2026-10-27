@@ -82,22 +82,21 @@ class Store:
         return dict(row) | {"profile": json.loads(row["profile"])} if row else None
 
     def person_memory_inputs(self, db, scope, sender):
-        return [
-            dict(row)
-            for row in db.execute(
-                "SELECT id,source_id,sender,text,created FROM messages WHERE scope=? AND sender=? ORDER BY id",
-                (scope, sender),
-            )
-        ]
+        return self.room_memory_inputs(db, scope, sender)
 
-    def room_memory_inputs(self, db, scope):
-        return [
-            dict(row)
-            for row in db.execute(
-                "SELECT id,source_id,sender,text,created FROM messages WHERE scope=? ORDER BY id",
-                (scope,),
-            )
-        ]
+    def room_memory_inputs(self, db, scope, sender=None):
+        rows = db.execute(
+            "SELECT id,source_id,sender,text,created,reply_context FROM messages WHERE scope=?"
+            + (" AND sender=?" if sender is not None else "")
+            + " ORDER BY id",
+            (scope, sender) if sender is not None else (scope,),
+        )
+        result = []
+        for row in rows:
+            message = dict(row)
+            message["reply_to"] = json.loads(message.pop("reply_context")) or None
+            result.append(message)
+        return result
 
     def _transaction(self, operation: str, args: tuple):
         """Open, commit or roll back, and close one database transaction.

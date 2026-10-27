@@ -58,6 +58,7 @@ from .core.learning import (
     parse_learning_review,
     review_issue,
 )
+from .core.message_source import own_message_text
 from .core.retrieval import HabitRetriever
 from .core.settings import (
     DEFAULTS,
@@ -969,7 +970,7 @@ class PersonaPlugin(Star):
         if learning_blocked(event.unified_msg_origin, self.settings):
             self.debug("capture_skipped", reason="learning_blocked_group")
             return
-        text = event.get_message_str().strip()
+        text = own_message_text(event).strip()
         sender = event.get_sender_id()
         if (
             not text
@@ -1015,7 +1016,9 @@ class PersonaPlugin(Star):
             )
             quoted = normalize_quote(
                 {
+                    "message_id": str(component.id or ""),
                     "sender": quoted_sender,
+                    "sender_name": str(component.sender_nickname or ""),
                     "text": quoted_text,
                     "self": quoted_sender == str(event.get_self_id()),
                 },

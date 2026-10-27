@@ -16,6 +16,7 @@ from astrbot.api import logger
 from astrbot.api.platform import MessageType
 from astrbot.core.message.components import At, Image, Plain, Reply
 
+from ..core.message_source import own_message_text
 from .native_context import conversation_metadata
 from .participation import event_source
 
@@ -104,7 +105,7 @@ class ConversationContext:
     def record(event):
         parts = event.get_messages()
         quote = next((p for p in parts if isinstance(p, Reply)), None)
-        text = event.get_message_str()
+        text = own_message_text(event)
         media = []
         for part in parts:
             kind = str(

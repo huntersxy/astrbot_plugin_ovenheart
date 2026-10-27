@@ -135,7 +135,11 @@ def normalize_quote(value, blocked_senders):
         or (blocked_senders and sender in ("", "0"))
     ):
         return None
-    return {"sender": sender, "text": text[:1200], "self": value.get("self") is True}
+    result = {"sender": sender, "text": text[:1200], "self": value.get("self") is True}
+    for key in ("message_id", "sender_name"):
+        if isinstance(value.get(key), str) and value[key].strip():
+            result[key] = value[key].strip()[:256]
+    return result
 
 
 LEARNING_REVIEW_SYSTEM = (
