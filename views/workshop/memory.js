@@ -3,25 +3,23 @@ window.OvenHeartMemory = (() => {
   const tabs = {records:"记忆记录",profiles:"人物画像",images:"图片记忆",graph:"关系图谱",timeline:"时间线",import:"导入与来源",inspection:"记忆检修",delete:"删除管理"};
   const kinds = {paragraph:"段落",entity:"实体",relation:"关系",fact:"事实",episode:"情景记忆",profile:"人物画像",image:"图片",correction:"记忆修正",feedback:"反馈处理",delete:"删除操作"};
   const statuses = {active:"有效",inactive:"已冻结",expired:"已过期",deleted:"已删除",retracted:"已撤回",conflicted:"有冲突",superseded:"已被修正",completed:"已完成",executed:"已执行",restored:"已恢复",restore_pending:"正在恢复索引",pending_cleanup:"待完成索引清理",pending:"待处理",failed:"失败",running:"处理中",awaiting_confirmation:"待确认",rolled_back:"已回滚"};
-  let bank="active",view="records",kind="paragraph",query="",offset=0,inactive=false,since="",until="",currentScope="";
+  let view="records",kind="paragraph",query="",offset=0,inactive=false,since="",until="",currentScope="";
   function render(context) {
     const {root,data,api,escape:esc,notify,confirmAction,renderSettings}=context;
     const scope=data.scope?.id;
-    if(scope!==currentScope){currentScope=scope;bank="active";query="";offset=0;since=until="";}
-    if(data.settings.memory_isolation)bank="active";
-    let version=0,busy=false,selection=0,importing=false,stopImport=false;
-    root.innerHTML=`<div class="memory-heading"><div><h2>记忆管理</h2><p class="muted">查看原文与来源，维护人物、图片和关系。${data.settings.memory_isolation ? "当前会话独立保存记忆。" : "当前人格跨会话共享记忆；人物仍按真实账号区分。"}</p></div><button type="button" id="memory-config">记忆设置</button></div>${!data.settings.memory_isolation?`<div class="field"><label for="memory-bank">查看哪个记忆库</label><select id="memory-bank"><option value="active" ${bank==="active"?"selected":""}>当前人格共享库</option><option value="conversation" ${bank==="conversation"?"selected":""}>此会话保留库（只读查看）</option></select><p id="memory-bank-status" class="muted">两类库分别保留，切换范围不会自动汇总已有资料。开启会话隔离可继续使用并维护原会话记忆。</p></div>`:""}<nav class="memory-tabs" aria-label="记忆管理页面">${Object.entries(tabs).map(([key,label])=>`<button type="button" data-memory-view="${key}">${label}</button>`).join("")}</nav><p id="memory-summary" class="muted" role="status"></p><div id="memory-body"></div>`;
+    if(scope!==currentScope){currentScope=scope;query="";offset=0;since=until="";}
+    let version=0,busy=false,selection=0,storageScope="",importing=false,stopImport=false;
+    root.innerHTML=`<div class="memory-heading"><div><h2>记忆管理</h2><p class="muted">查看原文与来源，维护人物、图片和关系。${data.settings.memory_isolation ? "仅召回当前会话的记忆。" : "当前人格可召回全部会话记忆，包含已有资料；人物仍按真实账号区分。"}</p></div><button type="button" id="memory-config">记忆设置</button></div><nav class="memory-tabs" aria-label="记忆管理页面">${Object.entries(tabs).map(([key,label])=>`<button type="button" data-memory-view="${key}">${label}</button>`).join("")}</nav><p id="memory-summary" class="muted" role="status"></p><div id="memory-body"></div>`;
     const body=root.querySelector("#memory-body"),$=selector=>body.querySelector(selector),live=()=>root.querySelector("#memory-body")===body;
     const date=value=>value?new Date(value*1000).toLocaleString("zh-CN"):"时间未记录";
     const badge=item=>`<span class="chip">${esc(statuses[item.status]||item.status||kinds[item.kind])}</span>`;
     async function write(action,payload,refresh=true){
-      if(bank==="conversation"){notify("保留库为只读查看；开启会话隔离后可维护这些记录。",true);return;}
       if(busy||!live())return;
       const edit=context.editVersion();
       busy=true;
       for(const button of body.querySelectorAll("[data-memory-write]"))button.disabled=true;
       try{
-        const result=await api("memory/action",{scope,action,payload});
+        const result=await api("memory/action",{scope,action,payload,...(storageScope?{storage_scope:storageScope}:{})});
         if(!live())return result;
         if(refresh){notify(result.message||"记忆操作已完成。",!!result.partial);if(edit===context.editVersion()){context.clearDirty();await load();}}
         return result;
@@ -45,13 +43,13 @@ window.OvenHeartMemory = (() => {
       selection++;
       if(view==="settings"){root.querySelector("#memory-summary").textContent="";renderSettings();return;}
       if(!scope||scope===data.shared_scope?.id){body.innerHTML='<div class="empty"><h3>选择一个会话</h3><p>选择具体会话与人格后，即可管理对应的原生记忆。</p></div>';return;}
+      storageScope="";
       body.innerHTML='<p class="muted" role="status">正在读取原生记忆…</p>';
       try{
-        const result=await api("memory",undefined,{scope,bank,view,kind,query,offset,inactive,since:since?new Date(since).getTime()/1000:"",until:until?new Date(until).getTime()/1000:""});
+        const result=await api("memory",undefined,{scope,view,kind,query,offset,inactive,since:since?new Date(since).getTime()/1000:"",until:until?new Date(until).getTime()/1000:""});
         if(!live()||token!==version)return;
         root.querySelector("#memory-summary").textContent=Object.entries(result.stats).map(([key,count])=>`${kinds[key]} ${count}`).join(" · ")||"当前会话尚无原生记忆。";
         const rows=result.items;
-        if(root.querySelector("#memory-bank-status"))root.querySelector("#memory-bank-status").textContent=bank==="conversation"?"正在只读查看此会话保留的记忆；开启会话隔离后可继续使用和维护。":"当前使用人格共享库。此会话保留库另有 " + Number(result.preserved_stats?.paragraph||0) + " 段记忆、" + Number(result.preserved_stats?.episode||0) + " 条情景；可切换查看。";
         const description=view==="inspection"?"关系支持强化、冻结和限时保护；修正历史可回滚。操作通过聊天使用的同一原生 SDK 执行。":view==="delete"?"在记忆记录或来源详情中先预览范围，再确认删除。此处保留原生删除日志，可按操作恢复。":"";
         const list=rows.length?rows.map((item,index)=>`<button type="button" class="memory-row" data-memory-record="${index}"><span class="memory-row-meta"><span>${esc(kinds[item.kind]||"记忆")}</span>${badge(item)}</span><strong>${esc(item.kind==="paragraph"?item.text.slice(0,100):item.title)}</strong>${item.text&&item.kind!=="paragraph"?`<span class="memory-excerpt">${esc(item.text.slice(0,180))}</span>`:""}<small>${esc(date(item.timestamp))}</small></button>`).join(""):'<div class="empty"><h3>没有匹配的记录</h3><p>试试其他关键词或类型，也可以启用“包含失效记录”。</p></div>';
         const columns=`<div class="memory-columns"><div class="memory-list" aria-label="记忆记录">${list}</div><section id="memory-detail" class="memory-detail" aria-label="记忆详情"><h3>记录详情</h3><p class="muted">选择一条记录，查看完整内容、原始来源和可用操作。</p></section></div>`;
@@ -63,18 +61,17 @@ window.OvenHeartMemory = (() => {
         for(const button of body.querySelectorAll("[data-memory-record]"))button.onclick=()=>navigate(()=>detail(rows[Number(button.dataset.memoryRecord)]));
         for(const button of body.querySelectorAll("[data-memory-node]"))button.onclick=()=>navigate(()=>{query=button.dataset.memoryNode;offset=0;load();});
         if(view==="import")bindImports(rows);
-        if(bank==="conversation")for(const control of body.querySelectorAll("[data-memory-write]"))control.disabled=true;
         if(view==="graph")$("#memory-edge").onsubmit=event=>{event.preventDefault();const form=new FormData(event.currentTarget);write("edge_create",{subject:form.get("subject"),predicate:form.get("predicate"),object:form.get("object")});};
       }catch(error){if(live()&&token===version){body.innerHTML=`<div class="empty"><h3>记忆读取未完成</h3><p>${esc(error.message)}</p><button type="button" id="memory-retry">重新读取</button></div>`;$("#memory-retry").onclick=load;}}
     }
-    if(root.querySelector("#memory-bank"))root.querySelector("#memory-bank").onchange=event=>{const chosen=event.target.value;event.target.value=bank;navigate(()=>{bank=chosen;event.target.value=bank;offset=0;load();});};
     async function detail(item){
       const panel=$("#memory-detail"),token=++selection;
       panel.innerHTML='<p class="muted">正在读取完整来源…</p>';
       try{
-        const result=await api("memory",undefined,{scope,bank,view:item.kind==="profile"?"profiles":item.kind==="image"?"images":"records",kind:item.kind,id:item.id,inactive:true});
+        const result=await api("memory",undefined,{scope,...(item.storage_scope?{storage_scope:item.storage_scope}:{}),view:item.kind==="profile"?"profiles":item.kind==="image"?"images":"records",kind:item.kind,id:item.id,inactive:true});
         if(!live()||$("#memory-detail")!==panel||token!==selection)return;
         const full=result.items[0];if(!full)throw new Error("这条记录已不存在，请刷新列表。");
+        storageScope=full.storage_scope||"";
         const editable=["paragraph","relation","fact","profile"].includes(full.kind),metadata=full.metadata||{},evidence=[...(metadata.evidence||[]),...(metadata.legacy_sources||[]),...(full.preview_json?.auto_review_evidence||[])];
         const review=full.kind==="correction"&&full.preview_json?.auto_review,operations=full.plan_json?.operations||[];
         panel.innerHTML=`<div class="memory-detail-head"><h3>${esc(kinds[full.kind])}详情</h3>${badge(full)}</div><p class="memory-id">${esc(full.id)}</p>${full.kind==="image"?'<div id="memory-image"></div><p id="memory-image-status" class="muted">正在读取图片…</p>':""}${full.kind==="profile"&&full.manual_override?'<p class="muted">当前存在人工画像覆盖。</p>':""}${editable?`<form id="memory-editor"><label for="memory-edit-text">${full.kind==="profile"?"人工画像":"完整内容"}</label><textarea id="memory-edit-text" maxlength="30000" required>${esc(full.manual_override||full.text||full.title)}</textarea><button type="submit" class="primary" data-memory-write>保存${full.kind==="profile"?"人工画像":"修正"}</button></form>`:`<p class="memory-full-text">${esc(full.text||full.title)}</p>`}${review?`<h4>主动复核建议</h4><p>${esc(full.plan_json?.reason||full.reason||"检查新原文是否更正已有事实。")}</p>${operations.filter(op=>op.action==="ingest_text").map(op=>`<blockquote>${esc(op.text)}</blockquote>`).join("")}${!operations.length?'<p class="muted">无需修改，原记录保留。</p>':""}`:""}<dl class="memory-facts"><dt>时间</dt><dd>${esc(date(full.timestamp))}</dd><dt>来源</dt><dd>${esc(full.source||"原生记忆库")}</dd>${full.expires_at?`<dt>有效期至</dt><dd>${esc(date(full.expires_at))}</dd>`:""}</dl>${full.entities?.length?`<h4>相关实体</h4><p>${full.entities.map(esc).join("、")}</p>`:""}${full.relations?.length?`<h4>关联关系</h4>${full.relations.map(row=>`<p>${esc(row.subject)} · ${esc(row.predicate)} · ${esc(row.object)}</p>`).join("")}`:""}${evidence.length?`<h4>原文证据</h4>${evidence.map(row=>`<blockquote>${esc(row.quote||row.text||"")}<small>${esc(row.sender||row.sender_id||"")}</small></blockquote>`).join("")}`:""}${full.observations?.length?`<h4>图片观察与消息来源</h4>${full.observations.map(row=>`<blockquote>${esc(row.text||"暂无描述")}<small>消息 ${esc(row.message_id)} · ${esc(date(row.occurred_at))}</small></blockquote>`).join("")}`:""}<div class="actions memory-record-actions">${["paragraph","relation","entity"].includes(full.kind)&&full.status!=="deleted"?'<button type="button" id="memory-delete" class="danger" data-memory-write>预览删除范围</button>':""}${full.kind==="relation"?'<button type="button" data-maintain="reinforce" data-memory-write>强化</button><button type="button" data-maintain="freeze" data-memory-write>冻结</button><button type="button" data-maintain="protect" data-memory-write>保护 24 小时</button>':""}${full.kind==="delete"&&full.status!=="restored"?'<button type="button" id="memory-restore" data-memory-write>恢复本次删除</button>':""}${review&&full.status==="awaiting_confirmation"&&full.preview_json.auto_review_executable?'<button type="button" id="memory-review-execute" data-memory-write>确认执行复核建议</button>':""}${full.kind==="correction"&&["executed","completed"].includes(full.status)?'<button type="button" id="memory-rollback" data-memory-write>回滚本次修正</button>':""}${full.kind==="profile"&&full.manual_override?'<button type="button" id="memory-clear-profile" data-memory-write>移除人工覆盖</button>':""}${full.kind==="fact"?`<button type="button" id="memory-fact-state" data-memory-write>${full.status==="retracted"?"恢复事实":"撤回事实"}</button>`:""}</div>${full.kind==="entity"?`<form id="memory-rename"><label for="memory-node-name">实体名称</label><input id="memory-node-name" maxlength="120" value="${esc(full.name)}" required><button type="submit" data-memory-write>重命名实体</button></form>`:""}<div id="memory-delete-preview"></div><details class="memory-metadata"><summary>完整来源与状态</summary><pre>${esc(JSON.stringify(full,null,2))}</pre></details>`;
@@ -96,8 +93,7 @@ window.OvenHeartMemory = (() => {
           for(const form of panel.querySelectorAll("[data-image-observation]"))form.onsubmit=event=>{event.preventDefault();const row=observations[Number(form.dataset.imageObservation)];write("image_observe",{id:row.occurrence_id,text:form.querySelector("textarea").value.trim(),previous:row.observation_id||""});};
           for(const button of panel.querySelectorAll("[data-image-forget]"))button.onclick=async()=>{if(await confirmAction("移除这次图片引用及其关联？此入口不能恢复它。"))write("image_forget",{id:observations[Number(button.dataset.imageForget)].occurrence_id});};
         }
-        if(bank==="conversation")for(const control of panel.querySelectorAll("button,textarea,input"))control.disabled=true;
-        if(full.kind==="image"){const image=await api("memory/image",undefined,{scope,bank,id:full.id});if(live()&&$("#memory-detail")===panel&&token===selection){const img=document.createElement("img");img.className="memory-image";img.alt="当前图片记忆";img.src="data:image/jpeg;base64,"+image.encoded;$("#memory-image").replaceChildren(img);$("#memory-image-status").textContent="";}}
+        if(full.kind==="image"){const image=await api("memory/image",undefined,{scope,id:full.id,...(storageScope?{storage_scope:storageScope}:{})});if(live()&&$("#memory-detail")===panel&&token===selection){const img=document.createElement("img");img.className="memory-image";img.alt="当前图片记忆";img.src="data:image/jpeg;base64,"+image.encoded;$("#memory-image").replaceChildren(img);$("#memory-image-status").textContent="";}}
         if(matchMedia("(max-width: 900px)").matches)panel.scrollIntoView({block:"start",behavior:"auto"});
       }catch(error){if(live()&&$("#memory-detail")===panel&&token===selection)panel.innerHTML=`<p class="muted">${esc(error.message)}</p>`;}
     }
@@ -159,7 +155,7 @@ window.OvenHeartMemory = (() => {
       $("#memory-text-file").onchange=async event=>{const file=event.target.files[0];if(!file)return;if(file.size>120000){notify("文字文件过大，请缩短至 30000 字内。",true);return;}const text=await file.text();if(text.length>30000)notify("正文不能超过 30000 字。",true);else if(live())$("#memory-import-content").value=text;};
       $("#memory-export").onclick=async()=>{const result=await write("export_bundle",{},false);if(!result)return;const bytes=Uint8Array.from(atob(result.encoded),c=>c.charCodeAt(0)),url=URL.createObjectURL(new Blob([bytes],{type:"application/zip"})),link=document.createElement("a");link.href=url;link.download=result.file_name;link.click();setTimeout(()=>URL.revokeObjectURL(url),1000);notify("记忆包已生成并开始下载。");};
       $("#memory-install").onclick=async()=>{const file=$("#memory-bundle-file").files[0];if(!file||file.size>16*1024*1024){notify("请选择不超过 16 MB 的原版记忆包。",true);return;}if(!await confirmAction("将所选记忆包安装到当前会话？已有记忆保持。"))return;const encoded=await new Promise((resolve,reject)=>{const reader=new FileReader();reader.onload=()=>resolve(reader.result.split(",")[1]);reader.onerror=reject;reader.readAsDataURL(file);});write("import_bundle",{encoded});};
-      for(const button of body.querySelectorAll("[data-memory-source]"))button.onclick=()=>deletion("source",rows[Number(button.dataset.memorySource)].source);
+      for(const button of body.querySelectorAll("[data-memory-source]"))button.onclick=()=>{const row=rows[Number(button.dataset.memorySource)];storageScope=row.storage_scope||"";deletion("source",row.source);};
     }
     for(const button of root.querySelectorAll("[data-memory-view]"))button.onclick=()=>navigate(()=>{
       view=button.dataset.memoryView;offset=0;

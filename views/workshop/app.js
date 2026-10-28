@@ -530,7 +530,7 @@ function renderSettings(target = "#content") {
     ${memoryPage ? `<div class="settings-panel settings-grid" id="settings-panel-core" role="tabpanel" aria-labelledby="settings-tab-core" data-settings-panel="core">
 <section class="settings-group"><h2>通用与图片记忆</h2><p>选择记忆的使用范围，管理通用记忆与图片。</p>
       ${switchField("memory_enabled", "参考长期记忆", "控制学习和回复时是否参考记忆；关闭后已有记忆仍保留。", s.memory_enabled)}
-      ${switchField("memory_isolation", "按会话隔离记忆（推荐）", "开启：各会话独立记忆。关闭：同一人格在所有会话共享，包括私聊内容也可能在群聊被回忆。两类记忆库分别保留，切换不会合并已有资料；人物仍按真实账号区分，聊天历史与习惯范围不受影响。", s.memory_isolation)}
+      ${switchField("memory_isolation", "按会话隔离记忆（推荐）", "开启：只召回当前会话的记忆。关闭：同一人格召回全部会话的记忆，包括切换前已有资料；私聊内容也可能在群聊被回忆。记录保留原始来源，不搬移或清空，人物仍按真实账号区分，聊天历史与习惯范围不受影响。", s.memory_isolation)}
       ${switchField("native_memory_enabled", "A_memorix 通用记忆", "保存有真实来源的段落和关系，遵循上方记忆范围；使用原版 BM25、图谱与双路检索，配置嵌入模型后启用双向量池。", s.native_memory_enabled)}
       ${switchField("image_memory_enabled", "图片记忆", "保存当前会话中真实出现的图片、作者原话和模型观察；图片描述沿用宿主的图片描述模型，暂停学习后不再入库。", s.image_memory_enabled)}
       ${field("image_embedding_provider_id", "图片嵌入模型 ID", s.image_embedding_provider_id ?? "", "AstrBot 的 DashScope 或硅基流动多模态嵌入提供商 ID；留空仍可回忆同一图片。", {type:"text"})}

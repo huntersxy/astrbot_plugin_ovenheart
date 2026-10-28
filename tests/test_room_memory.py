@@ -84,40 +84,6 @@ async def test_original_sparse_graph_search_retains_native_evidence(memories):
     )
 
 
-async def test_memory_scope_switch_shares_one_kernel_and_preserves_isolated_data(memories):
-    original = await material(memories, source_id="same-id")
-    incoming, scope, persona, messages = original
-    isolated = await memories.room_memory.remember(incoming, scope, persona, note(), messages)
-    memories.settings["memory_isolation"] = False
-    shared = await memories.room_memory.remember(
-        incoming, scope, persona, note(content="Neko与小猫有共同约定。"), messages
-    )
-    other, other_scope, other_persona, _ = await material(memories, source_id="same-id", session="456")
-    storage = await memories.room_memory.storage_scope(scope)
-    assert storage == await memories.room_memory.storage_scope(other_scope)
-    found = await memories.room_memory.search(other, other_scope, other_persona, "Neko 小猫")
-    assert any(row["id"] == shared["id"] for row in found)
-    assert all(row["id"] != isolated["id"] for row in found)
-    assert found[0]["metadata"]["evidence"][0]["source_id"] == scope + ":same-id"
-    state = memories.room_memory.rooms[storage]
-    with state.metadata.transaction():
-        state.metadata._conn.executemany("INSERT INTO ovenheart_summary_processed(source_id,created) VALUES (?,1)", [
-            (scope + ":same-id",), (other_scope + ":same-id",), (other_scope + ":stale",),
-        ])
-    status = await memories.room_memory.call(other_scope, "summary_status", [other_scope + ":same-id"], other_scope + ":")
-    assert status["processed"] == {scope + ":same-id", other_scope + ":same-id"}
-    from tests.test_runtime import api_call
-    console = await api_call(memories.page_api.memory_panel.read, query=f"scope={other_scope}&view=records&kind=paragraph")
-    assert any(row["id"] == shared["id"] for row in console["data"]["items"])
-    await memories.store.call("touch_scope", "f" * 24, "another-room", "another-persona", "Another")
-    assert await memories.room_memory.storage_scope("f" * 24) != storage
-    memories.settings["memory_isolation"] = True
-    assert not await memories.room_memory.search(other, other_scope, other_persona, "Neko 小猫")
-    found = await memories.room_memory.search(incoming, scope, persona, "Neko 小猫")
-    assert any(row["id"] == isolated["id"] for row in found)
-    assert storage in memories.room_memory.rooms
-
-
 async def test_first_empty_reads_do_not_start_memory_kernel_and_first_write_does(memories):
     incoming, scope, persona, messages = await material(memories)
     assert not await memories.room_memory.search(incoming, scope, persona, "猫咪")
@@ -474,8 +440,6 @@ async def test_openai_embedding_config_model_identifies_vector_space():
     assert before.fingerprint["model_name"] == "first-model"
     assert before.get_embedding_fingerprint(dimension=4)["model"] == "first-model"
     assert before.get_embedding_configuration_key() != after.get_embedding_configuration_key()
-
-
 
 
 async def test_concurrent_first_writes_share_one_original_graph(memories):

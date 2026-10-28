@@ -96,19 +96,27 @@ class MemoryConsolidation:
         if (
             len(messages) < self.plugin.settings["memory_summary_min_messages"]
             and storage_scope not in self.plugin.room_memory.rooms
-            and not (self.plugin.room_memory.directory / storage_scope / "metadata" / "metadata.db").exists()
+            and not (
+                self.plugin.room_memory.directory
+                / storage_scope
+                / "metadata"
+                / "metadata.db"
+            ).exists()
         ):
             return
         status = await self.plugin.room_memory.call(
-            scope, "summary_status", [m["source_id"] for m in messages],
-            "" if self.plugin.settings["memory_isolation"] else scope + ":", event=event
+            scope, "summary_status", [m["source_id"] for m in messages], "", event=event
         )
         if (
             time.time() - status["attempted"]
             < self.plugin.settings["memory_summary_interval"]
         ):
             return
-        pending = summary_batch(messages, status["processed"], self.plugin.settings["memory_summary_min_messages"])
+        pending = summary_batch(
+            messages,
+            status["processed"],
+            self.plugin.settings["memory_summary_min_messages"],
+        )
         summarize = len(pending) >= self.plugin.settings["memory_summary_min_messages"]
         if not summarize and not status["episode_pending"]:
             return

@@ -7,6 +7,7 @@ import base64
 import hashlib
 import io
 import json
+import time
 from contextvars import ContextVar
 from types import SimpleNamespace
 from urllib.parse import urlparse
@@ -76,8 +77,9 @@ class NativeImageAssetStore(ImageAssetStore):
 class NativeImageEmbedding:
     """Use an AstrBot provider for the supported binary-image protocols."""
 
-    def __init__(self, plugin, state, provider_id, loop):
+    def __init__(self, plugin, state, provider_id, loop, *, cache=None):
         self.plugin, self.state = plugin, state
+        self.cache = {} if cache is None else cache
         self.provider = (
             plugin.context.get_provider_by_id(provider_id) if provider_id else None
         )
@@ -122,10 +124,14 @@ class NativeImageEmbedding:
                 "图片相似检索需要配置 DashScope 或硅基流动多模态嵌入模型；当前可使用同图记忆。"
             )
 
+        cache_key = (self.key, hashlib.sha256(image_bytes).digest(), mime_type)
+
         async def request():
             if not await self.allowed(image_job.get()):
                 raise ValueError("当前图片模型权限已撤销。")
 
+            if cache_key in self.cache:
+                return self.cache[cache_key]
             payload = image_bytes
             if mime_type == "image/gif":
                 from PIL import Image as PILImage
@@ -165,7 +171,9 @@ class NativeImageEmbedding:
                     **kwargs,
                 )
                 if response.status_code != 200:
-                    raise RuntimeError(f"图片嵌入请求失败（HTTP {response.status_code}）。")
+                    raise RuntimeError(
+                        f"图片嵌入请求失败（HTTP {response.status_code}）。"
+                    )
                 rows = response.output.get("embeddings", []) if response.output else []
                 provider_name = "dashscope"
                 vector = rows[0]["embedding"] if len(rows) == 1 else None
@@ -173,16 +181,30 @@ class NativeImageEmbedding:
                 raise ValueError("图片嵌入返回的向量数量不正确。")
             if not await self.allowed(image_job.get()):
                 raise ValueError("图片请求期间应用或学习权限已撤销。")
-            return SimpleNamespace(
+            result = SimpleNamespace(
                 embedding=vector,
                 model_identifier=self.model,
                 model_name=self.model,
                 api_provider=provider_name,
                 request_protocol_hash=self.key,
             )
+            self.cache[cache_key] = result
+            while len(self.cache) > 16:
+                self.cache.pop(next(iter(self.cache)))
+            return result
 
+        from .memory_embedding import _retrieval_deadline
+
+        budget = _retrieval_deadline.get()
+        remaining = (
+            budget.deadline - time.monotonic()
+            if budget is not None and budget.deadline is not None
+            else None
+        )
+        if remaining is not None and remaining <= 0:
+            raise TimeoutError("本轮图片嵌入预算已耗尽，保留同图检索。")
         future = asyncio.run_coroutine_threadsafe(request(), self.loop)
-        return await asyncio.wrap_future(future)
+        return await asyncio.wait_for(asyncio.wrap_future(future), remaining)
 
     async def allowed(self, learning):
         event = self.state.identity or self.state.event_ref()

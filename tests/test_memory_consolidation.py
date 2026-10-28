@@ -800,16 +800,33 @@ async def test_shared_summary_keeps_real_source_and_cross_room_retrieval(consoli
     p.settings["memory_isolation"] = False
     incoming = event("shared-source")
     scope, persona, _ = await p.resolve_scope(incoming)
-    p.context.llm_generate.side_effect = [summary(source=scope + ":shared-source"), episode()]
+    p.context.llm_generate.side_effect = [summary(source="shared-source"), episode()]
     await p.capture(incoming := event("shared-source", text="大家周六一起去书店"))
     await drain(p)
     storage = await p.room_memory.storage_scope(scope)
-    assert (await p.room_memory.call(scope, "summary_status"))["processed"] == {scope + ":shared-source"}
+    assert (await p.room_memory.call(scope, "summary_status"))["processed"] == {
+        "shared-source"
+    }
     other = event("other-room", session="456")
     other_scope, other_persona, _ = await p.resolve_scope(other)
-    await p.store.call("touch_scope", other_scope, other.unified_msg_origin, other_persona, "Other")
+    await p.store.call(
+        "touch_scope", other_scope, other.unified_msg_origin, other_persona, "Other"
+    )
     found = await p.room_memory.search(other, other_scope, other_persona, "书店")
-    assert any(proof["source_id"] == scope + ":shared-source" for row in found for proof in row["metadata"].get("evidence", []))
+    assert any(
+        proof["source_id"] == "shared-source"
+        for row in found
+        for proof in row["metadata"].get("evidence", [])
+    )
     state = p.room_memory.rooms[storage]
-    rows = await p.room_memory.messages(state, chat_id=scope, start_time=0, end_time=9999999999, limit=10, limit_mode="latest", filter_mai=False, filter_command=False)
-    assert any(row["source_id"] == scope + ":shared-source" for row in rows)
+    rows = await p.room_memory.messages(
+        state,
+        chat_id=scope,
+        start_time=0,
+        end_time=9999999999,
+        limit=10,
+        limit_mode="latest",
+        filter_mai=False,
+        filter_command=False,
+    )
+    assert any(row["source_id"] == "shared-source" for row in rows)

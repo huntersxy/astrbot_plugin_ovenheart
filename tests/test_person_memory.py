@@ -503,10 +503,12 @@ async def test_global_person_facts_share_by_real_account_and_keep_isolated_bank(
     await remember(person, shared, fact("same-id", "我是程序员", "职业：程序员"))
     incoming, scope, persona, _ = original
     profile = await person.person_memory.query(incoming, scope, persona, "alice")
-    assert "程序员" in profile["profile_text"] and "学生" not in profile["profile_text"]
+    assert "程序员" in profile["profile_text"] and "学生" in profile["profile_text"]
     bob = await person.person_memory.query(incoming, scope, persona, "bob")
     assert not bob.get("profile_text")
-    assert person.person_memory.identity(incoming, scope, "other-persona", "alice") != person.person_memory.identity(incoming, scope, persona, "alice")
+    assert person.person_memory.identity(
+        incoming, scope, "other-persona", "alice"
+    ) != person.person_memory.identity(incoming, scope, persona, "alice")
     person.settings["memory_isolation"] = True
     profile = await person.person_memory.query(incoming, scope, persona, "alice")
     assert "学生" in profile["profile_text"] and "程序员" not in profile["profile_text"]

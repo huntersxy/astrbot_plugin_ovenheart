@@ -357,7 +357,9 @@ class RoomState:
     async def _backfill(self):
         await self.kernel._run_paragraph_backfill_once(limit=32, trigger="native_chat")
 
-    async def search(self, query, top_k, feedback_source="", feedback_scope=""):
+    async def search(
+        self, query, top_k, feedback_source="", feedback_scope="", defer_feedback=False
+    ):
         if not self.metadata.count_paragraphs():
             return []
         try:
@@ -373,18 +375,8 @@ class RoomState:
             KernelSearchRequest(query=query, chat_id=self.path.name, limit=top_k)
         )
         found = response["hits"]
-        if feedback_source and found:
-            query_id = hashlib.sha256(
-                json.dumps(
-                    [self.path.name, feedback_source, query, [h["hash"] for h in found]]
-                ).encode()
-            ).hexdigest()
-            await self.kernel.enqueue_feedback_task(
-                query_tool_id="native:" + query_id,
-                session_id=self.path.name,
-                structured_content=response
-                | {"query": query, "chat_id": self.path.name, "source_scope": feedback_scope},
-            )
+        if feedback_source and found and not defer_feedback:
+            await self.queue_feedback(query, feedback_source, feedback_scope, response)
         result = []
         for item in found:
             row = (
@@ -454,7 +446,33 @@ class RoomState:
                     },
                 },
             )
-        return result[:top_k]
+        return (
+            {"results": result[:top_k], "feedback": response}
+            if defer_feedback
+            else result[:top_k]
+        )
+
+    async def queue_feedback(self, query, feedback_source, feedback_scope, response):
+        query_id = hashlib.sha256(
+            json.dumps(
+                [
+                    self.path.name,
+                    feedback_source,
+                    query,
+                    [h["hash"] for h in response["hits"]],
+                ]
+            ).encode()
+        ).hexdigest()
+        await self.kernel.enqueue_feedback_task(
+            query_tool_id="native:" + query_id,
+            session_id=self.path.name,
+            structured_content=response
+            | {
+                "query": query,
+                "chat_id": self.path.name,
+                "source_scope": feedback_scope,
+            },
+        )
 
     async def write(self, content, evidence, relations):
         from ..vendor.maibot.amemorix.utils.hash import compute_hash, normalize_text
@@ -637,12 +655,12 @@ class RoomState:
             content_hash=content_hash, text=description
         )
 
-    async def image_search(self, payload, source, index):
+    async def image_search(self, payload, source, index, current_ref=None):
         result = await self.kernel.image_memory(
             action="search",
             image_bytes=payload,
             chat_ids=[self.path.name],
-            current_external_ref=f"{self.path.name}:{source}:{index}",
+            current_external_ref=current_ref or f"{self.path.name}:{source}:{index}",
             session_id=self.path.name,
         )
         return {
@@ -679,8 +697,6 @@ class RoomState:
         from .memory_panel import execute_admin
 
         return await execute_admin(self, operation, payload)
-
-
 
     async def image_asset(self, asset_id):
         result = await self.kernel.image_memory(
@@ -1056,22 +1072,31 @@ class RoomMemory:
         self.loop = None
         self.thread = None
         self.closing = False
+        self.embedding = None
+        self.image_embeddings = {}
 
     async def storage_scope(self, scope):
-        """Route memory only; native histories and participation remain per chat."""
+        # Keep authoritative data with its real source; the switch changes reads.
+        return scope
+
+    async def scope_keys(self, scope):
         if self.plugin.settings["memory_isolation"] or scope == "0" * 24:
-            return scope
+            return [scope]
         record = await self.plugin.store.read("scope_profile", scope)
         if record is None:
-            return scope
-        return hashlib.sha256(
-            json.dumps(["ovenheart-global-memory", record["persona"]], ensure_ascii=False).encode()
+            return [scope]
+        shared = hashlib.sha256(
+            json.dumps(
+                ["ovenheart-global-memory", record["persona"]], ensure_ascii=False
+            ).encode()
         ).hexdigest()[:24]
+        rows = await self.plugin.store.read("memory_scopes", record["persona"])
+        return list(dict.fromkeys([scope, *[row["id"] for row in rows], shared]))
 
     def source_id(self, scope, source):
-        return str(source) if self.plugin.settings["memory_isolation"] else f"{scope}:{source}"
+        return str(source)
 
-    async def observe(self, event, scope):
+    async def observe(self, event, scope, *, state=None):
         """Retain native authorization fields, without message/media/history data."""
         from astrbot.core.platform.astrbot_message import (
             AstrBotMessage,
@@ -1079,7 +1104,7 @@ class RoomMemory:
             MessageMember,
         )
 
-        state = self.rooms.get(await self.storage_scope(scope))
+        state = state or self.rooms.get(scope)
         settings = self.plugin.settings
         if (
             state is None
@@ -1196,14 +1221,18 @@ class RoomMemory:
         from .native_memory_kernel import feedback_origin
 
         origin = feedback_origin.get()
-        event = self.plugin.events.get(origin) if origin else state.identity or state.event_ref()
+        event = (
+            self.plugin.events.get(origin)
+            if origin
+            else state.identity or state.event_ref()
+        )
         revision = self.plugin.settings_revision
         if event is None:
             raise ValueError("该记忆会话没有可用的原生消息来源。")
         scope, persona, _ = await self.plugin.resolve_scope(event)
-        if await self.storage_scope(scope) != state.path.name or not await self.permitted(
-            event, scope, persona, learning=True
-        ):
+        if state.path.name not in await self.scope_keys(
+            scope
+        ) or not await self.permitted(event, scope, persona, learning=True):
             raise ValueError("当前记忆来源或学习权限已撤销。")
         provider = (
             self.plugin.settings["memory_summary_provider_id"]
@@ -1217,7 +1246,9 @@ class RoomMemory:
             if "feedback" in request.request_type.lower()
             else "memory_episode"
             if "episode" in request.request_type.lower()
-            else "memory_review" if state.operation == "review" else "memory_maintenance",
+            else "memory_review"
+            if state.operation == "review"
+            else "memory_maintenance",
             chat_provider_id=provider,
             prompt=request.prompt,
             **(
@@ -1249,14 +1280,16 @@ class RoomMemory:
         filter_mai,
         filter_command,
     ):
-        event = (state.identity or state.event_ref()) if chat_id == state.path.name else self.plugin.events.get(chat_id)
+        event = self.plugin.events.get(chat_id) or (
+            (state.identity or state.event_ref()) if chat_id == state.path.name else None
+        )
         revision = self.plugin.settings_revision
         if event is None:
             raise ValueError("后台记忆消息缺少真实会话身份或请求了其他会话。")
         scope, persona, _ = await self.plugin.resolve_scope(event)
-        if await self.storage_scope(scope) != state.path.name or not await self.permitted(
-            event, scope, persona, learning=True
-        ):
+        if state.path.name not in await self.scope_keys(
+            scope
+        ) or not await self.permitted(event, scope, persona, learning=True):
             raise ValueError("后台记忆消息来源或学习权限已撤销。")
         limit = min(1000, max(1, int(limit)))
         if self.plugin.conversation.active(event):
@@ -1389,18 +1422,40 @@ class RoomMemory:
                 state.active_foreground.discard(task)
 
     async def call(self, scope, operation, *args, event=None):
+        from .scope_recall import locate_operation, read_all
+
+        keys = await self.scope_keys(scope)
+        if len(keys) > 1 and operation in {
+            "search",
+            "person_context",
+            "image_search",
+            "image_candidates",
+        }:
+            revision = self.plugin.settings_revision
+            result = await read_all(self, keys, operation, args, event, scope)
+            if revision != self.plugin.settings_revision:
+                raise ValueError("记忆范围已改变，取消之前范围的检索。")
+            return result
+        selected = await locate_operation(self, keys, operation, args)
+        return await self.call_storage(selected or scope, operation, *args, event=event)
+
+    async def call_storage(self, scope, operation, *args, event=None):
         from .memory_embedding import EmbeddingAPIAdapter
 
-        scope = await self.storage_scope(scope)
         revision = self.plugin.settings_revision
         if self.closing or self.plugin.closing:
             raise ValueError("记忆运行时正在关闭。")
         if operation == "summary_status" and scope not in self.rooms:
             status = await asyncio.to_thread(
-                read_summary_status, self.directory / scope / "metadata" / "metadata.db",
+                read_summary_status,
+                self.directory / scope / "metadata" / "metadata.db",
                 args[0] if args else None,
             )
-            if revision != self.plugin.settings_revision or self.closing or self.plugin.closing:
+            if (
+                revision != self.plugin.settings_revision
+                or self.closing
+                or self.plugin.closing
+            ):
                 raise ValueError("读取摘要进度期间配置或运行状态已改变。")
             return status
         empty_reads = {
@@ -1420,6 +1475,15 @@ class RoomMemory:
             self.plugin.settings["embedding_provider_id"],
             asyncio.get_running_loop(),
         )
+        if (
+            self.embedding is not None
+            and self.embedding.provider is embedding.provider
+            and self.embedding.get_embedding_configuration_key()
+            == embedding.get_embedding_configuration_key()
+        ):
+            embedding = self.embedding
+        else:
+            self.embedding = embedding
         state = self.rooms.get(scope)
         if (
             state is not None
@@ -1436,6 +1500,7 @@ class RoomMemory:
                 "image_search",
                 "image_asset",
                 "image_candidates",
+                "queue_feedback",
             )
             and state.operation in {"consolidate", "review"}
             and state.revision == revision
@@ -1460,7 +1525,9 @@ class RoomMemory:
                 raise ValueError("记忆运行时正在关闭。")
             state = self.rooms.get(scope)
             if state is None:
-                while len(self.rooms) >= self.plugin.settings["memory_runtime_max_rooms"]:
+                while (
+                    len(self.rooms) >= self.plugin.settings["memory_runtime_max_rooms"]
+                ):
                     candidate = next(
                         (
                             k
@@ -1506,13 +1573,14 @@ class RoomMemory:
                 state,
                 self.plugin.settings["image_embedding_provider_id"],
                 asyncio.get_running_loop(),
+                cache=self.image_embeddings,
             )
             # Create the image runtime before lending the kernel to foreground
             # work; its first image must not restart an active consolidation.
             state.image_enabled = self.plugin.settings["image_memory_enabled"]
             if event is not None:
                 state.event_ref = weakref.ref(event)
-                await self.observe(event, scope)
+                await self.observe(event, scope, state=state)
             state.operation = operation
             if operation in {"consolidate", "review"}:
                 state.foreground_ready.clear()
@@ -1531,7 +1599,7 @@ class RoomMemory:
             "search",
             query[:2400],
             self.plugin.settings["memory_top_k"],
-            self.source_id(scope, event_source(event)),
+            f"{scope}:{event_source(event)}",
             scope,
             event=event,
         )

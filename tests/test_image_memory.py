@@ -65,26 +65,38 @@ async def test_siliconflow_binary_embedding_reuses_native_openai_provider():
 
     def handle(request):
         requests.append(json.loads(request.content))
-        return httpx.Response(200, json={
-            "object": "list", "model": "Qwen/Qwen3-VL-Embedding-8B",
-            "data": [{"object": "embedding", "index": 0, "embedding": [0.1, 0.2]}],
-            "usage": {"prompt_tokens": 1, "total_tokens": 1},
-        })
+        return httpx.Response(
+            200,
+            json={
+                "object": "list",
+                "model": "Qwen/Qwen3-VL-Embedding-8B",
+                "data": [{"object": "embedding", "index": 0, "embedding": [0.1, 0.2]}],
+                "usage": {"prompt_tokens": 1, "total_tokens": 1},
+            },
+        )
 
     cfg = {
-        "id": "image-provider", "type": "openai_embedding",
+        "id": "image-provider",
+        "type": "openai_embedding",
         "embedding_api_base": "https://api.siliconflow.cn/v1",
-        "embedding_api_key": "test-only", "embedding_model": "Qwen/Qwen3-VL-Embedding-8B",
-        "embedding_dimensions": 768, "embedding_dimensions_mode": "always",
+        "embedding_api_key": "test-only",
+        "embedding_model": "Qwen/Qwen3-VL-Embedding-8B",
+        "embedding_dimensions": 768,
+        "embedding_dimensions_mode": "always",
     }
     provider = OpenAIEmbeddingProvider(cfg, {})
     await provider.client.close()
     provider.client = AsyncOpenAI(
-        api_key="test-only", base_url=cfg["embedding_api_base"],
+        api_key="test-only",
+        base_url=cfg["embedding_api_base"],
         http_client=httpx.AsyncClient(transport=httpx.MockTransport(handle)),
     )
-    plugin = SimpleNamespace(context=SimpleNamespace(get_provider_by_id=lambda _: provider))
-    embedding = NativeImageEmbedding(plugin, object(), "image-provider", asyncio.get_running_loop())
+    plugin = SimpleNamespace(
+        context=SimpleNamespace(get_provider_by_id=lambda _: provider)
+    )
+    embedding = NativeImageEmbedding(
+        plugin, object(), "image-provider", asyncio.get_running_loop()
+    )
     embedding.allowed = AsyncMock(return_value=True)
     try:
         result = await embedding.embed_image(picture(fmt="GIF"), mime_type="image/gif")
@@ -92,9 +104,22 @@ async def test_siliconflow_binary_embedding_reuses_native_openai_provider():
         assert requests[0]["dimensions"] == 768
         assert requests[0]["input"][0]["image"].startswith("data:image/png;base64,")
         assert embedding.available
+        second = NativeImageEmbedding(
+            plugin,
+            object(),
+            "image-provider",
+            asyncio.get_running_loop(),
+            cache=embedding.cache,
+        )
+        second.allowed = AsyncMock(return_value=True)
+        await second.embed_image(picture(fmt="GIF"), mime_type="image/gif")
+        assert len(requests) == 1
+        second.allowed.assert_awaited_once()
         cfg["embedding_model"] = "Qwen/Qwen3-Embedding-0.6B"
         provider.model = cfg["embedding_model"]
-        assert not NativeImageEmbedding(plugin, object(), "image-provider", asyncio.get_running_loop()).available
+        assert not NativeImageEmbedding(
+            plugin, object(), "image-provider", asyncio.get_running_loop()
+        ).available
     finally:
         await provider.client.close()
 

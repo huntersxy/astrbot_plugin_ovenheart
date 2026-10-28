@@ -18,7 +18,13 @@ _retrieval_deadline = ContextVar("ovenheart_memory_embedding_deadline", default=
 @contextmanager
 def embedding_budget(seconds):
     """Bound foreground waits and serialized writes, preserving SDK fallback."""
-    budget = SimpleNamespace(deadline=time.monotonic() + seconds)
+    parent = _retrieval_deadline.get()
+    deadline = time.monotonic() + seconds
+    budget = SimpleNamespace(
+        deadline=min(deadline, parent.deadline)
+        if parent is not None and parent.deadline is not None
+        else deadline
+    )
     token = _retrieval_deadline.set(budget)
     try:
         yield

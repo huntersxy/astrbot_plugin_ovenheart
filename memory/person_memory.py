@@ -56,11 +56,15 @@ FACTS_SCHEMA = {
                 ],
                 "properties": {
                     "key": {
-                        "type": "string", "minLength": 1, "maxLength": 80,
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 80,
                         "description": "属性语义键，如称呼偏好、咖啡习惯；更正时沿用被更正 claim 的 fact_key，不另起近义键。",
                     },
                     "value": {
-                        "type": "string", "minLength": 1, "maxLength": 240,
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 240,
                         "description": "当前有依据的事实正文，如现在喝咖啡。单值更正直接写新事实，不写已作废、删除旧记录等操作说明。",
                     },
                     "section": {
@@ -131,13 +135,36 @@ def fact_validation_reason(error):
 class NativePersonProfileService(PersonProfileService):
     """Join source-checked room evidence; keep original profile rules and ledger."""
 
-    def __init__(self, metadata, room_context):
+    def __init__(self, metadata, room_context, source_ids=()):
         super().__init__(metadata)
+        self.source_ids = source_ids
         self.room_context = room_context or {
             "paragraphs": [],
             "relations": [],
             "episodes": [],
         }
+
+    def _collect_person_fact_claims(self, person_id, limit=200):
+        if not self.source_ids:
+            return super()._collect_person_fact_claims(person_id, limit)
+        collect = super()._collect_person_fact_claims
+        claims = [
+            claim for source in self.source_ids for claim in collect(source, limit)
+        ]
+        single = {}
+        for claim in claims:
+            if claim["cardinality"] == "single":
+                single.setdefault(claim["fact_key"], set()).add(
+                    claim["value_normalized"]
+                )
+        # Separate native scopes may each hold an active value for the same
+        # single-valued fact. Global visibility cannot turn that into certainty.
+        return [
+            claim | {"profile_section": "uncertain_notes"}
+            if len(single.get(claim["fact_key"], ())) > 1
+            else claim
+            for claim in claims
+        ][:limit]
 
     def _collect_relation_evidence(self, aliases, limit=30, *, person_id=""):
         edges = super()._collect_relation_evidence(aliases, limit, person_id=person_id)
@@ -156,7 +183,6 @@ class NativePersonProfileService(PersonProfileService):
         ]
         recent = recent[: min(6, top_k)]
         return [*evidence[: top_k - len(recent)], *recent]
-
 
 
 def person_identity(platform, bot, origin, persona, sender):
@@ -203,8 +229,61 @@ class PersonMemory:
             return getattr(self, "_" + operation)(*args)
 
     def identity(self, event, scope, persona, sender):
-        origin = [event.unified_msg_origin, scope] if self.plugin.settings["memory_isolation"] else ["global-memory"]
-        return person_identity(event.get_platform_id(), event.get_self_id(), origin, persona, sender)
+        origin = [event.unified_msg_origin, scope]
+        return person_identity(
+            event.get_platform_id(), event.get_self_id(), origin, persona, sender
+        )
+
+    async def scope_ids(self, event, scope, persona, sender):
+        own = self.identity(event, scope, persona, sender)
+        if self.plugin.settings["memory_isolation"]:
+            return [own]
+        scopes = await self.plugin.store.read("memory_scopes", persona)
+        ids = [
+            person_identity(
+                event.get_platform_id(),
+                event.get_self_id(),
+                [r["umo"], r["id"]],
+                persona,
+                sender,
+            )
+            for r in scopes
+            if r["umo"].split(":", 1)[0] == event.get_platform_id()
+        ]
+        shared = person_identity(
+            event.get_platform_id(),
+            event.get_self_id(),
+            ["global-memory"],
+            persona,
+            sender,
+        )
+        return list(dict.fromkeys([own, *ids, shared]))
+
+    def _claims_many(self, ids):
+        return sorted(
+            [row for identity in ids for row in self._claims(identity)],
+            key=lambda row: row.get("last_confirmed_at", 0),
+            reverse=True,
+        )[:100]
+
+    def _query_many(self, ids, room_context):
+        if len(ids) == 1:
+            return self._query(ids[0], False, room_context)
+        target = ids[-1]
+        with Session(self.engine) as session:
+            source = next(
+                (
+                    row
+                    for identity in ids
+                    if (row := session.get(PersonInfo, identity)) is not None
+                ),
+                None,
+            )
+            if source is None:
+                return {}
+            sender, name = source.user_id, source.user_nickname
+        self._register(target, sender, name)
+        return self._query(target, True, room_context, ids)
 
     def _register(self, person_id, sender, name):
         with Session(self.engine) as session:
@@ -280,13 +359,13 @@ class PersonMemory:
             limit=100,
         )
 
-    def _query(self, person_id, refresh=False, room_context=None):
+    def _query(self, person_id, refresh=False, room_context=None, source_ids=()):
         with Session(self.engine) as session:
             if session.get(PersonInfo, person_id) is None:
                 return {}
         result = asyncio.run(
             NativePersonProfileService(
-                self.metadata, room_context
+                self.metadata, room_context, source_ids
             ).query_person_profile(
                 person_id=person_id,
                 force_refresh=refresh or room_context is not None,
@@ -305,7 +384,9 @@ class PersonMemory:
                 )
             }
             | {"evidence": self.metadata.get_fact_evidence(claim["claim_id"])}
-            for claim in self._claims(person_id)[:24]
+            for claim in (
+                self._claims_many(source_ids) if source_ids else self._claims(person_id)
+            )[:24]
         ]
         result["recent_interactions"] = [
             {
@@ -367,6 +448,39 @@ class PersonMemory:
         return payload["facts"]
 
     def _write(self, person_id, facts, messages, last_message=0):
+        groups = {}
+        for fact in facts:
+            owners = list(
+                dict.fromkeys(
+                    self.metadata.get_fact_claim(key)["scope_id"]
+                    for key in fact["corrects"]
+                )
+            ) or [person_id]
+            for owner in owners:
+                selected = [
+                    key
+                    for key in fact["corrects"]
+                    if self.metadata.get_fact_claim(key)["scope_id"] == owner
+                ]
+                groups.setdefault(owner, []).append(fact | {"corrects": selected})
+        with self.metadata.transaction():
+            for owner, items in groups.items():
+                self._write_one(owner, items, messages)
+            if last_message:
+                self.metadata._conn.executemany(
+                    "INSERT OR IGNORE INTO ovenheart_person_processed(person_id,source_id) VALUES (?,?)",
+                    [
+                        (person_id, source.get("progress_id", source["source_id"]))
+                        for source in messages
+                    ],
+                )
+                self.metadata._conn.execute(
+                    "UPDATE ovenheart_person_progress SET last_message=? WHERE person_id=?",
+                    (last_message, person_id),
+                )
+        return self._query(person_id, refresh=True)
+
+    def _write_one(self, person_id, facts, messages, last_message=0):
         sources = {m["source_id"]: m for m in messages}
         with self.metadata.transaction():
             for fact in facts:
@@ -401,7 +515,9 @@ class PersonMemory:
                         cardinality=cardinality,
                         authority="direct_user",
                         evidence_type="astrbot_message",
-                        evidence_id=person_id + ":" + source.get("progress_id", source["source_id"]),
+                        evidence_id=person_id
+                        + ":"
+                        + source.get("progress_id", source["source_id"]),
                         evidence_metadata={
                             "quote": evidence["quote"],
                             "sender": source["sender"],
@@ -417,7 +533,10 @@ class PersonMemory:
             if last_message:
                 self.metadata._conn.executemany(
                     "INSERT OR IGNORE INTO ovenheart_person_processed(person_id,source_id) VALUES (?,?)",
-                    [(person_id, source.get("progress_id", source["source_id"])) for source in messages],
+                    [
+                        (person_id, source.get("progress_id", source["source_id"]))
+                        for source in messages
+                    ],
                 )
                 self.metadata._conn.execute(
                     "UPDATE ovenheart_person_progress SET last_message=? WHERE person_id=?",
@@ -502,7 +621,10 @@ class PersonMemory:
                 return
             phase = "read"
             await self.call("attempt", person_id)
-            claims = await self.call("claims", person_id)
+            claims = await self.call(
+                "claims_many",
+                await self.scope_ids(event, scope, persona, event.get_sender_id()),
+            )
             provider = (
                 self.plugin.settings["person_memory_provider_id"]
                 or self.plugin.settings["provider_id"]
@@ -556,7 +678,8 @@ class PersonMemory:
                     ),
                     timeout=max(
                         0,
-                        deadline - time.monotonic()
+                        deadline
+                        - time.monotonic()
                         - (PERSON_REPAIR_RESERVE if not attempt else 0),
                     ),
                 )
@@ -614,11 +737,14 @@ class PersonMemory:
             "blocked_senders"
         ] or not await self.permitted(event, scope, persona):
             return {}
-        person_id = self.identity(event, scope, persona, sender)
         room_context = await self.plugin.room_memory.person_context(
             event, scope, persona, sender
         )
-        result = await self.call("query", person_id, False, room_context)
+        result = await self.call(
+            "query_many",
+            await self.scope_ids(event, scope, persona, sender),
+            room_context,
+        )
         if not await self.permitted(event, scope, persona):
             return {}
         return result
@@ -644,7 +770,9 @@ class PersonMemory:
         messages = [
             {
                 "source_id": event_source(source),
-                "progress_id": self.plugin.room_memory.source_id(scope, event_source(source)),
+                "progress_id": self.plugin.room_memory.source_id(
+                    scope, event_source(source)
+                ),
                 "source_scope": scope,
                 "sender": source.get_sender_id(),
                 "text": own_message_text(source),
@@ -652,13 +780,23 @@ class PersonMemory:
             }
         ]
         facts = self.validate_facts(
-            payload, messages, await self.call("claims", person_id)
+            payload,
+            messages,
+            await self.call(
+                "claims_many",
+                await self.scope_ids(source, scope, persona, source.get_sender_id()),
+            ),
         )
         if revision != self.plugin.settings_revision or not await self.permitted(
             source, scope, persona, learning=True
         ):
             raise ValueError("人物记忆的来源、配置或学习权限已改变。")
-        return await self.call("write", person_id, facts, messages)
+        await self.call("write", person_id, facts, messages)
+        return await self.call(
+            "query_many",
+            await self.scope_ids(source, scope, persona, source.get_sender_id()),
+            None,
+        )
 
     async def context(self, event, scope, persona, messages=()):
         if not self.plugin.settings["person_memory_enabled"]:

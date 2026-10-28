@@ -163,7 +163,17 @@ def record(row, kind):
 
 
 def read_console(
-    directory, view, kind, query, offset, inactive, identity, since, until, people=None
+    directory,
+    view,
+    kind,
+    query,
+    offset,
+    inactive,
+    identity,
+    since,
+    until,
+    people=None,
+    page_limit=30,
 ):
     """Read-only views do not create an SDK runtime or call an embedding model."""
     path = directory / ("metadata.db" if people is not None else "metadata/metadata.db")
@@ -171,7 +181,7 @@ def read_console(
         "items": [],
         "total": 0,
         "offset": offset,
-        "limit": 30,
+        "limit": page_limit,
         "stats": {},
         "available": path.exists(),
     }
@@ -204,7 +214,11 @@ def read_console(
             clauses, params = [], []
             if people is not None and selected in {"fact", "profile"}:
                 field = "scope_id" if selected == "fact" else "person_id"
-                clauses.append(field + " IN (" + ",".join("?" for _ in people) + ")" if people else "0")
+                clauses.append(
+                    field + " IN (" + ",".join("?" for _ in people) + ")"
+                    if people
+                    else "0"
+                )
                 params.extend(people)
             if identity:
                 clauses.append(f"{column}=?")
@@ -219,7 +233,10 @@ def read_console(
                 )
                 params.extend([query] * len(search))
                 if selected == "image":
-                    clauses[-1] = clauses[-1][:-1] + " OR EXISTS(SELECT 1 FROM image_occurrences o JOIN image_observations v ON v.occurrence_id=o.occurrence_id WHERE o.asset_id=image_assets.asset_id AND o.status='active' AND v.superseded_by='' AND instr(lower(v.text),lower(?))>0))"
+                    clauses[-1] = (
+                        clauses[-1][:-1]
+                        + " OR EXISTS(SELECT 1 FROM image_occurrences o JOIN image_observations v ON v.occurrence_id=o.occurrence_id WHERE o.asset_id=image_assets.asset_id AND o.status='active' AND v.superseded_by='' AND instr(lower(v.text),lower(?))>0))"
+                    )
                     params.append(query)
             if not inactive:
                 if selected in {"paragraph", "entity"}:
@@ -238,7 +255,9 @@ def read_console(
                 if selected == "image":
                     clauses.append("status='active'")
                     if view == "emojis":
-                        clauses.append("EXISTS(SELECT 1 FROM image_occurrences o JOIN image_observations v ON v.occurrence_id=o.occurrence_id WHERE o.asset_id=image_assets.asset_id AND o.status='active' AND v.superseded_by='' AND json_extract(v.evidence_json,'$.is_emoji')=1)")
+                        clauses.append(
+                            "EXISTS(SELECT 1 FROM image_occurrences o JOIN image_observations v ON v.occurrence_id=o.occurrence_id WHERE o.asset_id=image_assets.asset_id AND o.status='active' AND v.superseded_by='' AND json_extract(v.evidence_json,'$.is_emoji')=1)"
+                        )
             if selected == "profile":
                 clauses.append(
                     "profile_version=(SELECT MAX(p.profile_version) FROM person_profile_snapshots p WHERE p.person_id=person_profile_snapshots.person_id)"
@@ -277,7 +296,7 @@ def read_console(
         if view == "timeline":
             # Each stream only needs its first offset+page rows for the merged page.
             streams = [
-                rows(key, limit=offset + 30, start=0)
+                rows(key, limit=offset + page_limit, start=0)
                 for key in ("paragraph", "fact", "episode", "correction", "delete")
             ]
             items = sorted(
@@ -286,7 +305,7 @@ def read_console(
                 reverse=True,
             )
             result.update(
-                items=items[offset : offset + 30],
+                items=items[offset : offset + page_limit],
                 total=sum(count for _, count in streams),
             )
         elif view == "import":
@@ -297,8 +316,8 @@ def read_console(
             result["items"] = [
                 dict(row)
                 for row in db.execute(
-                    f"SELECT source,COUNT(*) AS count,SUM(COALESCE(is_deleted,0)) AS deleted,MAX(created_at) AS timestamp FROM paragraphs{where} GROUP BY source ORDER BY timestamp DESC LIMIT 30 OFFSET ?",
-                    (*params, offset),
+                    f"SELECT source,COUNT(*) AS count,SUM(COALESCE(is_deleted,0)) AS deleted,MAX(created_at) AS timestamp FROM paragraphs{where} GROUP BY source ORDER BY timestamp DESC LIMIT ? OFFSET ?",
+                    (*params, page_limit, offset),
                 )
             ]
             result["total"] = db.execute(
@@ -313,16 +332,33 @@ def read_console(
                 "delete": "delete",
             }.get(view, kind)
             result["items"], result["total"] = rows(
-                selected, limit=100 if view == "graph" else 30
+                selected,
+                limit=100 if view == "graph" and page_limit == 30 else page_limit,
             )
             if people is not None:
-                result["stats"] = {"fact": rows("fact", limit=0)[1], "profile": rows("profile", limit=0)[1]}
+                result["stats"] = {
+                    "fact": rows("fact", limit=0)[1],
+                    "profile": rows("profile", limit=0)[1],
+                }
                 for item in result["items"]:
-                    person = db.execute("SELECT user_id,user_nickname FROM ovenheart_amemorix_people WHERE person_id=?", (item["id"] if selected == "profile" else item["scope_id"],)).fetchone()
+                    person = db.execute(
+                        "SELECT user_id,user_nickname FROM ovenheart_amemorix_people WHERE person_id=?",
+                        (item["id"] if selected == "profile" else item["scope_id"],),
+                    ).fetchone()
                     if person and selected == "profile":
-                        item["title"] = person["user_nickname"] + " / " + person["user_id"]
+                        item["title"] = (
+                            person["user_nickname"] + " / " + person["user_id"]
+                        )
                     if selected == "fact":
-                        item["metadata"] = {"evidence": [json.loads(row[0] or "{}") for row in db.execute("SELECT metadata_json FROM fact_evidence WHERE claim_id=?", (item["id"],))]}
+                        item["metadata"] = {
+                            "evidence": [
+                                json.loads(row[0] or "{}")
+                                for row in db.execute(
+                                    "SELECT metadata_json FROM fact_evidence WHERE claim_id=?",
+                                    (item["id"],),
+                                )
+                            ]
+                        }
             if view == "graph":
                 result["limit"] = 100
             if view in {"images", "emojis"}:
@@ -353,6 +389,49 @@ def read_console(
         return result
 
 
+def read_visible_console(
+    directory, keys, view, kind, query, offset, inactive, identity, since, until
+):
+    limit = 100 if view == "graph" else 30
+    outputs = [
+        read_console(
+            directory / key,
+            view,
+            kind,
+            query,
+            0,
+            inactive,
+            identity,
+            since,
+            until,
+            page_limit=offset + limit,
+        )
+        | {"storage_scope": key}
+        for key in keys
+    ]
+    items = sorted(
+        [
+            row | {"storage_scope": result["storage_scope"]}
+            for result in outputs
+            for row in result["items"]
+        ],
+        key=lambda row: row.get("timestamp", 0),
+        reverse=True,
+    )
+    stats = {}
+    for result in outputs:
+        for key, count in result["stats"].items():
+            stats[key] = stats.get(key, 0) + count
+    return {
+        "items": items[offset : offset + limit],
+        "total": sum(result["total"] for result in outputs),
+        "offset": offset,
+        "limit": limit,
+        "stats": stats,
+        "available": any(result["available"] for result in outputs),
+    }
+
+
 class MemoryPanel:
     def __init__(self, plugin):
         self.plugin = plugin
@@ -372,9 +451,6 @@ class MemoryPanel:
         try:
             scope = await self.scope(request.query.get("scope"))
             view = request.query.get("view", "records")
-            bank = request.query.get("bank", "active")
-            if bank not in {"active", "conversation"}:
-                raise ValueError("请选择当前记忆库或保留的会话库。")
             if view == "livingmemory":
                 from .livingmemory_import import read_source
 
@@ -411,28 +487,54 @@ class MemoryPanel:
                 for value in bounds
             ):
                 raise ValueError("时间范围无效，请重新选择起止时间。")
-            isolated = self.plugin.settings["memory_isolation"] or bank == "conversation"
-            directory = self.plugin.room_memory.directory / (scope if isolated else await self.plugin.room_memory.storage_scope(scope))
+            keys = await self.plugin.room_memory.scope_keys(scope)
+            storage = request.query.get("storage_scope")
+            if storage:
+                if storage not in keys:
+                    raise ValueError("这条记忆不属于当前可见范围。")
+                keys = [storage]
             people = None
             if view == "profiles" or kind in {"fact", "profile"}:
                 from .person_panel import person_ids
-                people = await person_ids(self.plugin, scope, isolated)
-                directory = self.plugin.person_memory.path
-            result = await asyncio.to_thread(
-                read_console,
-                directory,
-                view,
-                kind,
-                query,
-                offset,
-                request.query.get("inactive") == "true",
-                identity,
-                *bounds,
-                people,
-            )
-            if not isolated:
-                preserved = await asyncio.to_thread(read_console, self.plugin.room_memory.directory / scope, "records", "paragraph", "", 0, False, "", None, None)
-                result["preserved_stats"] = preserved["stats"]
+
+                people = await person_ids(
+                    self.plugin, scope, self.plugin.settings["memory_isolation"]
+                )
+                result = await asyncio.to_thread(
+                    read_console,
+                    self.plugin.person_memory.path,
+                    view,
+                    kind,
+                    query,
+                    offset,
+                    request.query.get("inactive") == "true",
+                    identity,
+                    *bounds,
+                    people,
+                )
+            else:
+                result = await asyncio.to_thread(
+                    read_visible_console,
+                    self.plugin.room_memory.directory,
+                    keys,
+                    view,
+                    kind,
+                    query,
+                    offset,
+                    request.query.get("inactive") == "true",
+                    identity,
+                    *bounds,
+                )
+                from .person_panel import person_ids
+
+                people = await person_ids(
+                    self.plugin, scope, self.plugin.settings["memory_isolation"]
+                )
+                ledger = await asyncio.to_thread(
+                    read_console, self.plugin.person_memory.path, "records", "fact",
+                    "", 0, False, "", None, None, people, 0,
+                )
+                result["stats"].update(ledger["stats"])
             return {"status": "ok", "data": result}
         except (ValueError, sqlite3.Error) as exc:
             return {
@@ -456,7 +558,20 @@ class MemoryPanel:
             identity = request.query.get("id", "")
             if not identity or len(identity) > 128:
                 raise ValueError("请选择有效的图片记忆。")
-            directory = self.plugin.room_memory.directory / (scope if request.query.get("bank") == "conversation" else await self.plugin.room_memory.storage_scope(scope))
+            from .scope_recall import locate_operation
+
+            keys = await self.plugin.room_memory.scope_keys(scope)
+            owner = request.query.get("storage_scope")
+            if owner is not None and owner not in keys:
+                raise ValueError("这张图片不属于当前可见范围。")
+            owner = (
+                owner
+                or await locate_operation(
+                    self.plugin.room_memory, keys, "image_asset", (identity,)
+                )
+                or scope
+            )
+            directory = self.plugin.room_memory.directory / owner
 
             def thumbnail():
                 from PIL import Image
@@ -515,6 +630,10 @@ class MemoryPanel:
                     "properties": {
                         "scope": {"type": "string"},
                         "action": {"const": operation},
+                        "storage_scope": {
+                            "type": "string",
+                            "pattern": "^[0-9a-f]{24}$",
+                        },
                         "payload": {
                             "type": "object",
                             "properties": fields,
@@ -535,10 +654,25 @@ class MemoryPanel:
                 }
             if operation.startswith(("profile_", "fact_")):
                 from .person_panel import person_ids
-                permitted = await person_ids(self.plugin, scope, self.plugin.settings["memory_isolation"])
-                result = await self.plugin.person_memory.call("panel_action", operation, body["payload"], permitted)
+
+                permitted = await person_ids(
+                    self.plugin, scope, self.plugin.settings["memory_isolation"]
+                )
+                result = await self.plugin.person_memory.call(
+                    "panel_action", operation, body["payload"], permitted
+                )
             else:
-                result = await self.plugin.room_memory.call(scope, "admin", operation, body["payload"])
+                storage = body.get("storage_scope")
+                if storage:
+                    if storage not in await self.plugin.room_memory.scope_keys(scope):
+                        raise ValueError("这条记忆不属于当前可见范围。")
+                    result = await self.plugin.room_memory.call_storage(
+                        storage, "admin", operation, body["payload"]
+                    )
+                else:
+                    result = await self.plugin.room_memory.call(
+                        scope, "admin", operation, body["payload"]
+                    )
             if not result.get("success", True):
                 if operation == "delete_restore" and any(
                     result.get(key)

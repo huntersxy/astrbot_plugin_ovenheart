@@ -2,7 +2,7 @@ name: astrbot_plugin_ovenheart
 display_name: 烤箱之心
 short_desc: 从聊天中学习表达与相处习惯，结合聊天规划与原生记忆，保留你设定的人格底色。
 desc:  源于MaiBot，面向 AstrBot 的人格学习、聊天规划与原生记忆插件。基于真实聊天证据积累表达、词汇与行为习惯，支持自主参与、人物与图片记忆、独立表情图库、会话或全局记忆、主动复核与回滚、人格自画像、LivingMemory 文本快捷导入和原版记忆包导入导出，并在原生人格工坊中统一管理。
-version: 0.71.16
+version: 0.71.17
 author: 汐兮雨
 repo: https://github.com/huntersxy/astrbot_plugin_ovenheart
 astrbot_version: ">=4.29.1,<5"

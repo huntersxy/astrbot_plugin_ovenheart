@@ -1,4 +1,4 @@
-"""Read retained banks and the real person ledger through authenticated APIs."""
+"""Read all visible source memories and the real native person ledger."""
 
 from tests.test_person_memory import fact, remember, source
 from tests.test_room_memory import material, note
@@ -7,7 +7,7 @@ from tests.test_runtime import api_call
 pytest_plugins = ["tests.test_person_memory", "tests.test_room_memory"]
 
 
-async def test_shared_panel_exposes_retained_bank_without_changing_scope_mode(memories):
+async def test_global_panel_includes_existing_memories_without_bank_selection(memories):
     event, scope, persona, rows = await material(memories)
     old = await memories.room_memory.remember(event, scope, persona, note(), rows)
     memories.settings["memory_isolation"] = False
@@ -16,14 +16,13 @@ async def test_shared_panel_exposes_retained_bank_without_changing_scope_mode(me
         panel.read, query=f"scope={scope}&view=records&kind=paragraph"
     )
     assert active["status"] == "ok", active
-    assert active["data"]["total"] == 0
-    assert active["data"]["preserved_stats"]["paragraph"] == 1
-    retained = await api_call(
-        panel.read, query=f"scope={scope}&bank=conversation&view=records&kind=paragraph"
-    )
-    assert retained["data"]["items"][0]["id"] == old["id"]
+    assert active["data"]["total"] == 1
+    assert active["data"]["items"][0]["id"] == old["id"]
+    assert active["data"]["items"][0]["storage_scope"] == scope
     assert memories.settings["memory_isolation"] is False
-    invalid = await api_call(panel.read, query=f"scope={scope}&bank=../metadata")
+    invalid = await api_call(
+        panel.read, query=f"scope={scope}&storage_scope=../metadata"
+    )
     assert invalid["status"] == "error"
 
 
@@ -93,8 +92,6 @@ async def test_panel_uses_person_owner_ledger_and_filters_other_chats(person):
     persisted = await api_call(panel.read, query=f"scope={scope}&view=profiles")
     assert persisted["data"]["total"] == 1
     p.settings["memory_isolation"] = False
-    archived = await api_call(
-        panel.read, query=f"scope={scope}&bank=conversation&view=profiles"
-    )
-    assert archived["data"]["items"][0]["id"] == profile["id"]
+    archived = await api_call(panel.read, query=f"scope={scope}&view=profiles")
+    assert profile["id"] in {row["id"] for row in archived["data"]["items"]}
     assert not p.room_memory.rooms

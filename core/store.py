@@ -62,6 +62,7 @@ class Store:
             "memory_review_status",
             "self_portrait",
             "native_accounts",
+            "memory_scopes",
         }:
             raise ValueError("Unsupported Panel read")
         if operation == "auxiliary_usage" and args:
@@ -83,6 +84,15 @@ class Store:
     def scope_profile(self, db, scope):
         row = db.execute("SELECT * FROM scopes WHERE id=?", (scope,)).fetchone()
         return dict(row) | {"profile": json.loads(row["profile"])} if row else None
+
+    def memory_scopes(self, db, persona):
+        return [
+            dict(row)
+            for row in db.execute(
+                "SELECT id,umo,persona FROM scopes WHERE persona=? AND id<>? ORDER BY updated DESC",
+                (persona, SHARED_SCOPE),
+            )
+        ]
 
     def native_accounts(self, db, platform):
         return [row[0] for row in db.execute(
