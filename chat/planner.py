@@ -150,7 +150,13 @@ class PlannerTool(FunctionTool):
 
     async def call(self, context, **kwargs):
         jsonschema.validate(kwargs, self.parameters)
-        return await self.session.invoke(self.name, kwargs)
+        self.session.running_tools += 1
+        self.session.tool_changed.set()
+        try:
+            return await self.session.invoke(self.name, kwargs)
+        finally:
+            self.session.running_tools -= 1
+            self.session.tool_changed.set()
 
 
 class PlannerSession:
@@ -166,6 +172,8 @@ class PlannerSession:
         self.event = event
         self.messages = offered_messages(messages, settings)
         self.actions = asyncio.Queue()
+        self.running_tools = 0
+        self.tool_changed = asyncio.Event()
         self.pending = None
         self.action = None
         self.task = None
@@ -528,8 +536,17 @@ class PlannerSession:
         }
 
     async def run(self, state):
-        anchor = self.plugin.context.persona_manager.get_persona_v3_by_id(self.persona)
-        recalled = await self.recall(state)
+        self.running_tools += 1
+        self.tool_changed.set()
+        try:
+            anchor = self.plugin.context.persona_manager.get_persona_v3_by_id(self.persona)
+            recalled = await self.recall(state)
+        except BaseException:
+            await self.actions.put(None)
+            raise
+        finally:
+            self.running_tools -= 1
+            self.tool_changed.set()
         provider = (
             self.settings["planner_provider_id"]
             or self.settings["provider_id"]
@@ -628,9 +645,31 @@ class PlannerSession:
             await self.actions.put(None)
 
     async def next_action(self):
-        plan = await asyncio.wait_for(
-            self.actions.get(), self.settings["planner_timeout"]
-        )
+        action = asyncio.create_task(self.actions.get())
+        changed = None
+        try:
+            while True:
+                self.tool_changed.clear()
+                changed = asyncio.create_task(self.tool_changed.wait())
+                done, _ = await asyncio.wait(
+                    [action, changed],
+                    timeout=None if self.running_tools else self.settings["planner_timeout"],
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+                if action in done:
+                    plan = action.result()
+                    break
+                if not done:
+                    raise TimeoutError("Planner model did not produce an action within its waiting budget")
+                # Each native tool has its own execution deadline. Only model
+                # waiting belongs to planner_timeout, not memory/tool I/O.
+                changed.cancel()
+                await asyncio.gather(changed, return_exceptions=True)
+        finally:
+            action.cancel()
+            if changed is not None:
+                changed.cancel()
+            await asyncio.gather(action, *([changed] if changed is not None else []), return_exceptions=True)
         if plan is None:
             await self.task
             return {

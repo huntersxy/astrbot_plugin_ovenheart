@@ -737,6 +737,35 @@ async def test_observation_mode_never_dispatches_the_reply(native_planner):
     assert not plugin.participation.planner.sessions
 
 
+@pytest.mark.parametrize("stage", ["preparation", "tool"])
+async def test_planner_model_deadline_does_not_cancel_memory_io(native_planner, stage):
+    plugin, provider = native_planner
+    plugin.settings["planner_timeout"] = 0.5
+
+    async def recall(*args, **kwargs):
+        if (args[3] == "slow-tool") == (stage == "tool"):
+            await asyncio.sleep(1)
+        return []
+
+    plugin.room_memory.context = recall
+    provider.text_chat.side_effect = [
+        action("search_memory", query="slow-tool"),
+        action("reply", msg_id="1", reply_reference="检索完成后回复。"),
+        action("stop"),
+    ]
+    incoming = private_event("slow-memory-tool", "查一下以前的事")
+    incoming.is_at_or_wake_command = True
+    replies = plugin.participate(incoming)
+    try:
+        await asyncio.wait_for(anext(replies), 3)
+        await send_reply(plugin, incoming, "已经查过了")
+        with pytest.raises(StopAsyncIteration):
+            await anext(replies)
+        assert provider.text_chat.await_count == 3
+    finally:
+        await replies.aclose()
+
+
 async def test_profile_revoked_during_memory_query_stops_before_reply(native_planner):
     plugin, provider = native_planner
 
