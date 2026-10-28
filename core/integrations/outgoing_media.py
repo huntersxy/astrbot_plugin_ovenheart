@@ -141,7 +141,7 @@ class OutgoingMediaBridge:
             return
         original = event.send
 
-        def failed():
+        async def failed():
             event.set_extra("ovenheart_text_delivery_incomplete", True)
             event.set_extra(
                 "ovenheart_planner_receipt",
@@ -154,6 +154,16 @@ class OutgoingMediaBridge:
                     "delivery_status": "native send failed; platform delivery unverified",
                 },
             )
+            # Another after-send hook may stop propagation after a platform
+            # error. Persist the outcome here instead of leaving it prepared.
+            try:
+                await self.plugin.record_turn_trace(
+                    event,
+                    status="send_failed",
+                    cancel_reason="平台发送失败，未确认全部内容送达。",
+                )
+            except Exception as exc:
+                logger.warning("发送失败记录暂未写入 (%s)", type(exc).__name__)
 
         async def send(message):
             text = any(
@@ -181,11 +191,11 @@ class OutgoingMediaBridge:
                 result = await original(wire)
             except Exception:
                 if text:
-                    failed()
+                    await failed()
                 raise
             if result is False:
                 if text:
-                    failed()
+                    await failed()
                 return result
             images = [
                 p for p in getattr(message, "chain", None) or [] if isinstance(p, Image)
