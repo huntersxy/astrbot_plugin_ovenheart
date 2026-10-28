@@ -96,6 +96,7 @@ class Store:
             "self_portrait",
             "native_accounts",
             "memory_scopes",
+            "image_context",
         }:
             raise ValueError("Unsupported Panel read")
         if operation == "auxiliary_usage" and args:
@@ -117,6 +118,18 @@ class Store:
     def scope_profile(self, db, scope):
         row = db.execute("SELECT * FROM scopes WHERE id=?", (scope,)).fetchone()
         return dict(row) | {"profile": json.loads(row["profile"])} if row else None
+
+    def image_context(self, db, references):
+        """Retained original statements near an exact image, never identity facts."""
+        return [
+            dict(row)
+            for scope, sender, created in references
+            for row in db.execute(
+                "SELECT source_id,sender,text,created FROM messages "
+                "WHERE scope=? AND sender=? AND created>=? AND created<=? ORDER BY id LIMIT 4",
+                (scope, sender, created, created + 180),
+            )
+        ]
 
     def memory_scopes(self, db, persona):
         return [

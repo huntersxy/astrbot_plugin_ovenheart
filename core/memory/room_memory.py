@@ -66,6 +66,19 @@ MEMORY_SCHEMA = {
                 },
             },
         },
+        "image_evidence": {
+            "type": "array",
+            "maxItems": 4,
+            "items": {
+                "type": "object",
+                "required": ["msg_id", "image_index"],
+                "additionalProperties": False,
+                "properties": {
+                    "msg_id": {"type": "string", "minLength": 1},
+                    "image_index": {"type": "integer", "minimum": 0, "maximum": 3},
+                },
+            },
+        },
     },
 }
 
@@ -74,7 +87,7 @@ CHANGE_SCHEMAS = {
     "correct_memory": MEMORY_SCHEMA
     | {
         "required": ["memory_id", "content", "evidence", "relations"],
-        "properties": MEMORY_SCHEMA["properties"]
+        "properties": {key: value for key, value in MEMORY_SCHEMA["properties"].items() if key != "image_evidence"}
         | {
             "memory_id": {"type": "string", "minLength": 1, "maxLength": 80},
             "evidence": REQUEST_EVIDENCE,
@@ -476,7 +489,7 @@ class RoomState:
             },
         )
 
-    async def write(self, content, evidence, relations):
+    async def write(self, content, evidence, relations, image_evidence=()):
         from ..vendor.maibot.amemorix.utils.hash import compute_hash, normalize_text
 
         paragraph = compute_hash(normalize_text(content))
@@ -511,12 +524,22 @@ class RoomState:
             ),
             relations=[r | {"metadata": metadata} for r in relations],
         )
+        for image in image_evidence:
+            await self.kernel.image_memory(
+                action="link",
+                occurrence_id=image["occurrence_id"],
+                target_type="paragraph",
+                target_id=paragraph,
+                link_kind="user_statement",
+                evidence={"native_image": image, "statements": metadata["evidence"]},
+            )
         return {
             "id": paragraph,
             "stored": True,
             "vector_written": self.paragraph_vectors is not None
             and paragraph in self.paragraph_vectors,
             "backfill": self.metadata.get_paragraph_vector_backfill_status_counts(),
+            "images_linked": len(image_evidence),
         }
 
     async def person_context(self, sender):
@@ -1671,15 +1694,61 @@ class RoomMemory:
 
     async def remember(self, event, scope, persona, payload, messages):
         jsonschema.validate(payload, MEMORY_SCHEMA)
+        revision = self.plugin.settings_revision
         evidence = await self.verified_evidence(
             event, scope, persona, payload["evidence"], messages
         )
+        images = []
+        for reference in payload.get("image_evidence", []):
+            message = next(
+                (
+                    m
+                    for m in messages
+                    if str(m["sequence"]) == reference["msg_id"] and not m.get("self")
+                ),
+                None,
+            )
+            source = (
+                self.plugin.participation.sources.get((scope, message["source"]))
+                if message
+                else None
+            )
+            if (
+                source is None
+                or source.unified_msg_origin != event.unified_msg_origin
+                or source.get_sender_id() != message["sender_id"]
+                or (await self.plugin.resolve_scope(source))[:2] != (scope, persona)
+                or not await self.plugin.image_memory.permitted(
+                    source, scope, persona, True
+                )
+            ):
+                raise ValueError("图片证据必须来自本轮获准的真实图片消息。")
+            pending = self.plugin.image_memory.busy.get((scope, event_source(source)))
+            if pending is not None:
+                await asyncio.shield(pending)
+            asset = source.get_extra("ovenheart_image_assets", {}).get(
+                reference["image_index"]
+            )
+            if not asset or not asset.get("occurrence_id"):
+                raise ValueError("图片证据尚未入库，不能声称已关联记忆。")
+            images.append(
+                {
+                    "occurrence_id": asset["occurrence_id"],
+                    "source_id": self.source_id(scope, message["source"]),
+                    "image_index": reference["image_index"],
+                }
+            )
+        if revision != self.plugin.settings_revision or not await self.permitted(
+            event, scope, persona, learning=True
+        ):
+            raise ValueError("记忆写入权限已撤销。")
         return await self.call(
             scope,
             "write",
             payload["content"],
             evidence,
             payload["relations"],
+            images,
             event=event,
         )
 

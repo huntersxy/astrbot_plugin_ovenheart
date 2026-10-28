@@ -35,6 +35,10 @@ class ReplyRhythm:
                 .get("platform_settings", {})
                 .get("segmented_reply", {})
             )
+            if event.get_extra("oven_multi_segmented"):
+                if plan and not await self.plugin.check_participation(event):
+                    raise asyncio.CancelledError
+                return await original(message)
             if not settings["reply_rhythm_enabled"] or native.get("enable"):
                 return await original(message)
             if not plan:
