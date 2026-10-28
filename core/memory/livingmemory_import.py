@@ -94,7 +94,7 @@ async def import_records(state, payload):
         result = await state.kernel.ingest_text(
             external_id=record["external_id"],
             source_type="memory",
-            chat_id=state.path.name,
+            chat_id=state.scope,
             text=record["text"],
             timestamp=record["timestamp"],
             metadata=record["metadata"],

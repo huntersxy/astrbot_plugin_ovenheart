@@ -649,6 +649,7 @@ class PersonaPlugin(Star):
         self.prompt_overrides = await self.store.call("prompt_overrides")
         self.prompts = prompts.merge(self.prompt_overrides)
         self.retriever.templates = self.prompts
+        await self.room_memory.prepare()
         await self.store.call("prune", self.settings["retention_days"])
         self.page_api = PageAPI(self)
         self.page_api.register()

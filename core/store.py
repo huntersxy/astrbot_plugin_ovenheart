@@ -96,6 +96,7 @@ class Store:
             "self_portrait",
             "native_accounts",
             "memory_scopes",
+            "memory_catalog",
             "image_context",
         }:
             raise ValueError("Unsupported Panel read")
@@ -138,6 +139,12 @@ class Store:
                 "SELECT id,umo,persona FROM scopes WHERE persona=? AND id<>? ORDER BY updated DESC",
                 (persona, SHARED_SCOPE),
             )
+        ]
+
+    def memory_catalog(self, db):
+        return [
+            dict(row)
+            for row in db.execute("SELECT id,persona FROM scopes WHERE id<>?", (SHARED_SCOPE,))
         ]
 
     def native_accounts(self, db, platform):

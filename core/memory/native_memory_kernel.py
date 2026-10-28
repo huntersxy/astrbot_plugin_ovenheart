@@ -46,6 +46,15 @@ class NativeEpisodeService(EpisodeService):
         # but includes superseded versions. Filter before grouping/fingerprinting.
         return super().group_paragraphs(effective_paragraphs(self.kernel, paragraphs))
 
+    async def plan_source_rebuild(self, source, **kwargs):
+        if not source.startswith("chat_summary:"):
+            return await super().plan_source_rebuild(source, **kwargs)
+        token = feedback_origin.set(source.removeprefix("chat_summary:"))
+        try:
+            return await super().plan_source_rebuild(source, **kwargs)
+        finally:
+            feedback_origin.reset(token)
+
 
 class NativeEpisodeRetrievalService(EpisodeRetrievalService):
     def __init__(self, kernel):

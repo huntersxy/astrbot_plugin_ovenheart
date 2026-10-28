@@ -3,6 +3,7 @@
 from ..vendor.maibot.amemorix.utils.hash import compute_hash, normalize_text
 from ..vendor.maibot.amemorix.utils.summary_importer import SummaryImporter
 from .memory_embedding import embedding_budget
+from .memory_visibility import add_scope
 from .room_memory import native_provenance
 
 
@@ -34,6 +35,7 @@ class NativeSummaryImporter(SummaryImporter):
                 (previous.get("metadata") or {}).get("evidence", []),
             )
         )
+        metadata = add_scope(metadata, stream_id, previous.get("metadata"))
         # Import owns the room queue after the text model returns. Let the SDK
         # retain metadata and enqueue slow vectors instead of blocking recall.
         with embedding_budget(1.5):

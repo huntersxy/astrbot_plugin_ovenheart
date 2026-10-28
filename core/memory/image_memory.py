@@ -125,9 +125,12 @@ class NativeImageEmbedding:
             )
 
         cache_key = (self.key, hashlib.sha256(image_bytes).digest(), mime_type)
+        job_chats = None
+        if image_job.get():
+            job_chats = [row[0] for row in self.state.metadata._conn.execute("SELECT DISTINCT o.chat_id FROM image_occurrences o JOIN image_assets a ON a.asset_id=o.asset_id WHERE a.content_hash=? AND o.status='active'", (hashlib.sha256(image_bytes).hexdigest(),))]
 
         async def request():
-            if not await self.allowed(image_job.get()):
+            if not await self.allowed(image_job.get(), chat_ids=job_chats):
                 raise ValueError("当前图片模型权限已撤销。")
 
             if cache_key in self.cache:
@@ -179,7 +182,7 @@ class NativeImageEmbedding:
                 vector = rows[0]["embedding"] if len(rows) == 1 else None
             if vector is None:
                 raise ValueError("图片嵌入返回的向量数量不正确。")
-            if not await self.allowed(image_job.get()):
+            if not await self.allowed(image_job.get(), chat_ids=job_chats):
                 raise ValueError("图片请求期间应用或学习权限已撤销。")
             result = SimpleNamespace(
                 embedding=vector,
@@ -206,12 +209,17 @@ class NativeImageEmbedding:
         future = asyncio.run_coroutine_threadsafe(request(), self.loop)
         return await asyncio.wait_for(asyncio.wrap_future(future), remaining)
 
-    async def allowed(self, learning):
-        event = self.state.identity or self.state.event_ref()
-        if event is None or not self.plugin.settings["image_memory_enabled"]:
+    async def allowed(self, learning, *, chat_ids=None):
+        if not self.plugin.settings["image_memory_enabled"]:
             return False
-        scope, persona, _ = await self.plugin.resolve_scope(event)
-        return await self.plugin.room_memory.permitted(event, scope, persona, learning)
+        events = [self.state.identity or self.state.event_ref()] if chat_ids is None else [self.plugin.events.get(scope) or (self.state.identities[scope].identity if scope in self.state.identities else None) for scope in chat_ids]
+        for event in events:
+            if event is None:
+                continue
+            scope, persona, _ = await self.plugin.resolve_scope(event)
+            if await self.plugin.room_memory.storage_scope(scope) == self.state.path.name and await self.plugin.room_memory.permitted(event, scope, persona, learning):
+                return True
+        return False
 
 
 class ImageMemory:

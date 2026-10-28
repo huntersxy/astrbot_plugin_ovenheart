@@ -18,6 +18,8 @@ import jsonschema
 from astrbot.api import logger
 from astrbot.api.web import request
 
+from .memory_visibility import scoped_metadata, visible_clause
+
 SPECS = {
     "paragraph": ("paragraphs", "hash", ("content", "source"), "created_at"),
     "entity": ("entities", "hash", ("name",), "created_at"),
@@ -48,7 +50,7 @@ SPECS = {
         ("request_text", "status"),
         "created_at",
     ),
-    "feedback": ("memory_feedback_tasks", "task_id", ("status",), "created_at"),
+    "feedback": ("memory_feedback_tasks", "id", ("status",), "created_at"),
 }
 TEXT = {"type": "string", "minLength": 1, "maxLength": 30000, "pattern": r"\S"}
 IDENTIFIER = {"type": "string", "minLength": 1, "maxLength": 128}
@@ -174,6 +176,7 @@ def read_console(
     until,
     people=None,
     page_limit=30,
+    visible_scope=None,
 ):
     """Read-only views do not create an SDK runtime or call an embedding model."""
     path = directory / ("metadata.db" if people is not None else "metadata/metadata.db")
@@ -203,15 +206,18 @@ def read_console(
                     if key in {"paragraph", "entity"}
                     else ""
                 )
+                visibility, values = visible_clause(key, visible_scope)
+                clause += (" AND " if clause else " WHERE ") + "(" + visibility + ")"
                 result["stats"][key] = db.execute(
-                    f"SELECT COUNT(*) FROM {table}{clause}"
+                    f"SELECT COUNT(*) FROM {table}{clause}", values
                 ).fetchone()[0]
 
         def rows(selected, *, limit=30, start=offset):
             table, column, search, timestamp = SPECS[selected]
             if table not in tables:
                 return [], 0
-            clauses, params = [], []
+            visibility, values = visible_clause(selected, visible_scope)
+            clauses, params = ["(" + visibility + ")"], list(values)
             if people is not None and selected in {"fact", "profile"}:
                 field = "scope_id" if selected == "fact" else "person_id"
                 clauses.append(
@@ -277,6 +283,10 @@ def read_console(
                     (*params, limit, start),
                 )
             ]
+            if visible_scope:
+                for item in items:
+                    if isinstance(item.get("metadata"), dict):
+                        item["metadata"] = scoped_metadata(item["metadata"], visible_scope)
             if selected == "profile":
                 for item in items:
                     override = db.execute(
@@ -309,10 +319,9 @@ def read_console(
                 total=sum(count for _, count in streams),
             )
         elif view == "import":
-            where = (
-                " WHERE instr(lower(COALESCE(source,'')),lower(?))>0" if query else ""
-            )
-            params = (query,) if query else ()
+            visibility, values = visible_clause("paragraph", visible_scope)
+            where = " WHERE (" + visibility + ")" + (" AND instr(lower(COALESCE(source,'')),lower(?))>0" if query else "")
+            params = (*values, query) if query else values
             result["items"] = [
                 dict(row)
                 for row in db.execute(
@@ -366,8 +375,8 @@ def read_console(
                     item["observations"] = [
                         dict(row)
                         for row in db.execute(
-                            "SELECT o.occurrence_id,o.message_id,o.occurred_at,o.status AS occurrence_status,b.observation_id,b.text,b.confirm_status FROM image_occurrences o LEFT JOIN image_observations b ON b.occurrence_id=o.occurrence_id AND b.superseded_by='' WHERE o.asset_id=? ORDER BY o.occurred_at DESC LIMIT 20",
-                            (item["id"],),
+                            "SELECT o.occurrence_id,o.message_id,o.occurred_at,o.status AS occurrence_status,b.observation_id,b.text,b.confirm_status FROM image_occurrences o LEFT JOIN image_observations b ON b.occurrence_id=o.occurrence_id AND b.superseded_by='' WHERE o.asset_id=? AND (?='' OR o.chat_id=?) ORDER BY o.occurred_at DESC LIMIT 20",
+                            (item["id"], visible_scope or "", visible_scope or ""),
                         )
                     ]
             if identity and result["items"] and selected == "paragraph":
@@ -390,7 +399,7 @@ def read_console(
 
 
 def read_visible_console(
-    directory, keys, view, kind, query, offset, inactive, identity, since, until
+    directory, keys, view, kind, query, offset, inactive, identity, since, until, visible_scope=None
 ):
     limit = 100 if view == "graph" else 30
     outputs = [
@@ -405,6 +414,7 @@ def read_visible_console(
             since,
             until,
             page_limit=offset + limit,
+            visible_scope=visible_scope,
         )
         | {"storage_scope": key}
         for key in keys
@@ -524,6 +534,7 @@ class MemoryPanel:
                     request.query.get("inactive") == "true",
                     identity,
                     *bounds,
+                    visible_scope=scope if self.plugin.settings["memory_isolation"] else None,
                 )
                 from .person_panel import person_ids
 
@@ -558,19 +569,11 @@ class MemoryPanel:
             identity = request.query.get("id", "")
             if not identity or len(identity) > 128:
                 raise ValueError("请选择有效的图片记忆。")
-            from .scope_recall import locate_operation
-
             keys = await self.plugin.room_memory.scope_keys(scope)
             owner = request.query.get("storage_scope")
             if owner is not None and owner not in keys:
                 raise ValueError("这张图片不属于当前可见范围。")
-            owner = (
-                owner
-                or await locate_operation(
-                    self.plugin.room_memory, keys, "image_asset", (identity,)
-                )
-                or scope
-            )
+            owner = owner or keys[0]
             directory = self.plugin.room_memory.directory / owner
 
             def thumbnail():
@@ -583,8 +586,8 @@ class MemoryPanel:
                     )
                 ) as db:
                     row = db.execute(
-                        "SELECT storage_key FROM image_assets WHERE asset_id=? AND status='active'",
-                        (identity,),
+                        "SELECT storage_key FROM image_assets WHERE asset_id=? AND status='active' AND (" + visible_clause("image", scope if self.plugin.settings["memory_isolation"] else None)[0] + ")",
+                        (identity, *visible_clause("image", scope if self.plugin.settings["memory_isolation"] else None)[1]),
                     ).fetchone()
                 if not row:
                     raise ValueError("图片记忆不存在或已删除。")
@@ -667,7 +670,7 @@ class MemoryPanel:
                     if storage not in await self.plugin.room_memory.scope_keys(scope):
                         raise ValueError("这条记忆不属于当前可见范围。")
                     result = await self.plugin.room_memory.call_storage(
-                        storage, "admin", operation, body["payload"]
+                        storage, "admin", operation, body["payload"], source_scope=scope
                     )
                 else:
                     result = await self.plugin.room_memory.call(
@@ -754,7 +757,7 @@ async def execute_admin(state, operation, payload):
         return await kernel.ingest_text(
             external_id=f"panel:{uuid4().hex}",
             source_type="memory",
-            chat_id=state.path.name,
+            chat_id=state.scope,
             text=payload["text"],
             timestamp=time.time(),
             metadata={"admin": actor},
@@ -773,7 +776,7 @@ async def execute_admin(state, operation, payload):
                     {
                         "action": "ingest_text",
                         "text": payload["text"],
-                        "chat_id": state.path.name,
+                        "chat_id": state.scope,
                         "source_type": "memory",
                     },
                 ],
@@ -781,13 +784,13 @@ async def execute_admin(state, operation, payload):
             request_text=payload["text"],
             scope="memory",
             person_id="",
-            chat_id=state.path.name,
+            chat_id=state.scope,
             candidates=candidates,
         )
         saved = state.metadata.create_fuzzy_modify_plan(
             request_text=payload["text"],
             scope="memory",
-            target_chat_id=state.path.name,
+            target_chat_id=state.scope,
             plan=plan,
             status="awaiting_confirmation",
             confidence=1,
@@ -865,15 +868,32 @@ async def execute_admin(state, operation, payload):
                 "edge_create": "create_edge",
             }[operation],
             **values,
+            metadata={"chat_ids": [state.scope]},
             updated_by=actor,
             reason=reason,
         )
     if operation == "export_bundle":
-        exported = await kernel.memory_bundle_admin(
+        service = kernel._bundle_admin_service
+        if not state.shared:
+            # The SDK exports linked semantic state. Project shared records'
+            # evidence too, so a chat export cannot include another chat's quotes.
+            class ScopedExport(type(service)):
+                def _collect_related_rows(self, paragraphs):
+                    rows = super()._collect_related_rows(paragraphs)
+                    for table in ("paragraphs", "entities", "relations", "deleted_relations"):
+                        for row in rows[table]:
+                            row["metadata"] = json.dumps(scoped_metadata(json.loads(row.get("metadata") or "{}"), state.scope), ensure_ascii=False)
+                    rows["episodes"] = [row for row in rows["episodes"] if row["source"] == "chat_summary:" + state.scope]
+                    episodes = {row["episode_id"] for row in rows["episodes"]}
+                    rows["episode_paragraphs"] = [row for row in rows["episode_paragraphs"] if row["episode_id"] in episodes]
+                    return rows
+
+            service = ScopedExport(kernel)
+        exported = await service.memory_bundle_admin(
             action="export",
             content_level="full",
             package={"name": "OvenHeart-memory", "version": str(int(time.time()))},
-            selector={"type": "all"},
+            selector={"type": "all"} if state.shared else {"type": "chat", "chat_id": state.scope},
             include_images=True,
         )
         if exported.get("success"):
@@ -898,6 +918,6 @@ async def execute_admin(state, operation, payload):
             path=str(path),
             mode="merge",
             scope_type="chat",
-            chat_id=state.path.name,
+            chat_id=state.scope,
         )
     raise ValueError("未知的记忆管理操作。")
