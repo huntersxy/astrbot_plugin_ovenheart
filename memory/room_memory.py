@@ -208,6 +208,7 @@ class RoomState:
         self.foreground_lock = asyncio.Lock()
         self.foreground_ready = asyncio.Event()
         self.model_waiting = False
+        self.image_recovered = False
 
     async def initialize(self):
         key = (
@@ -264,6 +265,7 @@ class RoomState:
                 "embedding": {"dimension": embedding.dimension or 1024},
                 "image_memory": {
                     "enabled": image_enabled,
+                    "recover_on_initialize": not self.image_recovered,
                     "preprocess_version": "gif_first_frame_v1",
                 },
                 "retrieval": {
@@ -275,6 +277,8 @@ class RoomState:
         kernel._runtime_writer_lock.acquire()
         try:
             await kernel.initialize()
+            if kernel.image_memory_runtime is not None:
+                self.image_recovered = True
             if kernel.image_memory_runtime is not None:
                 from .image_memory import (
                     NativeImageAssetStore,
@@ -1074,6 +1078,7 @@ class RoomMemory:
         self.closing = False
         self.embedding = None
         self.image_embeddings = {}
+        self.recovered_images = set()
 
     async def storage_scope(self, scope):
         # Keep authoritative data with its real source; the switch changes reads.
@@ -1554,6 +1559,7 @@ class RoomMemory:
                     self.rooms[scope] = await creating
                     raise
                 self.rooms[scope] = state
+                state.image_recovered = scope in self.recovered_images
             self.rooms.move_to_end(scope)
             if state.foreground:
                 await asyncio.gather(*tuple(state.foreground), return_exceptions=True)
@@ -1592,6 +1598,8 @@ class RoomMemory:
             try:
                 return await self.execute(state, operation, args)
             finally:
+                if state.image_recovered:
+                    self.recovered_images.add(scope)
                 state.operation = None
                 state.foreground_ready.set()
 
