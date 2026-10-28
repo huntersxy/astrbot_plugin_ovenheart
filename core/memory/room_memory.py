@@ -386,8 +386,13 @@ class RoomState:
             )
         from ..vendor.maibot.amemorix.runtime.models import KernelSearchRequest
 
-        response = await self.kernel.search_memory(
-            KernelSearchRequest(query=query, chat_id=self.path.name, limit=top_k)
+        has_episodes = self.metadata._conn.execute(
+            "SELECT EXISTS(SELECT 1 FROM episodes)"
+        ).fetchone()[0]
+        # One foreground episode uses the native service's 20 * 4 candidates.
+        response, evidence = await self.kernel.search_with_evidence(
+            KernelSearchRequest(query=query, chat_id=self.path.name, limit=top_k),
+            evidence_limit=80 if has_episodes else 0,
         )
         found = response["hits"]
         if feedback_source and found and not defer_feedback:
@@ -418,12 +423,13 @@ class RoomState:
                     },
                 }
             )
-        # Episode retrieval repeats the full evidence search; an empty episode
-        # table cannot produce an episode through either of its ranking paths.
-        has_episodes = self.metadata._conn.execute(
-            "SELECT EXISTS(SELECT 1 FROM episodes)"
-        ).fetchone()[0]
-        episodes = await self.episodes(query, min(1, top_k)) if has_episodes else []
+        # Project episodes from this query's candidates instead of searching
+        # the same paragraph/relation stores again.
+        episodes = (
+            await self.episodes(query, min(1, top_k), evidence=evidence)
+            if has_episodes
+            else []
+        )
         if episodes:
             episode = episodes[0]
             paragraphs = episode.get("paragraphs", [])
@@ -1049,9 +1055,9 @@ class RoomState:
             )
         return result
 
-    async def episodes(self, query, top_k):
+    async def episodes(self, query, top_k, *, evidence=None):
         found = await self.kernel.episode_retriever.query(
-            query=query, top_k=top_k, include_paragraphs=True
+            query=query, top_k=top_k, include_paragraphs=True, evidence=evidence
         )
         return [
             row
@@ -1100,6 +1106,8 @@ class RoomMemory:
         self.embedding = None
         self.image_embeddings = {}
         self.recovered_images = set()
+        self.recall_slots = asyncio.Semaphore(3)
+        self.room_pool_lock = asyncio.Lock()
 
     async def storage_scope(self, scope):
         # Keep authoritative data with its real source; the switch changes reads.
@@ -1560,31 +1568,34 @@ class RoomMemory:
                 raise ValueError("记忆运行时正在关闭。")
             state = self.rooms.get(scope)
             if state is None:
-                while (
-                    len(self.rooms) >= self.plugin.settings["memory_runtime_max_rooms"]
-                ):
-                    candidate = next(
-                        (
-                            k
-                            for k, v in self.rooms.items()
-                            if not v.lock.locked() and not v.foreground
-                        ),
-                        None,
+                async with self.room_pool_lock:
+                    # Parallel cold reads must reserve capacity before loading.
+                    while (
+                        len(self.rooms)
+                        >= self.plugin.settings["memory_runtime_max_rooms"]
+                    ):
+                        candidate = next(
+                            (
+                                k
+                                for k, v in self.rooms.items()
+                                if not v.lock.locked() and not v.foreground
+                            ),
+                            None,
+                        )
+                        if candidate is None:
+                            raise RuntimeError("记忆工作队列繁忙。")
+                        await self.execute(self.rooms.pop(candidate), "close", ())
+                        self.locks.pop(candidate, None)
+                    creating = asyncio.create_task(
+                        asyncio.to_thread(RoomState, self.directory / scope, lock)
                     )
-                    if candidate is None:
-                        raise RuntimeError("记忆工作队列繁忙。")
-                    await self.execute(self.rooms.pop(candidate), "close", ())
-                    self.locks.pop(candidate, None)
-                creating = asyncio.create_task(
-                    asyncio.to_thread(RoomState, self.directory / scope, lock)
-                )
-                try:
-                    state = await asyncio.shield(creating)
-                except asyncio.CancelledError:
-                    self.rooms[scope] = await creating
-                    raise
-                self.rooms[scope] = state
-                state.image_recovered = scope in self.recovered_images
+                    try:
+                        state = await asyncio.shield(creating)
+                    except asyncio.CancelledError:
+                        self.rooms[scope] = await creating
+                        raise
+                    self.rooms[scope] = state
+                    state.image_recovered = scope in self.recovered_images
             self.rooms.move_to_end(scope)
             if state.foreground:
                 await asyncio.gather(*tuple(state.foreground), return_exceptions=True)

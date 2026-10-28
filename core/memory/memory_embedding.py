@@ -43,6 +43,7 @@ class EmbeddingAPIAdapter:
         self.provider = context.get_provider_by_id(provider_id) if provider_id else None
         self.loop = loop
         self.cache = {}
+        self.requests = {}
         self.dimension = 0
         self.available = bool(
             self.provider and callable(getattr(self.provider, "get_embeddings", None))
@@ -82,6 +83,24 @@ class EmbeddingAPIAdapter:
         }
 
     async def _request(self, texts):
+        # This method runs on the provider's host loop. Different rooms share
+        # one in-flight encoding, but each caller keeps its own wait budget.
+        key = tuple(texts)
+        entry = self.requests.get(key)
+        if entry is None:
+            entry = [asyncio.create_task(self._fetch(texts)), 0]
+            self.requests[key] = entry
+        entry[1] += 1
+        try:
+            return await asyncio.shield(entry[0])
+        finally:
+            entry[1] -= 1
+            if not entry[1]:
+                self.requests.pop(key, None)
+                if not entry[0].done():
+                    entry[0].cancel()
+
+    async def _fetch(self, texts):
         try:
             output = await self.provider.get_embeddings(texts)
         except Exception as exc:

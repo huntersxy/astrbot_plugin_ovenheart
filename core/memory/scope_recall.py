@@ -4,7 +4,7 @@ import asyncio
 import hashlib
 import json
 import sqlite3
-from contextlib import closing
+from contextlib import closing, nullcontext
 from types import SimpleNamespace
 
 
@@ -158,21 +158,22 @@ async def read_all(room, keys, operation, args, event, source_scope):
     # bounded pool and provider cache instead of each keeping another corpus.
     shared = keys[-1]
     keys = sorted(keys, key=lambda key: key not in room.rooms)
-    for key in keys:
+
+    async def read_one(key):
         if operation in {
             "image_search",
             "image_candidates",
         } and not await asyncio.to_thread(
             contains, room.directory, key, "image_assets", "asset_id"
         ):
-            continue
+            return None
         if operation in {
             "search",
             "person_context",
         } and not await asyncio.to_thread(
             contains, room.directory, key, "paragraphs", "hash"
         ):
-            continue
+            return None
         extra = [True] if operation == "search" else []
         if operation == "image_search":
             extra = [
@@ -180,13 +181,35 @@ async def read_all(room, keys, operation, args, event, source_scope):
                 if key == shared
                 else f"{source_scope}:{args[1]}:{args[2]}"
             ]
-        result = await room.call_storage(key, operation, *args, *extra, event=event)
+        async with room.recall_slots if operation == "search" else nullcontext():
+            result = await room.call_storage(key, operation, *args, *extra, event=event)
         if operation == "search":
             result["results"] = [
                 row | {"storage_scope": key} for row in result["results"]
             ]
             result["storage_scope"] = key
-        outputs.append(result)
+        return result
+
+    # Only text recall overlaps stores; keep image ingestion/search's existing
+    # resource usage. A one-room runtime budget must still work serially.
+    parallel = (
+        min(3, room.plugin.settings["memory_runtime_max_rooms"])
+        if operation == "search"
+        else 1
+    )
+    for start in range(0, len(keys), parallel):
+        tasks = [
+            asyncio.create_task(read_one(key)) for key in keys[start : start + parallel]
+        ]
+        try:
+            outputs.extend(
+                result for result in await asyncio.gather(*tasks) if result is not None
+            )
+        finally:
+            for task in tasks:
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
     if operation == "search":
         selected = ranked(
             [row for result in outputs for row in result["results"]], args[1]

@@ -1,7 +1,9 @@
 """AstrBot lifecycle boundaries around the original A_memorix SDK kernel."""
 
+import copy
 import time
 from contextvars import ContextVar
+from types import SimpleNamespace
 
 from ..runtime_diagnostics import limit_metadata_cache
 from ..vendor.maibot.amemorix.runtime.sdk_memory_kernel import SDKMemoryKernel
@@ -19,6 +21,7 @@ from ..vendor.maibot.amemorix.utils.episode_service import EpisodeService
 
 feedback_origin = ContextVar("ovenheart_feedback_origin", default="")
 correction_evidence = ContextVar("ovenheart_memory_correction_evidence", default=None)
+_retrieval_evidence = ContextVar("ovenheart_retrieval_evidence", default=None)
 
 
 def effective_paragraphs(kernel, paragraphs):
@@ -51,9 +54,19 @@ class NativeEpisodeRetrievalService(EpisodeRetrievalService):
         )
         self.kernel = kernel
 
-    async def query(self, *, include_paragraphs=False, **kwargs):
+    async def query(self, *, include_paragraphs=False, evidence=None, **kwargs):
         limit = kwargs.get("top_k", 5)
-        rows = await super().query(
+        query = super().query
+        if evidence is not None:
+
+            async def retrieve(**_):
+                return evidence
+
+            query = EpisodeRetrievalService(
+                metadata_store=self.metadata_store,
+                retriever=SimpleNamespace(retrieve=retrieve),
+            ).query
+        rows = await query(
             include_paragraphs=True, **(kwargs | {"top_k": max(20, limit * 4)})
         )
         result = []
@@ -98,6 +111,7 @@ class NativeFeedbackService(MemoryFeedbackCorrectionService):
 
 class NativeMemoryKernel(SDKMemoryKernel):
     def __init__(self, *, plugin_root, config=None):
+        self._captured_retriever = None
         super().__init__(plugin_root=plugin_root, config=config)
         self._correction_admin_service = NativeCorrectionService(self)
         self._feedback_service = NativeFeedbackService(self)
@@ -141,6 +155,33 @@ class NativeMemoryKernel(SDKMemoryKernel):
 
     def _refresh_runtime_dependents(self, *, preserve_managers=True):
         super()._refresh_runtime_dependents(preserve_managers=preserve_managers)
+        if (
+            self.retriever is not None
+            and self.retriever is not self._captured_retriever
+        ):
+            retriever = self.retriever
+            self._captured_retriever = retriever
+            original = retriever.retrieve
+
+            async def retrieve(*args, **kwargs):
+                capture = _retrieval_evidence.get()
+                query = kwargs.get("query", args[0] if args else "")
+                if (
+                    not capture
+                    or capture["retriever"] is not retriever
+                    or capture["query"] != str(query).strip()
+                ):
+                    return await original(*args, **kwargs)
+                requested = kwargs["top_k"]
+                results = await original(
+                    *args, **(kwargs | {"top_k": max(requested, capture["limit"])})
+                )
+                # Keep the episode candidate budget, while ordinary search
+                # thresholds only its original prefix. Filtering mutates rows.
+                capture["results"] = copy.deepcopy(results)
+                return results[:requested]
+
+            retriever.retrieve = retrieve
         if self.metadata_store is not None:
             self.episode_retriever = NativeEpisodeRetrievalService(self)
             self.episode_service = NativeEpisodeService(
@@ -149,6 +190,23 @@ class NativeMemoryKernel(SDKMemoryKernel):
                 plugin_config=self._build_runtime_config(),
                 segmentation_service=self.episode_segmentation_service,
             )
+
+    async def search_with_evidence(self, request, *, evidence_limit=0):
+        if not evidence_limit:
+            return await self.search_memory(request), None
+        capture = {
+            "query": request.query.strip(),
+            "retriever": self.retriever,
+            "limit": evidence_limit,
+        }
+        token = _retrieval_evidence.set(capture)
+        try:
+            response = await self.search_memory(request)
+            return response, capture.get("results")
+        finally:
+            # Inherited background contexts must not retain this query's data.
+            capture.clear()
+            _retrieval_evidence.reset(token)
 
     async def shutdown(self):
         # Upstream drops its sparse index reference without unloading its
