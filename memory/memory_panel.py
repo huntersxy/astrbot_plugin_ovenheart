@@ -163,10 +163,10 @@ def record(row, kind):
 
 
 def read_console(
-    directory, view, kind, query, offset, inactive, identity, since, until
+    directory, view, kind, query, offset, inactive, identity, since, until, people=None
 ):
     """Read-only views do not create an SDK runtime or call an embedding model."""
-    path = directory / "metadata/metadata.db"
+    path = directory / ("metadata.db" if people is not None else "metadata/metadata.db")
     result = {
         "items": [],
         "total": 0,
@@ -202,6 +202,10 @@ def read_console(
             if table not in tables:
                 return [], 0
             clauses, params = [], []
+            if people is not None and selected in {"fact", "profile"}:
+                field = "scope_id" if selected == "fact" else "person_id"
+                clauses.append(field + " IN (" + ",".join("?" for _ in people) + ")" if people else "0")
+                params.extend(people)
             if identity:
                 clauses.append(f"{column}=?")
                 params.append(identity)
@@ -311,6 +315,14 @@ def read_console(
             result["items"], result["total"] = rows(
                 selected, limit=100 if view == "graph" else 30
             )
+            if people is not None:
+                result["stats"] = {"fact": rows("fact", limit=0)[1], "profile": rows("profile", limit=0)[1]}
+                for item in result["items"]:
+                    person = db.execute("SELECT user_id,user_nickname FROM ovenheart_amemorix_people WHERE person_id=?", (item["id"] if selected == "profile" else item["scope_id"],)).fetchone()
+                    if person and selected == "profile":
+                        item["title"] = person["user_nickname"] + " / " + person["user_id"]
+                    if selected == "fact":
+                        item["metadata"] = {"evidence": [json.loads(row[0] or "{}") for row in db.execute("SELECT metadata_json FROM fact_evidence WHERE claim_id=?", (item["id"],))]}
             if view == "graph":
                 result["limit"] = 100
             if view in {"images", "emojis"}:
@@ -360,6 +372,9 @@ class MemoryPanel:
         try:
             scope = await self.scope(request.query.get("scope"))
             view = request.query.get("view", "records")
+            bank = request.query.get("bank", "active")
+            if bank not in {"active", "conversation"}:
+                raise ValueError("请选择当前记忆库或保留的会话库。")
             if view == "livingmemory":
                 from .livingmemory_import import read_source
 
@@ -396,9 +411,16 @@ class MemoryPanel:
                 for value in bounds
             ):
                 raise ValueError("时间范围无效，请重新选择起止时间。")
+            isolated = self.plugin.settings["memory_isolation"] or bank == "conversation"
+            directory = self.plugin.room_memory.directory / (scope if isolated else await self.plugin.room_memory.storage_scope(scope))
+            people = None
+            if view == "profiles" or kind in {"fact", "profile"}:
+                from .person_panel import person_ids
+                people = await person_ids(self.plugin, scope, isolated)
+                directory = self.plugin.person_memory.path
             result = await asyncio.to_thread(
                 read_console,
-                self.plugin.room_memory.directory / await self.plugin.room_memory.storage_scope(scope),
+                directory,
                 view,
                 kind,
                 query,
@@ -406,7 +428,11 @@ class MemoryPanel:
                 request.query.get("inactive") == "true",
                 identity,
                 *bounds,
+                people,
             )
+            if not isolated:
+                preserved = await asyncio.to_thread(read_console, self.plugin.room_memory.directory / scope, "records", "paragraph", "", 0, False, "", None, None)
+                result["preserved_stats"] = preserved["stats"]
             return {"status": "ok", "data": result}
         except (ValueError, sqlite3.Error) as exc:
             return {
@@ -430,7 +456,7 @@ class MemoryPanel:
             identity = request.query.get("id", "")
             if not identity or len(identity) > 128:
                 raise ValueError("请选择有效的图片记忆。")
-            directory = self.plugin.room_memory.directory / await self.plugin.room_memory.storage_scope(scope)
+            directory = self.plugin.room_memory.directory / (scope if request.query.get("bank") == "conversation" else await self.plugin.room_memory.storage_scope(scope))
 
             def thumbnail():
                 from PIL import Image
@@ -507,9 +533,12 @@ class MemoryPanel:
                         read_source, self.livingmemory_path, body["payload"]
                     )
                 }
-            result = await self.plugin.room_memory.call(
-                scope, "admin", operation, body["payload"]
-            )
+            if operation.startswith(("profile_", "fact_")):
+                from .person_panel import person_ids
+                permitted = await person_ids(self.plugin, scope, self.plugin.settings["memory_isolation"])
+                result = await self.plugin.person_memory.call("panel_action", operation, body["payload"], permitted)
+            else:
+                result = await self.plugin.room_memory.call(scope, "admin", operation, body["payload"])
             if not result.get("success", True):
                 if operation == "delete_restore" and any(
                     result.get(key)

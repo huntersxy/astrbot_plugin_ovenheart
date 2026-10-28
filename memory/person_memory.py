@@ -158,6 +158,11 @@ class NativePersonProfileService(PersonProfileService):
         return [*evidence[: top_k - len(recent)], *recent]
 
 
+
+def person_identity(platform, bot, origin, persona, sender):
+    return hashlib.md5(json.dumps([platform, bot, *origin, persona, str(sender)], ensure_ascii=False).encode()).hexdigest()
+
+
 class PersonMemory:
     def __init__(self, plugin):
         self.plugin = plugin
@@ -199,18 +204,7 @@ class PersonMemory:
 
     def identity(self, event, scope, persona, sender):
         origin = [event.unified_msg_origin, scope] if self.plugin.settings["memory_isolation"] else ["global-memory"]
-        return hashlib.md5(
-            json.dumps(
-                [
-                    event.get_platform_id(),
-                    event.get_self_id(),
-                    *origin,
-                    persona,
-                    str(sender),
-                ],
-                ensure_ascii=False,
-            ).encode()
-        ).hexdigest()
+        return person_identity(event.get_platform_id(), event.get_self_id(), origin, persona, sender)
 
     def _register(self, person_id, sender, name):
         with Session(self.engine) as session:
@@ -230,6 +224,36 @@ class PersonMemory:
         )
         self.metadata._conn.commit()
         return self._progress(person_id)
+
+    def _panel_people(self):
+        return [dict(row) for row in self.metadata._conn.execute(
+            "SELECT person_id,user_id,user_nickname FROM ovenheart_amemorix_people"
+        )]
+
+    def _panel_action(self, operation, payload, permitted):
+        identity = payload["id"]
+        if operation.startswith("fact_"):
+            row = self.metadata.get_fact_claim(identity)
+            if not row or row["scope_type"] != "person" or row["scope_id"] not in permitted:
+                raise ValueError("这条人物事实不属于当前记忆范围。")
+            from types import SimpleNamespace
+
+            from ..vendor.maibot.amemorix.runtime.services.fact_admin_service import (
+                MemoryFactAdminService,
+            )
+            service = MemoryFactAdminService(SimpleNamespace(metadata_store=self.metadata, _cfg=lambda key, default: default))
+            if operation == "fact_save":
+                return service._update_fact(identity, {"value_text": payload["text"], "reason": "Panel 人工修正"})
+            return service._change_fact_status("retract" if operation == "fact_retract" else "restore", identity, {"reason": "Panel 人工维护"})
+        if identity not in permitted:
+            raise ValueError("这个人物不属于当前记忆范围。")
+        if operation == "profile_save":
+            self.metadata.set_person_profile_override(identity, payload["text"], updated_by="astrbot_panel")
+        elif operation == "profile_clear":
+            self.metadata.delete_person_profile_override(identity)
+        else:
+            self.metadata.set_person_profile_alias_override(person_id=identity, aliases=payload["aliases"], updated_by="astrbot_panel")
+        return {"success": True}
 
     def _progress(self, person_id):
         return dict(
