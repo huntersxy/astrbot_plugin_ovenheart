@@ -197,6 +197,8 @@ class OutgoingMediaBridge:
                 if text:
                     await failed()
                 return result
+            if text and event.get_extra("ovenheart_first_text_send_seconds") is None:
+                event.set_extra("ovenheart_first_text_send_seconds", round(max(0, time.time() - event.created_at), 3))
             images = [
                 p for p in getattr(message, "chain", None) or [] if isinstance(p, Image)
             ]

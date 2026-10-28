@@ -23,6 +23,7 @@ from ..runtime_diagnostics import await_path
 from ..settings import SHARED_SCOPE
 from .native_context import native_time
 from .participation import event_source, offered_messages, parse_plan, planner_message
+from .preparation import context_reads
 
 PLANNER_SYSTEM = """你正在以当前人格参加真实聊天。你负责持续规划，正文由 reply 工具的回复器生成。
 根据真实消息、身份、习惯和已获准访问的记忆判断自己为什么要说话，而非每句都答。
@@ -478,26 +479,43 @@ class PlannerSession:
     async def recall(self, state):
         """Use the same scoped context when starting and resuming a real wait."""
         query = "\n".join(m["text"][:300] for m in self.messages[-6:])[:1800]
-        selected = await self.plugin.retriever.select(
-            self.scope if self.settings["session_isolation"] else SHARED_SCOPE,
-            state["traits"],
-            query,
-            self.settings | {
-                "selection_mode": "lexical" if self.settings["selection_mode"] == "lexical" else "hybrid",
-                "max_traits": 12,
-            },
-            recent_expression_ids=state.get("recent_expression_ids", []),
-            record_status=False,
-        )
+        timings = {}
+        async with context_reads(
+            timings,
+            selection=self.plugin.retriever.select(
+                self.scope if self.settings["session_isolation"] else SHARED_SCOPE,
+                state["traits"],
+                query,
+                self.settings
+                | {
+                    "selection_mode": "lexical"
+                    if self.settings["selection_mode"] == "lexical"
+                    else "hybrid",
+                    "max_traits": 12,
+                },
+                recent_expression_ids=state.get("recent_expression_ids", []),
+                record_status=False,
+            ),
+            memory=self.plugin.room_memory.context(
+                self.event, self.scope, self.persona, query
+            ),
+            midterm=self.plugin.midterm_memory.context(
+                self.event, self.scope, self.persona, self.messages
+            ),
+            people=self.plugin.person_memory.context(
+                self.event, self.scope, self.persona, self.messages
+            ),
+            portrait=self.plugin.self_portrait.context(self.persona),
+        ) as pending:
+            selected, native, recalls, people, portrait = await asyncio.gather(
+                *pending.values()
+            )
+        self.event.set_extra("ovenheart_planner_preparation", timings)
         self.expressions = {
-            trait["id"]: trait for trait in selected["traits"] if trait["kind"] == "expression"
+            trait["id"]: trait
+            for trait in selected["traits"]
+            if trait["kind"] == "expression"
         }
-        native = await self.plugin.room_memory.context(
-            self.event, self.scope, self.persona, query
-        )
-        recalls = await self.plugin.midterm_memory.context(
-            self.event, self.scope, self.persona, self.messages
-        )
         memories = [
             *recalls,
             *[
@@ -508,9 +526,6 @@ class PlannerSession:
         ]
         memory_status = f"本次参考 {len(memories)} 条原生记忆与聊天回想。"
         self.track_memory_targets(memories)
-        people = await self.plugin.person_memory.context(
-            self.event, self.scope, self.persona, self.messages
-        )
         return {
             "behavior_guidance": build_guidance(
                 self.profile,
@@ -531,7 +546,7 @@ class PlannerSession:
             ],
             "memory_context": memories,
             "person_profiles": people,
-            "self_portrait": await self.plugin.self_portrait.context(self.persona),
+            "self_portrait": portrait,
             "memory_status": memory_status,
         }
 
