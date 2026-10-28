@@ -71,8 +71,8 @@ def package():
         (ROOT / "metadata.yaml").read_text(encoding="utf-8"),
         re.MULTILINE,
     )[1]
-    destination = ROOT / "dist" / f"astrbot_plugin_ovenheart-v{version}.zip"
-    destination.parent.mkdir(exist_ok=True)
+    destination = ROOT / "agent" / "dist" / f"astrbot_plugin_ovenheart-v{version}.zip"
+    destination.parent.mkdir(parents=True, exist_ok=True)
     files = [ROOT / name for name in RUNTIME_FILES]
     if missing := set(RUNTIME_FILES) - tracked:
         raise ValueError(f"Required release files are not tracked: {sorted(missing)}")

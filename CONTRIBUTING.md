@@ -51,7 +51,7 @@ uv run --no-sync python tools/package.py
 
 `tools/native_chat_probe.py` 启动隔离的真实 AstrBot 消息队列；`tools/maibot_chat_probe.py` 用于机制参考对照。它们通过标准输入接收模型配置，在临时存储中运行合成消息，不连接 QQ。人物回放可使用 `--memory --person-memory --cases tools/chat_person_cases.json`。
 
-报告保存到本机忽略的目录，例如 `docs/evaluation/`。合成回放不能替代真实群聊效果验收；提交只包含可复用的工具、合成输入与结论，不提交模型私有配置、原始现场聊天或运行产物。
+报告保存到本机忽略的目录，例如 `agent/evaluation/`。合成回放不能替代真实群聊效果验收；提交只包含可复用的工具、合成输入与结论，不提交模型私有配置、原始现场聊天或运行产物。
 
 ## 发布
 

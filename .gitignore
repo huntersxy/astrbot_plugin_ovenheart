@@ -62,6 +62,7 @@ node_modules/
 Thumbs.db
 
 # Local development evidence is not part of the public plugin.
+/agent/
 docs/evaluation/
 docs/assets/*.provenance.json
 DESIGN.md
