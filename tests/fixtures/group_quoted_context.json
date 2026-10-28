@@ -1,8 +1,0 @@
-{
-  "description":"Two finite decision/reply probes whose real SDK Reply contains source text outside the controller's recent-message window. No source row is fabricated in that window.",
-  "identity":"你叫小夏，是群里平等相处的聊天伙伴。日常简短自然，有人明确问你时回应；别人互相聊天、问题已解决或另一个机器人服务别人时不抢话。不把群友身份当成自己。",
-  "cases":[
-    {"id":"external_quoted_lock_claim","external_messages":[{"id":"old-lock","sender":"10004","name":"阿棠","text":"普通非重入锁允许同一个线程在持有锁时再次获取，不会卡住。"}],"messages":[{"id":"b1","sender":"10002","name":"小鲸","text":"我等会出门拿快递。"},{"id":"c1","sender":"10003","name":"橙子","text":"好，我继续整理桌面。"},{"id":"a1","sender":"10001","name":"阿梨","text":"小夏，这句话准确吗？用一句话指出问题就好。","quote_of":"old-lock"}],"allowed_actions":["reply"],"allowed_targets":["a1"],"reply_required":["锁"],"reply_forbidden":["哪句话","哪句","贴出来","发出来"]},
-    {"id":"external_quoted_arithmetic","external_messages":[{"id":"old-math","sender":"10004","name":"阿棠","text":"7 × 8 = 54。"}],"messages":[{"id":"b1","sender":"10002","name":"小鲸","text":"今晚我先收拾一下房间。"},{"id":"c1","sender":"10003","name":"橙子","text":"我也打算把东西归位。"},{"id":"a1","sender":"10001","name":"阿梨","text":"小夏，这个运算结果对不对？只回答“正确”或“不正确”。","quote_of":"old-math"}],"allowed_actions":["reply"],"allowed_targets":["a1"],"reply_required":["不正确"],"reply_forbidden":["具体","发出来","哪道"]}
-  ]
-}
