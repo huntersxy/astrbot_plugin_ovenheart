@@ -78,9 +78,11 @@ from .integrations.oven_multi import reading as jev_reading
 from .memory.emoji_actions import EmojiActions
 from .memory.image_memory import ImageMemory
 from .memory.memory_consolidation import MemoryConsolidation
+from .memory.memory_review import MemoryReview
 from .memory.midterm import MidTermMemory
 from .memory.person_memory import PersonMemory
 from .memory.room_memory import RoomMemory
+from .memory.self_portrait import SelfPortrait
 
 PLUGIN_NAME = "astrbot_plugin_ovenheart"
 _active: weakref.ReferenceType | None = None
@@ -422,7 +424,9 @@ class PersonaPlugin(Star):
         self.auxiliary = AuxiliaryUsage(context, self.store)
         self.person_memory = PersonMemory(self)
         self.memory_consolidation = MemoryConsolidation(self)
+        self.memory_review = MemoryReview(self)
         self.room_memory = RoomMemory(self)
+        self.self_portrait = SelfPortrait(self)
         self.image_memory = ImageMemory(self)
         self.emoji_actions = EmojiActions(self)
         self.midterm_memory = MidTermMemory(self)
@@ -1081,7 +1085,7 @@ class PersonaPlugin(Star):
             )
         if context_only:
             return
-        self.room_memory.observe(event, scope)
+        await self.room_memory.observe(event, scope)
         await self.person_memory.observe(event, scope, persona)
         await self.memory_consolidation.observe(event, scope, persona)
         await self.image_memory.observe(event, scope, persona)
@@ -2430,6 +2434,7 @@ class PersonaPlugin(Star):
         plan = event.get_extra("ovenheart_decision")
         if plan and plan["scope"] != scope:
             plan = None
+        await self.self_portrait.apply(event, persona, req)
         people = await self.person_memory.context(
             event, scope, persona, (plan or {}).get("messages", [])
         )
@@ -3255,6 +3260,7 @@ class PersonaPlugin(Star):
             await asyncio.sleep(15)
             try:
                 await self.auxiliary.flush()
+                await self.memory_review.poll()
                 if (
                     self.settings["memory_summary_enabled"]
                     and not self.memory_consolidation.busy

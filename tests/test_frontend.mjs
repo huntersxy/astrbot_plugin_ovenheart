@@ -156,7 +156,7 @@ test('all participation controls are available with host schema defaults', () =>
   assert.ok(html.includes('name="guidance_delivery"'));
   assert.ok(html.includes('value="cached" selected'));
   assert.ok(html.includes('value="dual"'));
-  assert.ok(html.includes('第三方运行器需自行支持'));
+  assert.ok(html.includes('自动回复使用 AstrBot 本地 Agent 运行器'));
   assert.ok(html.includes('仍保留当前输入直接命中的本地词义'));
   assert.ok(html.includes('name="learning_review_enabled"'));
   assert.ok(html.includes('360 秒'));
@@ -373,4 +373,17 @@ test('reply split modes guide setup, gate model fields and save timeout', () => 
   element('#settings-form').onsubmit({preventDefault(){},currentTarget:{elements:{namedItem:key=>inputs[key]||null}}});
   assert.equal(runInContext('saved.reply_split_mode',context),'llm');
   assert.equal(runInContext('saved.reply_split_timeout',context),2);
+});
+
+
+test('memory settings explain sharing and save isolation, review and interval', () => {
+  const {context,element}=fixture();
+  runInContext(`tab='memory';data={settings:{memory_isolation:true,memory_review_enabled:true,memory_review_interval:3600},memory_review:{latest:0}};renderSettings();globalThis.saved=null;mutate=(action,payload)=>saved=payload;`,context);
+  assert.ok(element('#content').innerHTML.includes('私聊内容也可能在群聊被回忆'));
+  assert.ok(element('#content').innerHTML.includes('全插件共用间隔'));
+  const inputs={memory_isolation:{checked:false},memory_review_enabled:{checked:false},memory_review_interval:{value:'7200'}};
+  element('#settings-form').onsubmit({preventDefault(){},currentTarget:{elements:{namedItem:key=>inputs[key]||null}}});
+  assert.equal(runInContext('saved.memory_isolation',context),false);
+  assert.equal(runInContext('saved.memory_review_enabled',context),false);
+  assert.equal(runInContext('saved.memory_review_interval',context),7200);
 });

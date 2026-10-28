@@ -198,13 +198,13 @@ class PersonMemory:
             return getattr(self, "_" + operation)(*args)
 
     def identity(self, event, scope, persona, sender):
+        origin = [event.unified_msg_origin, scope] if self.plugin.settings["memory_isolation"] else ["global-memory"]
         return hashlib.md5(
             json.dumps(
                 [
                     event.get_platform_id(),
                     event.get_self_id(),
-                    event.unified_msg_origin,
-                    scope,
+                    *origin,
                     persona,
                     str(sender),
                 ],
@@ -377,12 +377,13 @@ class PersonMemory:
                         cardinality=cardinality,
                         authority="direct_user",
                         evidence_type="astrbot_message",
-                        evidence_id=person_id + ":" + source["source_id"],
+                        evidence_id=person_id + ":" + source.get("progress_id", source["source_id"]),
                         evidence_metadata={
                             "quote": evidence["quote"],
                             "sender": source["sender"],
                             "source_id": source["source_id"],
                             "created": source["created"],
+                            "source_scope": source.get("source_scope", ""),
                         },
                         supersedes_claim_ids=fact["corrects"] if index == 0 else [],
                         observed_at=source["created"],
@@ -392,7 +393,7 @@ class PersonMemory:
             if last_message:
                 self.metadata._conn.executemany(
                     "INSERT OR IGNORE INTO ovenheart_person_processed(person_id,source_id) VALUES (?,?)",
-                    [(person_id, source["source_id"]) for source in messages],
+                    [(person_id, source.get("progress_id", source["source_id"])) for source in messages],
                 )
                 self.metadata._conn.execute(
                     "UPDATE ovenheart_person_progress SET last_message=? WHERE person_id=?",
@@ -455,9 +456,12 @@ class PersonMemory:
             return
         processed = await self.call("processed", person_id)
         messages = [
-            m
+            m | {
+                "progress_id": self.plugin.room_memory.source_id(scope, m["source_id"]),
+                "source_scope": scope,
+            }
             for m in await self.plugin.store.call("person_memory_inputs", scope, sender)
-            if m["source_id"] not in processed
+            if self.plugin.room_memory.source_id(scope, m["source_id"]) not in processed
         ][:30]
         if len(messages) < self.plugin.settings["person_memory_min_messages"]:
             return
@@ -616,6 +620,8 @@ class PersonMemory:
         messages = [
             {
                 "source_id": event_source(source),
+                "progress_id": self.plugin.room_memory.source_id(scope, event_source(source)),
+                "source_scope": scope,
                 "sender": source.get_sender_id(),
                 "text": own_message_text(source),
                 "created": source.created_at,

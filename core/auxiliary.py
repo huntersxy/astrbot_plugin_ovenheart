@@ -14,6 +14,7 @@ BACKGROUND_MODEL_TIMEOUTS = {
     "memory_episode": 60,
     "memory_feedback": 45,
     "memory_maintenance": 45,
+    "memory_review": 45,
 }
 
 

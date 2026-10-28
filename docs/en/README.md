@@ -30,3 +30,7 @@ See the [user guide](../guide.md) and [developer guide](../../CONTRIBUTING.md). 
 Licensed under [AGPL-3.0-or-later](../../LICENSE). Source attribution and retained licenses are in [vendor/maibot](../../vendor/maibot/NOTICE.md).
 
 Memory → Import & sources can copy LivingMemory text from the same AstrBot data directory into the selected conversation and persona. Select a source scope and start the transfer; repeated imports skip existing source records and can pause between batches. LivingMemory does not need to be enabled. Its vectors and settings are not copied. Chat and learning use OvenHeart’s native memory.
+
+Memory settings default to conversation isolation. Turning it off shares a memory bank across chats using the same native persona, including private and group chats; different people are still identified by their real accounts. The separate banks are retained, without automatically merging existing records. Proactive review checks at most two oldest or related memories per plugin-wide hourly round. Only well-supported corrections apply automatically; review other proposals and undo changes in Memory → Inspection → Correction history.
+
+Use **Self portrait** to save appearance notes and an optional static PNG/JPG/WebP reference (up to 2 MB). Notes are temporary context; the reference is attached only to incoming-image turns whose native reply provider supports vision. It uses the existing model request, with no extra captioning call and no replacement of the native persona identity.

@@ -45,7 +45,7 @@ const viewCache = new Map();
 const localOperations = new Set();
 let loadVersion = 0, cacheEpoch = 0, editVersion = 0, pollTimer, pollErrors = 0, toolsCache;
 const viewKey = () => JSON.stringify([selectedScope, tab, ...(tab === "library" ? [libraryScope, category, status, libraryOffset, reviewFilter] : tab === "history" ? [historySection, historyStatus, historyOffset, historyAnchor] : [])]);
-const viewName = () => ["memory", "emojis"].includes(tab) ? "settings" : ["library", "prompts", "history"].includes(tab) ? "summary" : tab;
+const viewName = () => ["memory", "emojis"].includes(tab) ? "settings" : tab === "portrait" ? "profile" : ["library", "prompts", "history"].includes(tab) ? "summary" : tab;
 
 function deadline(promise, milliseconds, message) {
   let timer;
@@ -84,7 +84,7 @@ function updateHeader() {
   scopeSelect.disabled = !data.scopes.length;
   $("#scope-label").textContent = ["memory", "emojis"].includes(tab) || data.settings.session_isolation ? "会话与人格" : "学习素材来源";
   $("#session-status").textContent = data.scope ? `${data.scope.pending} 条待学素材，${data.active_count ?? data.traits.filter(t => t.status === "active").length} 条当前可用习惯已生效` : "收到有效聊天消息后，会话将自动出现在这里。";
-  $("#memory-status").textContent = !data.settings.memory_enabled ? "记忆参考已关闭" : data.settings.native_memory_enabled ? "原生记忆已启用 · 按会话与人格隔离" : "原生记忆未启用";
+  $("#memory-status").textContent = !data.settings.memory_enabled ? "记忆参考已关闭" : data.settings.native_memory_enabled ? `原生记忆已启用 · ${data.settings.memory_isolation ? "按会话隔离" : "同人格全局共享"}` : "原生记忆未启用";
   $("#review-count").textContent = (data.review_count ?? data.scopes.reduce((sum, scope) => sum + scope.review_count, 0)) || "";
   const busy = data.busy.includes(selectedScope);
   $("#learn").disabled = pending || !data.scope || !!data.busy.length || !data.settings.enabled || !data.settings.learning_enabled || !!data.learning_blocked || !data.scope.profile.learning_enabled || data.scope.pending < data.settings.min_evidence;
@@ -172,6 +172,7 @@ function render() {
     return;
   }
   if (tab === "profile") renderProfile();
+  if (tab === "portrait") renderSelfPortrait();
   else if (tab === "library") renderLibrary();
   else if (tab === "history") renderHistory();
   else if (tab === "memory") renderMemory();
@@ -217,6 +218,49 @@ function renderProfile() {
     } finally { button.textContent = "生成示例回复"; }
   }, event, {local:"preview-model", selector:"#model-preview"});
   if (localOperations.has("preview-model")) { $("#model-preview").disabled = true; $("#model-preview").textContent = "示例正在生成…"; }
+}
+
+function imageFileData(file) {
+  if (file.size > 2 * 1024 * 1024) return Promise.reject(new Error("自画像不能超过 2 MB，请缩小图片后上传。"));
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result));
+    reader.onerror = () => reject(new Error("图片读取失败，请重新选择。"));
+    reader.readAsDataURL(file);
+  });
+}
+
+function renderSelfPortrait() {
+  const scope = data.scope?.id || selectedScope, persona = data.scope?.persona;
+  const canSave = Boolean(scope && scope !== data.shared_scope?.id && scope !== "0".repeat(24) && persona);
+  const portrait = data.self_portrait;
+  $("#content").innerHTML = `<section class="self-portrait"><h2>人格自画像</h2><p class="section-intro">给当前 AstrBot 人格设置外观描述和参考图，帮助它在聊天图片中辨认自己的形象。不同人格分别保存，同一人格在各会话共用。</p>${canSave ? `<p class="muted">当前人格：${escape(persona)}</p>` : '<p class="notice">先在顶部选择一个真实会话，再为它当前使用的人格设置自画像。</p>'}<form id="portrait-form"><fieldset ${canSave ? "" : "disabled"}><div class="portrait-layout"><div class="portrait-reference"><img id="portrait-preview" alt="当前人格的自画像参考图" hidden><p id="portrait-image-status" class="muted">${portrait?.has_image ? "正在读取参考图…" : "尚未添加参考图，也可以先只填写外观描述。"}</p><label for="portrait-file">参考图片（可选）</label><input id="portrait-file" name="image" type="file" accept="image/png,image/jpeg,image/webp"><small>静态 PNG、JPG 或 WebP，2 MB 以内，最多 419 万像素。更换图片后保存才会生效。</small></div><div><label for="portrait-description">外观特征</label><textarea id="portrait-description" name="description" maxlength="1200" required placeholder="例如：金色短发，头上有插座形发饰，常穿白色连衣裙。描述外观即可，不用重写人格。">${escape(portrait?.description || "")}</textarea><p class="muted">文字聊天只使用这段描述；处理来图且回复模型支持识图时，才会附上参考图。外观资料不会替换人格身份。</p><div class="actions"><button type="submit" class="primary">保存自画像</button>${portrait ? '<button type="button" id="portrait-clear" class="danger">清除自画像</button>' : ""}</div></div></div></fieldset></form></section>`;
+  const form = $("#portrait-form"), fileInput = $("#portrait-file");
+  const live = () => tab === "portrait" && selectedScope === scope && $("#portrait-form") === form;
+  const show = url => { $("#portrait-preview").src = url; $("#portrait-preview").hidden = false; $("#portrait-image-status").textContent = ""; };
+  if (canSave && portrait?.has_image) api("portrait", undefined, {scope, image:"true"}).then(saved => {
+    if (live() && !fileInput.files?.length && saved?.encoded) show(`data:${saved.mime_type};base64,${saved.encoded}`);
+  }).catch(error => { if (live()) $("#portrait-image-status").textContent = `参考图读取失败：${error.message}，可刷新页面重试。`; });
+  fileInput.onchange = async () => {
+    const file = fileInput.files?.[0];
+    if (!file) return;
+    try { const url = await imageFileData(file); if (live() && fileInput.files[0] === file) show(url); }
+    catch (error) { if (live()) notify(error.message, true); }
+  };
+  form.onsubmit = event => {
+    const description = form.elements.description.value.trim(), file = fileInput.files?.[0], context = writeContext();
+    return guarded(async () => {
+      const encoded = file ? (await imageFileData(file)).split(",", 2)[1] : undefined;
+      await api("portrait", {scope, action:"save", description, ...(encoded ? {encoded} : {})});
+      notify("自画像已保存，后续对话会使用当前人格的外观资料。");
+      await afterWrite(context);
+    }, event);
+  };
+  if (portrait) $("#portrait-clear").onclick = async event => {
+    if (!await confirmAction("清除当前人格的参考图和外观描述？")) return;
+    const context = writeContext();
+    await guarded(async () => { await api("portrait", {scope, action:"clear"}); notify("自画像已清除。"); await afterWrite(context); }, event);
+  };
 }
 
 function libraryPositionKey() { return JSON.stringify([libraryScope, category, status, libraryOffset, reviewFilter]); }
@@ -379,7 +423,7 @@ function renderModelUsage() {
   if (!usage) return "";
   const rows = usage.rows || [];
   const sum = key => rows.reduce((total, row) => total + Number(row[key] || 0), 0);
-  const stages = {native_reply:"回复正文",planner:"聊天规划",reply_split:"语义断句",emoji_select:"表情选择",person_profile:"人物画像",person_memory:"人物记忆",person_memory_repair:"记忆校验纠正",memory_summary:"记忆整理"};
+  const stages = {memory_review:"记忆主动复核",native_reply:"回复正文",planner:"聊天规划",reply_split:"语义断句",emoji_select:"表情选择",person_profile:"人物画像",person_memory:"人物记忆",person_memory_repair:"记忆校验纠正",memory_summary:"记忆整理"};
   return `<details class="card"><summary>最近 24 小时正文与辅助用量 · ${sum("calls")} 次 · 输入 ${(sum("input_cached") + sum("input_other")).toLocaleString()} / 输出 ${sum("output").toLocaleString()} token</summary><p class="muted">${sum("reported")} 次返回 token 用量。未报告的调用只计次数；输入包含缓存 token。正文按每次实际传输统计，包含工具循环和备用模型。Jev 独立接口与嵌入请求另计。</p>${rows.map(row => `<p><strong>${escape(stages[row.stage] || row.stage)}</strong> · ${Number(row.calls)} 次 · 输入 ${(Number(row.input_cached) + Number(row.input_other)).toLocaleString()} / 输出 ${Number(row.output).toLocaleString()} · 错误 ${Number(row.errors)} / 取消 ${Number(row.cancelled)}<br><small class="muted">${escape(row.provider || "未返回模型配置")} · ${escape(row.model || "未返回实际模型名")}</small></p>`).join("") || '<p class="muted">还没有调用记录。</p>'}<p class="muted">本次加载已接入 ${Number(usage.native_bound || 0)} 轮原生正文${usage.native_unavailable ? `，${Number(usage.native_unavailable)} 轮宿主未提供可接入的运行器` : ""}。${usage.pending ? `待入库 ${Number(usage.pending)} 条。` : ""}${usage.dropped ? `队列溢出丢弃 ${Number(usage.dropped)} 条。` : ""}</p></details>`;
 }
 
@@ -479,12 +523,15 @@ function renderSettings(target = "#content") {
   const memoryPage = tab === "memory";
   const tabs = memoryPage ? {core:"通用与图片", background:"经历与人物"} : {learning:"学习与生效", participation:"群聊参与", expression:"表达与检索", maintenance:"调试与维护"};
   const active = memoryPage ? memorySection : settingsSection;
-  $(target).innerHTML = `<div class="settings-heading"><h2>${memoryPage ? "记忆设置" : "设置"}</h2><p>${memoryPage ? "管理记忆能力与后台整理。记忆始终按会话与人格隔离。" : "按用途调整学习与聊天方式。页内切换标签会保留未保存的修改。"}</p></div>
+  const review = Object.values(data.memory_review?.rooms || {}).sort((a,b) => b.attempted-a.attempted)[0];
+  const reviewStatus = {kept:"无需修改，原记录保留",corrected:"已按新证据修正，可在修正历史回滚",needs_confirmation:"有复核建议待确认，请查看修正历史",up_to_date:"已检查，没有需要复核的新内容",paused:"设置已变化，本次未自动执行",failed:"复核未完成，原记录保留，将按间隔重试",running:"正在复核"}[review?.status] || "等待检查";
+  $(target).innerHTML = `<div class="settings-heading"><h2>${memoryPage ? "记忆设置" : "设置"}</h2><p>${memoryPage ? "管理记忆范围、图片与后台整理。不同人格的记忆始终分开。" : "按用途调整学习与聊天方式。页内切换标签会保留未保存的修改。"}</p></div>
     <form id="settings-form"><div class="settings-tabs" role="tablist" aria-label="${memoryPage ? "记忆分类" : "设置分类"}">${Object.entries(tabs).map(([key,label]) => `<button type="button" id="settings-tab-${key}" role="tab" aria-controls="settings-panel-${key}" aria-selected="${key === active}" tabindex="${key === active ? 0 : -1}" data-settings-tab="${key}">${label}</button>`).join("")}</div>
     ${memoryPage ? `<div class="settings-panel settings-grid" id="settings-panel-core" role="tabpanel" aria-labelledby="settings-tab-core" data-settings-panel="core">
-<section class="settings-group"><h2>通用与图片记忆</h2><p>按当前会话与人格保存、检索记忆，独立于旧记忆插件运行。</p>
+<section class="settings-group"><h2>通用与图片记忆</h2><p>选择记忆的使用范围，管理通用记忆与图片。</p>
       ${switchField("memory_enabled", "参考长期记忆", "控制学习和回复时是否参考记忆；关闭后已有记忆仍保留。", s.memory_enabled)}
-      ${switchField("native_memory_enabled", "A_memorix 通用记忆", "保存有真实来源的段落和关系，按会话和人格隔离；使用原版 BM25、图谱与双路检索，配置嵌入模型后启用双向量池。", s.native_memory_enabled)}
+      ${switchField("memory_isolation", "按会话隔离记忆（推荐）", "开启：各会话独立记忆。关闭：同一人格在所有会话共享，包括私聊内容也可能在群聊被回忆。两类记忆库分别保留，切换不会合并已有资料；人物仍按真实账号区分，聊天历史与习惯范围不受影响。", s.memory_isolation)}
+      ${switchField("native_memory_enabled", "A_memorix 通用记忆", "保存有真实来源的段落和关系，遵循上方记忆范围；使用原版 BM25、图谱与双路检索，配置嵌入模型后启用双向量池。", s.native_memory_enabled)}
       ${switchField("image_memory_enabled", "图片记忆", "保存当前会话中真实出现的图片、作者原话和模型观察；图片描述沿用宿主的图片描述模型，暂停学习后不再入库。", s.image_memory_enabled)}
       ${field("image_embedding_provider_id", "图片嵌入模型 ID", s.image_embedding_provider_id ?? "", "AstrBot 的 DashScope 或硅基流动多模态嵌入提供商 ID；留空仍可回忆同一图片。", {type:"text"})}
       ${switchField("memory_feedback_enabled", "根据后续反馈维护记忆", "跟进已召回记忆的实际后续反馈，按原版窗口和置信度判断是否修正。暂停学习时停止更新，调用计入辅助用量。", s.memory_feedback_enabled)}
@@ -495,13 +542,18 @@ function renderSettings(target = "#content") {
 </section>
 </div>
 <div class="settings-panel settings-grid" id="settings-panel-background" role="tabpanel" aria-labelledby="settings-tab-background" data-settings-panel="background">
+<section class="settings-group"><h2>主动复核</h2><p>轮流检查最久未复核和与新记忆相关的内容。有新原文证据、把握足够的更正自动执行，其余建议在「记忆检修 → 修正历史」确认；可查看依据和回滚。</p>
+      ${switchField("memory_review_enabled", "主动复核记忆（推荐）", "默认全插件每小时最多一轮，每轮最多检查两条；复用原版修正机制，会产生辅助模型用量。没有足够记忆时不调用，暂停学习后也停止。不会仅因年代久而删除记录。", s.memory_review_enabled)}
+      ${field("memory_review_interval", "主动复核间隔", s.memory_review_interval ?? 3600, "秒；全插件共用间隔，各记忆库轮流检查，推荐 3600。", {type:"number",min:300,max:604800})}
+      <p class="muted">${data.memory_review?.busy ? "正在复核；原记录在建议获准前继续保留。" : data.memory_review?.latest ? `最近尝试：${escape(date(data.memory_review.latest))} · ${escape(reviewStatus)}。` : "还没有复核记录。积累至少两条记忆后按间隔检查。"}</p>
+</section>
 <section class="settings-group"><h2>经历整理与人物画像</h2><p>分别控制聊天回想、群聊经历与人物信息的整理节奏。</p>
       ${switchField("memory_summary_enabled", "自动整理群聊经历", "累计新素材后生成增量摘要和可检索的情景；空增量不会反复整理。暂停学习时停止更新，已有记忆继续可查。", s.memory_summary_enabled)}
       ${switchField("midterm_memory_enabled", "聊天回想", "把离开短期上下文的发言压缩成近期回想，在话题相关时想起来。原生模式复用宿主消息历史；暂停学习后停止更新。", s.midterm_memory_enabled)}
       ${field("midterm_memory_limit", "聊天回想保留数", s.midterm_memory_limit ?? 10, "当前原生会话参与语义匹配的近期摘要数", {type:"number",min:1,max:50})}
       <div class="number-fields">${field("memory_summary_min_messages", "群聊摘要最少新发言", s.memory_summary_min_messages ?? 12, "条；每批最多50条", {type:"number",min:1,max:50})}${field("memory_summary_interval", "群聊记忆整理间隔", s.memory_summary_interval ?? 600, "秒；摘要与情景整理共用尝试间隔", {type:"number",min:0,max:86400})}</div>
       ${field("memory_summary_provider_id", "群聊记忆整理模型 ID", s.memory_summary_provider_id ?? "", "留空使用学习模型或当前会话模型；后台调用计入辅助用量。", {type:"text"})}
-      ${switchField("person_memory_enabled", "人物记忆与画像", "按真实成员、会话和人格保存有原文来源的事实；冲突保留待更正，不确定信息不当作稳定了解。暂停学习时停止更新。", s.person_memory_enabled)}
+      ${switchField("person_memory_enabled", "人物记忆与画像", "按真实账号保存有原文来源的事实，遵循所选记忆范围；冲突保留待更正，不确定信息不当作稳定了解。暂停学习时停止更新。", s.person_memory_enabled)}
       <div class="number-fields">${field("person_memory_min_messages", "人物记忆最少新发言", s.person_memory_min_messages ?? 6, "条；同一成员的新素材达到门槛后后台提取", {type:"number",min:1,max:30})}${field("person_memory_interval", "人物记忆更新间隔", s.person_memory_interval ?? 600, "秒；每位成员的自动提取间隔", {type:"number",min:0,max:86400})}</div>
       ${field("person_memory_provider_id", "人物记忆提取模型 ID", s.person_memory_provider_id ?? "", "留空使用学习模型或当前会话模型。", {type:"text"})}
 </section>

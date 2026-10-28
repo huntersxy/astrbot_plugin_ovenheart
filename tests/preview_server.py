@@ -487,14 +487,19 @@ async def api(endpoint: str, request: Request):
         "prompts": "prompt_list",
         "prompts/save": "prompt_save",
     }
-    if endpoint not in handlers:
+    extra = {
+        "portrait": app.state.plugin.self_portrait.read if request.method == "GET" else app.state.plugin.self_portrait.save,
+        "memory": app.state.plugin.page_api.memory_panel.read,
+        "memory/action": app.state.plugin.page_api.memory_panel.action,
+    }
+    if endpoint not in handlers and endpoint not in extra:
         return {"status": "error", "message": "Unknown test endpoint"}
     with bind_request_context(
         PluginRequest(
             request, plugin_name="astrbot_plugin_ovenheart", username="fixture"
         )
     ):
-        return await getattr(app.state.plugin.page_api, handlers[endpoint])()
+        return await (extra[endpoint] if endpoint in extra else getattr(app.state.plugin.page_api, handlers[endpoint]))()
 
 
 async def decoration_simulation(decoration: str, body: str) -> dict:
@@ -624,7 +629,7 @@ def asset(asset: str):
     Returns:
         CSS or JavaScript response.
     """
-    if asset not in ("style.css", "app.js"):
+    if asset not in ("style.css", "app.js", "memory.js", "emojis.js"):
         return Response(status_code=404)
     return FileResponse(
         ROOT / "views/workshop" / asset, headers={"Cache-Control": "no-store"}

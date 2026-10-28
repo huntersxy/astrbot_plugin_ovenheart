@@ -59,6 +59,8 @@ class Store:
             "guidance",
             "panel_history",
             "history_detail",
+            "memory_review_status",
+            "self_portrait",
         }:
             raise ValueError("Unsupported Panel read")
         if operation == "auxiliary_usage" and args:
@@ -202,6 +204,13 @@ class Store:
                             status TEXT NOT NULL, details TEXT NOT NULL, created REAL NOT NULL,
                             updated REAL NOT NULL
                         );
+            CREATE TABLE IF NOT EXISTS memory_review_state (
+                scope TEXT PRIMARY KEY, attempted REAL NOT NULL, details TEXT NOT NULL DEFAULT '{}'
+            );
+            CREATE TABLE IF NOT EXISTS self_portraits (
+                persona TEXT PRIMARY KEY, description TEXT NOT NULL, image BLOB,
+                mime_type TEXT NOT NULL, content_hash TEXT NOT NULL, updated REAL NOT NULL
+            );
             CREATE INDEX IF NOT EXISTS context_messages_order ON context_messages(scope,epoch,created,sequence);
             CREATE INDEX IF NOT EXISTS decisions_room_created ON decisions(room,created);
             CREATE INDEX IF NOT EXISTS decisions_scope ON decisions(scope,created);
@@ -1936,6 +1945,34 @@ class Store:
             (scope, scope),
         )
         return cursor.rowcount == 1
+
+    def memory_review_status(self, db, scope="", attempted=None, result=None):
+        if attempted is not None:
+            db.execute(
+                "INSERT INTO memory_review_state(scope,attempted) VALUES (?,?) "
+                "ON CONFLICT(scope) DO UPDATE SET attempted=excluded.attempted",
+                (scope, attempted),
+            )
+        if result is not None:
+            db.execute("UPDATE memory_review_state SET details=? WHERE scope=?", (json.dumps(result, ensure_ascii=False), scope))
+        rooms = {
+            row["scope"]: {"attempted": row["attempted"], **json.loads(row["details"])}
+            for row in db.execute("SELECT scope,attempted,details FROM memory_review_state ORDER BY attempted DESC LIMIT 128")
+        }
+        return {"latest": max((row["attempted"] for row in rooms.values()), default=0), "rooms": rooms}
+
+    def self_portrait(self, db, persona, payload=None, include_image=False):
+        if payload is not None:
+            if payload.get("clear"):
+                db.execute("DELETE FROM self_portraits WHERE persona=?", (persona,))
+            else:
+                db.execute(
+                    "INSERT OR REPLACE INTO self_portraits VALUES (?,?,?,?,?,?)",
+                    (persona, payload["description"], payload.get("image"), payload.get("mime_type", ""), payload.get("content_hash", ""), time.time()),
+                )
+        columns = "persona,description,mime_type,content_hash,updated,image IS NOT NULL AS has_image"
+        row = db.execute(f"SELECT {columns}" + (",image" if include_image else "") + " FROM self_portraits WHERE persona=?", (persona,)).fetchone()
+        return dict(row) if row else None
 
     def mutate(self, db, scope, action, payload):
         """Version and mutate a profile or learned entries in one transaction.

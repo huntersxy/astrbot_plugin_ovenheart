@@ -357,7 +357,7 @@ class RoomState:
     async def _backfill(self):
         await self.kernel._run_paragraph_backfill_once(limit=32, trigger="native_chat")
 
-    async def search(self, query, top_k, feedback_source=""):
+    async def search(self, query, top_k, feedback_source="", feedback_scope=""):
         if not self.metadata.count_paragraphs():
             return []
         try:
@@ -383,7 +383,7 @@ class RoomState:
                 query_tool_id="native:" + query_id,
                 session_id=self.path.name,
                 structured_content=response
-                | {"query": query, "chat_id": self.path.name},
+                | {"query": query, "chat_id": self.path.name, "source_scope": feedback_scope},
             )
         result = []
         for item in found:
@@ -884,21 +884,21 @@ class RoomState:
             "error": result.get("error", ""),
         }
 
-    async def summary_status(self, retained=None):
+    async def summary_status(self, retained=None, namespace=""):
         if retained is not None:
             # Progress contains IDs only for the bounded native material store.
             with self.metadata.transaction():
+                filters, values = [], []
+                if namespace:
+                    filters.append("source_id LIKE ?")
+                    values.append(namespace + "%")
                 if retained:
-                    self.metadata._conn.execute(
-                        "DELETE FROM ovenheart_summary_processed WHERE source_id NOT IN ("
-                        + ",".join("?" for _ in retained)
-                        + ")",
-                        retained,
-                    )
-                else:
-                    self.metadata._conn.execute(
-                        "DELETE FROM ovenheart_summary_processed"
-                    )
+                    filters.append("source_id NOT IN (" + ",".join("?" for _ in retained) + ")")
+                    values.extend(retained)
+                self.metadata._conn.execute(
+                    "DELETE FROM ovenheart_summary_processed" + (" WHERE " + " AND ".join(filters) if filters else ""),
+                    values,
+                )
         summary = self.metadata.get_episode_source_rebuild_summary()["counts"]
         return {
             "attempted": self.metadata._conn.execute(
@@ -921,6 +921,11 @@ class RoomState:
             (time.time(),),
         )
         self.metadata._conn.commit()
+
+    async def review(self, current):
+        from .memory_review import review_memory
+
+        return await review_memory(self, current)
 
     async def consolidate(self, scope, messages, generate, bot_name, model_name):
         from ..vendor.maibot.amemorix import host
@@ -972,7 +977,7 @@ class RoomState:
                 )
                 self.kernel.summary_importer = importer
                 imported = await self.kernel.summarize_chat_stream(
-                    chat_id=scope,
+                    chat_id=self.path.name,
                     context_length=len(messages),
                     include_personality=False,
                     time_end=max(m["created"] for m in messages),
@@ -1052,7 +1057,21 @@ class RoomMemory:
         self.thread = None
         self.closing = False
 
-    def observe(self, event, scope):
+    async def storage_scope(self, scope):
+        """Route memory only; native histories and participation remain per chat."""
+        if self.plugin.settings["memory_isolation"] or scope == "0" * 24:
+            return scope
+        record = await self.plugin.store.read("scope_profile", scope)
+        if record is None:
+            return scope
+        return hashlib.sha256(
+            json.dumps(["ovenheart-global-memory", record["persona"]], ensure_ascii=False).encode()
+        ).hexdigest()[:24]
+
+    def source_id(self, scope, source):
+        return str(source) if self.plugin.settings["memory_isolation"] else f"{scope}:{source}"
+
+    async def observe(self, event, scope):
         """Retain native authorization fields, without message/media/history data."""
         from astrbot.core.platform.astrbot_message import (
             AstrBotMessage,
@@ -1060,7 +1079,7 @@ class RoomMemory:
             MessageMember,
         )
 
-        state = self.rooms.get(scope)
+        state = self.rooms.get(await self.storage_scope(scope))
         settings = self.plugin.settings
         if (
             state is None
@@ -1117,8 +1136,14 @@ class RoomMemory:
             from .memory_embedding import embedding_budget
 
             async def native_generate(request):
+                async def generate():
+                    if state.operation == "review":
+                        async with self.model_window(state.path.name):
+                            return await self.generate(state, request)
+                    return await self.generate(state, request)
+
                 future = asyncio.run_coroutine_threadsafe(
-                    self.generate(state, request), host
+                    generate(), host
                 )
                 return await asyncio.wrap_future(future)
 
@@ -1168,12 +1193,15 @@ class RoomMemory:
 
     async def generate(self, state, request):
         """Use current native permissions and accounting for SDK background models."""
-        event = state.identity or state.event_ref()
+        from .native_memory_kernel import feedback_origin
+
+        origin = feedback_origin.get()
+        event = self.plugin.events.get(origin) if origin else state.identity or state.event_ref()
         revision = self.plugin.settings_revision
         if event is None:
             raise ValueError("该记忆会话没有可用的原生消息来源。")
         scope, persona, _ = await self.plugin.resolve_scope(event)
-        if scope != state.path.name or not await self.permitted(
+        if await self.storage_scope(scope) != state.path.name or not await self.permitted(
             event, scope, persona, learning=True
         ):
             raise ValueError("当前记忆来源或学习权限已撤销。")
@@ -1189,7 +1217,7 @@ class RoomMemory:
             if "feedback" in request.request_type.lower()
             else "memory_episode"
             if "episode" in request.request_type.lower()
-            else "memory_maintenance",
+            else "memory_review" if state.operation == "review" else "memory_maintenance",
             chat_provider_id=provider,
             prompt=request.prompt,
             **(
@@ -1221,12 +1249,12 @@ class RoomMemory:
         filter_mai,
         filter_command,
     ):
-        event = state.identity or state.event_ref()
+        event = (state.identity or state.event_ref()) if chat_id == state.path.name else self.plugin.events.get(chat_id)
         revision = self.plugin.settings_revision
-        if event is None or chat_id != state.path.name:
+        if event is None:
             raise ValueError("后台记忆消息缺少真实会话身份或请求了其他会话。")
         scope, persona, _ = await self.plugin.resolve_scope(event)
-        if scope != chat_id or not await self.permitted(
+        if await self.storage_scope(scope) != state.path.name or not await self.permitted(
             event, scope, persona, learning=True
         ):
             raise ValueError("后台记忆消息来源或学习权限已撤销。")
@@ -1274,7 +1302,7 @@ class RoomMemory:
         settings = self.plugin.settings
         result = [
             {
-                "source_id": r["source"],
+                "source_id": self.source_id(scope, r["source"]),
                 "sender": r["sender_id"],
                 "text": r["text"],
                 "created": r["time"],
@@ -1330,7 +1358,7 @@ class RoomMemory:
     @asynccontextmanager
     async def model_window(self, scope):
         """Lend the serialized importer while its native model is on the wire."""
-        state = self.rooms[scope]
+        state = self.rooms[await self.storage_scope(scope)]
         state.model_waiting = True
         state.foreground_ready.set()
         try:
@@ -1345,7 +1373,7 @@ class RoomMemory:
 
     async def execute_foreground(self, state, operation, args, revision):
         async with state.foreground_lock:
-            while state.operation == "consolidate" and not state.model_waiting:
+            while state.operation in {"consolidate", "review"} and not state.model_waiting:
                 await state.foreground_ready.wait()
             if (
                 self.closing
@@ -1363,6 +1391,7 @@ class RoomMemory:
     async def call(self, scope, operation, *args, event=None):
         from .memory_embedding import EmbeddingAPIAdapter
 
+        scope = await self.storage_scope(scope)
         revision = self.plugin.settings_revision
         if self.closing or self.plugin.closing:
             raise ValueError("记忆运行时正在关闭。")
@@ -1408,7 +1437,7 @@ class RoomMemory:
                 "image_asset",
                 "image_candidates",
             )
-            and state.operation == "consolidate"
+            and state.operation in {"consolidate", "review"}
             and state.revision == revision
             and state.embedding.provider is embedding.provider
             and state.embedding.get_embedding_configuration_key()
@@ -1483,9 +1512,9 @@ class RoomMemory:
             state.image_enabled = self.plugin.settings["image_memory_enabled"]
             if event is not None:
                 state.event_ref = weakref.ref(event)
-                self.observe(event, scope)
+                await self.observe(event, scope)
             state.operation = operation
-            if operation == "consolidate":
+            if operation in {"consolidate", "review"}:
                 state.foreground_ready.clear()
             try:
                 return await self.execute(state, operation, args)
@@ -1502,7 +1531,8 @@ class RoomMemory:
             "search",
             query[:2400],
             self.plugin.settings["memory_top_k"],
-            event_source(event),
+            self.source_id(scope, event_source(event)),
+            scope,
             event=event,
         )
         if revision != self.plugin.settings_revision or not await self.permitted(
@@ -1537,7 +1567,7 @@ class RoomMemory:
                 [task], timeout=self.plugin.settings["retrieval_timeout"]
             )
             if not done:
-                state = self.rooms.get(scope)
+                state = self.rooms.get(await self.storage_scope(scope))
                 logger.warning(
                     "通用记忆检索超时：等待位置=%s，房间操作=%s，后台模型等待=%s",
                     " -> ".join(await_path(task.get_coro())),
@@ -1610,7 +1640,8 @@ class RoomMemory:
                 raise ValueError("记忆操作需要本轮真实作者的原文和学习权限。")
             evidence.append(
                 {
-                    "source_id": event_source(source),
+                    "source_id": self.source_id(scope, event_source(source)),
+                    "source_scope": scope,
                     "sender": source.get_sender_id(),
                     "quote": citation["quote"],
                     "created": source.created_at,

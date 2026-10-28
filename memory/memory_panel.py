@@ -66,6 +66,7 @@ ACTION_FIELDS = {
         "text": TEXT,
     },
     "rollback": {"id": IDENTIFIER},
+    "review_execute": {"id": IDENTIFIER},
     "delete_preview": {
         "id": IDENTIFIER,
         "kind": {"enum": ["paragraph", "relation", "entity", "source"]},
@@ -397,7 +398,7 @@ class MemoryPanel:
                 raise ValueError("时间范围无效，请重新选择起止时间。")
             result = await asyncio.to_thread(
                 read_console,
-                self.plugin.room_memory.directory / scope,
+                self.plugin.room_memory.directory / await self.plugin.room_memory.storage_scope(scope),
                 view,
                 kind,
                 query,
@@ -429,11 +430,11 @@ class MemoryPanel:
             identity = request.query.get("id", "")
             if not identity or len(identity) > 128:
                 raise ValueError("请选择有效的图片记忆。")
+            directory = self.plugin.room_memory.directory / await self.plugin.room_memory.storage_scope(scope)
 
             def thumbnail():
                 from PIL import Image
 
-                directory = self.plugin.room_memory.directory / scope
                 with closing(
                     sqlite3.connect(
                         (directory / "metadata/metadata.db").as_uri() + "?mode=ro",
@@ -553,6 +554,10 @@ async def execute_admin(state, operation, payload):
     identity = payload.get("id", "")
     actor = "astrbot_panel"
     reason = "Panel 管理员明确操作"
+    if operation == "review_execute":
+        from .memory_review import execute_review_plan
+
+        return await execute_review_plan(state, identity)
     if operation.startswith("emoji_"):
         from .emoji_panel import execute_emoji
 

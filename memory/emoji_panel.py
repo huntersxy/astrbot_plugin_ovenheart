@@ -125,7 +125,7 @@ class EmojiPanel(MemoryPanel):
                 raise ValueError("请缩短关键词或重置页码。")
             result = await asyncio.to_thread(
                 read_console,
-                self.plugin.room_memory.directory / scope,
+                self.plugin.room_memory.directory / await self.plugin.room_memory.storage_scope(scope),
                 "emojis",
                 "image",
                 query,

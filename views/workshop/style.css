@@ -129,6 +129,7 @@ input[type="checkbox"]:disabled { opacity: .5; cursor: not-allowed; }
 .tabs button[aria-current="page"], .tabs button[aria-current="page"]:not(:disabled):hover { background: var(--tint); color: var(--accent-ink); }
 .tabs [data-tab="profile"] { --icon: var(--i-user); }
 .tabs [data-tab="library"] { --icon: var(--i-book); }
+.tabs [data-tab="portrait"] { --icon: var(--i-user); }
 .tabs [data-tab="memory"] { --icon: var(--i-heart); }
 .tabs [data-tab="emojis"] { --icon: var(--i-spark); }
 .tabs [data-tab="history"] { --icon: var(--i-history); }
@@ -601,4 +602,19 @@ footer { display: flex; justify-content: space-between; gap: 20px; padding: 18px
   .batch-review { gap:8px; }
   .batch-review > .actions:last-child { width:auto; flex:1; justify-content:flex-end; }
   .batch-review #selected-count { flex:initial; margin:0; }
+}
+
+.self-portrait { max-width:1000px; }
+.self-portrait fieldset { border:0; padding:0; margin:24px 0 0; min-width:0; }
+.portrait-layout { display:grid; grid-template-columns:minmax(220px,300px) minmax(0,1fr); gap:32px; }
+.portrait-reference { min-width:0; padding-right:24px; border-right:1px solid var(--line); }
+.portrait-reference img { display:block; width:100%; max-height:320px; object-fit:contain; margin-bottom:20px; }
+.portrait-reference img[hidden] { display:none; }
+.portrait-reference input { max-width:100%; margin:12px 0 8px; }
+.portrait-reference small { display:block; color:var(--muted); line-height:1.6; }
+#portrait-description { min-height:180px; margin-top:10px; }
+@media (max-width:680px) {
+  .portrait-layout { grid-template-columns:1fr; gap:24px; }
+  .portrait-reference { padding:0 0 24px; border-right:0; border-bottom:1px solid var(--line); }
+  .portrait-reference img { max-height:240px; }
 }

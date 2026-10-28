@@ -28,7 +28,7 @@ async def test_background_identity_does_not_create_chat_traces(
         incoming.role = "admin"
         await memories.room_memory.remember(incoming, scope, persona, note(), messages)
         for _ in range(20):
-            memories.room_memory.observe(incoming, scope)
+            await memories.room_memory.observe(incoming, scope)
         identity = memories.room_memory.rooms[scope].identity
         assert identity.role == "member"
         assert await memories.resolve_scope(identity) == await memories.resolve_scope(
@@ -132,17 +132,20 @@ async def read_sdk_messages(state, scope):
     }
 
 
+@pytest.mark.parametrize("isolation", [True, False])
 async def test_real_query_queues_once_and_original_feedback_sees_later_native_input(
-    memories,
+    memories, isolation,
 ):
     plugin = memories
+    plugin.settings["memory_isolation"] = isolation
     incoming, scope, persona, messages = await material(plugin)
     old = (
         await plugin.room_memory.remember(incoming, scope, persona, note(), messages)
     )["id"]
     assert await plugin.room_memory.search(incoming, scope, persona, "小猫")
     assert await plugin.room_memory.search(incoming, scope, persona, "小猫")
-    state = plugin.room_memory.rooms[scope]
+    storage = await plugin.room_memory.storage_scope(scope)
+    state = plugin.room_memory.rooms[storage]
     tasks = state.metadata.list_feedback_tasks(limit=10)
     assert len(tasks) == 1
     calls = []
@@ -164,22 +167,25 @@ async def test_real_query_queues_once_and_original_feedback_sees_later_native_in
     plugin.context.llm_generate.side_effect = classify
     feedback = event("later-feedback", text="你记错了，不是去看小猫，我并没有那个安排")
     await plugin.capture(feedback)
+    other, other_scope, other_persona, _ = await material(plugin, "unrelated", "隔壁群说我觉得那只小猫不错", session="456")
+    await plugin.room_memory.search(other, other_scope, other_persona, "小猫")
     # Use the real persisted query and original job, with a short controlled
     # due window instead of waiting the production default twelve hours.
     original = tasks[0]
     task = state.metadata.enqueue_feedback_task(
         query_tool_id=original["query_tool_id"],
-        session_id=scope,
+        session_id=storage,
         query_timestamp=time.time() - 1,
         due_at=time.time() + 1,
         query_snapshot=original["query_snapshot"],
     )
     state.drive_feedback = MethodType(drive_feedback, state)
     finished = await plugin.room_memory.call(
-        scope, "drive_feedback", task, event=feedback
+        scope, "drive_feedback", task, event=other if not isolation else feedback
     )
     assert finished["status"] not in {"failed", "skipped"}, finished
     assert len(calls) == 1 and "你记错了" in calls[0]
+    assert "隔壁群说" not in calls[0]
     assert all(
         r["id"] != old
         for r in await plugin.room_memory.search(feedback, scope, persona, "小猫")

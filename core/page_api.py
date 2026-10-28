@@ -50,6 +50,8 @@ class PageAPI:
             ("emojis", self.emoji_panel.read, "GET"),
             ("emojis/image", self.emoji_panel.image, "GET"),
             ("emojis/action", self.emoji_panel.action, "POST"),
+            ("portrait", self.plugin.self_portrait.read, "GET"),
+            ("portrait", self.plugin.self_portrait.save, "POST"),
             ("library", self.library, "GET"),
             ("tools", self.tools, "GET"),
             ("history", self.history, "GET"),
@@ -176,6 +178,12 @@ class PageAPI:
         )
         if view == "full":
             state["tools"] = self.tool_inventory()
+        if view in {"full", "profile"}:
+            selected = state.get("scope") or {}
+            state["self_portrait"] = await self.plugin.store.read("self_portrait", selected["persona"]) if selected.get("id") not in {None, SHARED_SCOPE} else None
+        if view in {"full", "settings"}:
+            state["memory_review"] = await self.plugin.store.read("memory_review_status")
+            state["memory_review"]["busy"] = self.plugin.memory_review.busy
         if view in {"full", "history"}:
             state["auxiliary_usage"] = {
                 "hour_buckets": 24,

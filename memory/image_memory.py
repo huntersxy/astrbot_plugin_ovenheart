@@ -229,7 +229,7 @@ class ImageMemory:
                     scope,
                     "image_ingest",
                     payload,
-                    event_source(event),
+                    self.plugin.room_memory.source_id(scope, event_source(event)),
                     str(event.message_obj.message_id or ""),
                     index,
                     event.created_at,
@@ -352,7 +352,7 @@ class ImageMemory:
             return {"success": False, "error": "图片超过10MB记忆检索限制。"}
         payload = base64.b64decode(encoded, validate=True)
         result = await self.plugin.room_memory.call(
-            scope, "image_search", payload, target["source"], image_index, event=event
+            scope, "image_search", payload, self.plugin.room_memory.source_id(scope, target["source"]), image_index, event=event
         )
         if not await self.permitted(event, scope, persona):
             return {"success": False, "error": "图片记忆权限已撤销。"}
@@ -370,7 +370,7 @@ class ImageMemory:
                     scope,
                     "image_ingest",
                     payload,
-                    source,
+                    self.plugin.room_memory.source_id(scope, source),
                     "",
                     index,
                     event.created_at,

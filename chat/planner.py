@@ -523,6 +523,7 @@ class PlannerSession:
             ],
             "memory_context": memories,
             "person_profiles": people,
+            "self_portrait": await self.plugin.self_portrait.context(self.persona),
             "memory_status": memory_status,
         }
 

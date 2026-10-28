@@ -8,12 +8,16 @@ from ..vendor.maibot.amemorix.runtime.sdk_memory_kernel import SDKMemoryKernel
 from ..vendor.maibot.amemorix.runtime.services.correction_admin_service import (
     MemoryCorrectionAdminService,
 )
+from ..vendor.maibot.amemorix.runtime.services.feedback_correction_service import (
+    MemoryFeedbackCorrectionService,
+)
 from ..vendor.maibot.amemorix.utils.async_work import run_sync_work
 from ..vendor.maibot.amemorix.utils.episode_retrieval_service import (
     EpisodeRetrievalService,
 )
 from ..vendor.maibot.amemorix.utils.episode_service import EpisodeService
 
+feedback_origin = ContextVar("ovenheart_feedback_origin", default="")
 correction_evidence = ContextVar("ovenheart_memory_correction_evidence", default=None)
 
 
@@ -76,10 +80,27 @@ class NativeCorrectionService(MemoryCorrectionAdminService):
             return super()._mark_fuzzy_modify_target_superseded(**kwargs)
 
 
+class NativeFeedbackService(MemoryFeedbackCorrectionService):
+    async def _process_feedback_task(self, task):
+        # A shared memory pool is not a shared conversation: feedback must come
+        # from the original chat, even after another room has used this kernel.
+        token = feedback_origin.set((task.get("query_snapshot") or {}).get("source_scope", ""))
+        try:
+            return await super()._process_feedback_task(task)
+        finally:
+            feedback_origin.reset(token)
+
+    def _extract_feedback_messages(self, **kwargs):
+        return super()._extract_feedback_messages(**(kwargs | {
+            "session_id": feedback_origin.get() or kwargs["session_id"]
+        }))
+
+
 class NativeMemoryKernel(SDKMemoryKernel):
     def __init__(self, *, plugin_root, config=None):
         super().__init__(plugin_root=plugin_root, config=config)
         self._correction_admin_service = NativeCorrectionService(self)
+        self._feedback_service = NativeFeedbackService(self)
         self._scope_statistics_ready = False
 
     async def initialize(self):

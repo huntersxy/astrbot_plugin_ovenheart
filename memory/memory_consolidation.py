@@ -82,7 +82,7 @@ class MemoryConsolidation:
     async def inputs(self, scope):
         s = self.plugin.settings
         return [
-            m
+            m | {"source_id": self.plugin.room_memory.source_id(scope, m["source_id"])}
             for m in await self.plugin.store.call("room_memory_inputs", scope)
             if m["sender"] not in s["blocked_senders"]
             and (not s["target_senders"] or m["sender"] in s["target_senders"])
@@ -92,14 +92,16 @@ class MemoryConsolidation:
         if self.busy or not await self.permitted(event, scope, persona):
             return
         messages = await self.inputs(scope)
+        storage_scope = await self.plugin.room_memory.storage_scope(scope)
         if (
             len(messages) < self.plugin.settings["memory_summary_min_messages"]
-            and scope not in self.plugin.room_memory.rooms
-            and not (self.plugin.room_memory.directory / scope / "metadata" / "metadata.db").exists()
+            and storage_scope not in self.plugin.room_memory.rooms
+            and not (self.plugin.room_memory.directory / storage_scope / "metadata" / "metadata.db").exists()
         ):
             return
         status = await self.plugin.room_memory.call(
-            scope, "summary_status", [m["source_id"] for m in messages], event=event
+            scope, "summary_status", [m["source_id"] for m in messages],
+            "" if self.plugin.settings["memory_isolation"] else scope + ":", event=event
         )
         if (
             time.time() - status["attempted"]
@@ -204,6 +206,7 @@ class MemoryConsolidation:
                             "sender": message["sender"],
                             "quote": citation["quote"],
                             "created": message["created"],
+                            "source_scope": scope,
                         }
                     )
                 if bool(payload["summary"].strip()) != bool(proofs):
