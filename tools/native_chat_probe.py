@@ -65,13 +65,13 @@ async def run(args, packet, report):
             name: hashlib.sha256((ROOT / name).read_bytes()).hexdigest()
             for name in (
                 "main.py",
-                "chat/planner.py",
-                "chat/participation.py",
+                "core/chat/planner.py",
+                "core/chat/participation.py",
                 "core/prompts.py",
-                "memory/native_memory_kernel.py",
-                "memory/room_memory.py",
-                "memory/memory_panel.py",
-                "memory/person_memory.py",
+                "core/memory/native_memory_kernel.py",
+                "core/memory/room_memory.py",
+                "core/memory/memory_panel.py",
+                "core/memory/person_memory.py",
             )
         },
         conditions={
@@ -100,7 +100,7 @@ async def run(args, packet, report):
             ROOT / "_conf_schema.json",
         ]:
             shutil.copyfile(path, destination / path.name)
-        for name in ("core", "chat", "memory", "integrations", "views", ".astrbot-plugin", "vendor"):
+        for name in ("core", "views", ".astrbot-plugin"):
             shutil.copytree(ROOT / name, destination / name)
         (data / "cmd_config.json").write_text(
             json.dumps(
@@ -344,7 +344,7 @@ async def run(args, packet, report):
                         scope = (await plugin.resolve_scope(incoming))[0]
                         state = plugin.room_memory.rooms.get(scope)
                         panel = importlib.import_module(
-                            type(plugin).__module__.rsplit(".", 1)[0] + ".memory.memory_panel"
+                            type(plugin).__module__.rsplit(".", 1)[0] + ".core.memory.memory_panel"
                         )
                         active["memory_records"] = (
                             await asyncio.to_thread(

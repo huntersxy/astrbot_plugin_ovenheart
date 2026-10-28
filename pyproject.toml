@@ -9,7 +9,7 @@ dependencies = ["json-repair>=0.60.1,<0.61", "faiss-cpu>=1.11.0", "numpy>=2.2.6"
 dev = ["pytest>=8", "pytest-asyncio>=0.24", "ruff>=0.15", "fastapi>=0.124", "httpx>=0.28"]
 
 [tool.ruff]
-extend-exclude = ["agent", "vendor/maibot/dynamic_gate.py", "vendor/maibot/reply_likelihood.py", "vendor/maibot/mid_term.py", "vendor/maibot/emoji_tiles.py", "vendor/maibot/response_splitter.py", "vendor/maibot/typing_time.py", "vendor/maibot/response_segments.py", "vendor/maibot/amemorix"]
+extend-exclude = ["agent", "core/vendor/maibot/dynamic_gate.py", "core/vendor/maibot/reply_likelihood.py", "core/vendor/maibot/mid_term.py", "core/vendor/maibot/emoji_tiles.py", "core/vendor/maibot/response_splitter.py", "core/vendor/maibot/typing_time.py", "core/vendor/maibot/response_segments.py", "core/vendor/maibot/amemorix"]
 target-version = "py310"
 line-length = 88
 

@@ -16,7 +16,7 @@ from astrbot.api import logger
 from astrbot.api.platform import MessageType
 from astrbot.core.message.components import At, Image, Plain, Reply
 
-from ..core.message_source import own_message_text
+from ..message_source import own_message_text
 from .native_context import conversation_metadata
 from .participation import event_source, offered_messages
 

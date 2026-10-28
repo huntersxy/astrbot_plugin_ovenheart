@@ -18,7 +18,7 @@ def main():
         "from src.services.llm_service import LLMServiceClient",
         "from .response_host import LLMServiceClient",
     ).replace('logger = get_logger("llm_sentence_splitter")\n', "")
-    target = ROOT / "vendor/maibot/response_splitter.py"
+    target = ROOT / "core/vendor/maibot/response_splitter.py"
     target.write_text(ported, encoding="utf-8", newline="\n")
     source = (SOURCE / "utils.py").read_text(encoding="utf-8")
     node = next(

@@ -15,7 +15,7 @@ from astrbot.core.message.components import Image
 from astrbot.core.message.message_event_result import MessageChain
 from mcp.types import CallToolResult, ImageContent, TextContent
 
-from ..core.settings import SHARED_SCOPE
+from ..settings import SHARED_SCOPE
 from ..vendor.maibot.emoji_tiles import (
     EmojiSelectionResult,
     _calculate_grid_shape,

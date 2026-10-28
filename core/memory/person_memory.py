@@ -12,10 +12,10 @@ from astrbot.api import logger
 from sqlmodel import Session, create_engine
 
 from ..chat.participation import event_source
-from ..core.learning import decode_model_object, normalize_quote
-from ..core.message_source import own_message_text
-from ..core.runtime_diagnostics import limit_metadata_cache
-from ..core.settings import learning_blocked
+from ..learning import decode_model_object, normalize_quote
+from ..message_source import own_message_text
+from ..runtime_diagnostics import limit_metadata_cache
+from ..settings import learning_blocked
 from ..vendor.maibot.amemorix.host import PersonInfo, bind
 from ..vendor.maibot.amemorix.storage.metadata_fact import _normalized_token
 from ..vendor.maibot.amemorix.storage.metadata_store import MetadataStore

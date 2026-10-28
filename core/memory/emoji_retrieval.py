@@ -6,7 +6,7 @@ from random import sample
 import numpy as np
 from astrbot.api import logger
 
-from ..core.retrieval import normalized_vector, query_terms
+from ..retrieval import normalized_vector, query_terms
 from .memory_embedding import embedding_budget
 
 

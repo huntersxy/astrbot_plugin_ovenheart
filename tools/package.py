@@ -19,12 +19,9 @@ RUNTIME_FILES = (
 )
 RUNTIME_TREES = {
     "core": {".py"},
-    "chat": {".py"},
-    "memory": {".py"},
-    "integrations": {".py"},
     "views": {".html", ".js", ".css"},
     ".astrbot-plugin": {".json"},
-    "vendor": {".py", ".md", ".txt", ".json"},
+    "core/vendor": {".py", ".md", ".txt", ".json"},
 }
 
 
@@ -81,6 +78,7 @@ def package():
             p
             for p in (ROOT / directory).rglob("*")
             if p.is_file()
+            and not (directory == "core" and "vendor" in p.relative_to(ROOT / "core").parts)
             and p.suffix in extensions
             and "__pycache__" not in p.parts
             and p.relative_to(ROOT).as_posix() in tracked

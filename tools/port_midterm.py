@@ -71,7 +71,7 @@ MID_TERM_MEMORY_DEFAULT_RECALL_THRESHOLD = 0.8
 class MemorySummaryMessage:
     message_id: str
 '''
-    target = ROOT / "vendor/maibot/mid_term.py"
+    target = ROOT / "core/vendor/maibot/mid_term.py"
     target.write_text(
         header + "\n\n" + "\n\n".join(blocks) + "\n", encoding="utf-8", newline="\n"
     )

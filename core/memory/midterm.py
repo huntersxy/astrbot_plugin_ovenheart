@@ -10,7 +10,7 @@ from pathlib import Path
 
 from astrbot.api import logger
 
-from ..core.learning import normalize_quote
+from ..learning import normalize_quote
 from ..vendor.maibot.mid_term import (
     MID_TERM_MEMORY_DEFAULT_RECALL_THRESHOLD,
     MemorySummaryMessage,

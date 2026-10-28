@@ -16,11 +16,11 @@ import jsonschema
 from astrbot.api import logger
 from astrbot.core.agent.tool import FunctionTool, ToolSet
 
-from ..core.learning import build_guidance
-from ..core.runtime_diagnostics import await_path
-from ..core.settings import SHARED_SCOPE
+from ..learning import build_guidance
 from ..memory.person_memory import FACTS_SCHEMA
 from ..memory.room_memory import CHANGE_SCHEMAS, MEMORY_SCHEMA
+from ..runtime_diagnostics import await_path
+from ..settings import SHARED_SCOPE
 from .native_context import native_time
 from .participation import event_source, offered_messages, parse_plan, planner_message
 

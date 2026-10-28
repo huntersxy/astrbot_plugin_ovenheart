@@ -9,7 +9,7 @@ import time
 import jsonschema
 from astrbot.api import logger
 
-from ..core.learning import decode_model_object, normalize_quote
+from ..learning import decode_model_object, normalize_quote
 from .room_memory import MEMORY_SCHEMA
 
 SUMMARY_SCHEMA = {

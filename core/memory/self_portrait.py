@@ -7,7 +7,7 @@ import jsonschema
 from astrbot.api.web import request
 from astrbot.core.agent.message import ImageURLPart, TextPart
 
-from ..core.settings import SHARED_SCOPE
+from ..settings import SHARED_SCOPE
 from ..vendor.maibot.amemorix.image.asset_store import ImageAssetStore
 
 MARKER = "[OvenHeart self portrait]\n"

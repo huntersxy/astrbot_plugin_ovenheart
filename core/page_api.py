@@ -15,11 +15,11 @@ from astrbot.core.agent.message import TextPart
 from astrbot.core.star.session_llm_manager import SessionServiceManager
 from astrbot.core.star.session_plugin_manager import SessionPluginManager
 
-from ..chat.native_context import native_time
-from ..memory.emoji_panel import EmojiPanel
-from ..memory.memory_panel import MemoryPanel
 from . import prompts
+from .chat.native_context import native_time
 from .learning import build_guidance, build_guidance_parts, habit_text
+from .memory.emoji_panel import EmojiPanel
+from .memory.memory_panel import MemoryPanel
 from .runtime_diagnostics import memory_snapshot, runtime_paths
 from .settings import PROFILE_DEFAULTS, SHARED_SCOPE, learning_blocked
 

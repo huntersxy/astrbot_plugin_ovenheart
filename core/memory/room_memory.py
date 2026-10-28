@@ -19,9 +19,9 @@ from astrbot.api import logger
 
 from ..chat.native_context import conversation_metadata
 from ..chat.participation import event_source
-from ..core.message_source import own_message_text
-from ..core.runtime_diagnostics import await_path
-from ..core.settings import SHARED_SCOPE, learning_blocked
+from ..message_source import own_message_text
+from ..runtime_diagnostics import await_path
+from ..settings import SHARED_SCOPE, learning_blocked
 
 MEMORY_SCHEMA = {
     "type": "object",

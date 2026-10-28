@@ -3,7 +3,7 @@
 import time
 from contextvars import ContextVar
 
-from ..core.runtime_diagnostics import limit_metadata_cache
+from ..runtime_diagnostics import limit_metadata_cache
 from ..vendor.maibot.amemorix.runtime.sdk_memory_kernel import SDKMemoryKernel
 from ..vendor.maibot.amemorix.runtime.services.correction_admin_service import (
     MemoryCorrectionAdminService,

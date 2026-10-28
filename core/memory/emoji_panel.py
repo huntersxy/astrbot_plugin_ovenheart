@@ -13,7 +13,7 @@ import jsonschema
 from astrbot.api import logger
 from astrbot.api.web import request
 
-from ..core.settings import SHARED_SCOPE
+from ..settings import SHARED_SCOPE
 from .memory_panel import MemoryPanel, read_console
 
 FIELDS = {

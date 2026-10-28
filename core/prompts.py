@@ -200,7 +200,7 @@ def templates() -> dict[str, str]:
     Returns:
         Default template bodies keyed like SPECS.
     """
-    from ..chat.participation import PLANNER_SYSTEM
+    from .chat.participation import PLANNER_SYSTEM
     from .learning import APPLICATION_STYLE, LEARNING_REVIEW_SYSTEM, LEARNING_SYSTEM
     from .retrieval import SELECTION_SYSTEM
 

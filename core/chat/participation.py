@@ -15,15 +15,15 @@ from astrbot.api.platform import MessageType
 from astrbot.core.message.components import Plain, Reply
 from astrbot.core.star.session_llm_manager import SessionServiceManager
 
-from ..core.learning import (
+from ..learning import (
     LearningFormatError,
     build_guidance,
     decode_model_object,
     habit_text,
 )
-from ..core.message_source import own_message_text
-from ..core.prompts import auxiliary_payload
-from ..core.settings import SHARED_SCOPE
+from ..message_source import own_message_text
+from ..prompts import auxiliary_payload
+from ..settings import SHARED_SCOPE
 from .rhythm import ConversationRhythm
 
 PLANNER_SYSTEM = """你是群聊中的参与决策器，不是最终回复者。根据身份、行为习惯与最近真实消息，决定参与、等待或旁观。

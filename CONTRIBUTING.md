@@ -5,11 +5,11 @@
 ```text
 main.py              AstrBot 插件入口、生命周期与事件钩子
 core/                配置、SQLite 存储、学习、检索、模型用量和 Panel API
-chat/                群聊上下文、持续规划、目标绑定、回复节奏与参与调度
-memory/              人物、通用、图片与中期记忆，以及记忆控制台
-integrations/        AstrBot 提供商之外的可选插件与服务联动
+core/chat/           群聊上下文、持续规划、目标绑定、回复节奏与参与调度
+core/memory/         人物、通用、图片与中期记忆，以及记忆控制台
+core/integrations/   AstrBot 提供商之外的可选插件与服务联动
 views/workshop/      原生 Panel 页面、脚本和样式
-vendor/              保留来源清单与许可证的参考实现
+core/vendor/         保留来源清单与许可证的参考实现
 .astrbot-plugin/     AstrBot 界面国际化
 _conf_schema.json    AstrBot 插件配置表单
 metadata.yaml        插件元数据

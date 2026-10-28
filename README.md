@@ -70,4 +70,4 @@ https://github.com/huntersxy/astrbot_plugin_ovenheart
 
 运行于 [AstrBot](https://github.com/AstrBotDevs/AstrBot)，部分聊天和记忆实现来自 [MaiBot](https://github.com/Mai-with-u/MaiBot)。Jev 和表情插件联动在独立模块中维护。
 
-本仓库采用 [AGPL-3.0-or-later](LICENSE)。移植来源、修改说明和许可证见 [MaiBot 说明](vendor/maibot/NOTICE.md)及 [A_memorix 说明](vendor/maibot/amemorix/NOTICE.md)。
+本仓库采用 [AGPL-3.0-or-later](LICENSE)。移植来源、修改说明和许可证见 [MaiBot 说明](core/vendor/maibot/NOTICE.md)及 [A_memorix 说明](core/vendor/maibot/amemorix/NOTICE.md)。

@@ -45,7 +45,7 @@ _EMOJI_INDEX_FONT_SIZE = 32
         )
         + "\n"
     )
-    target = ROOT / "vendor/maibot/emoji_tiles.py"
+    target = ROOT / "core/vendor/maibot/emoji_tiles.py"
     target.write_text(text, encoding="utf-8", newline="\n")
     template = ROOT.parent / "MaiBot/prompts/zh-CN/emoji_selection.prompt"
     prompt = target.parent / "emoji_selection.txt"

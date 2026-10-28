@@ -90,7 +90,7 @@ def social_memories(memories, messages):
 
 
 def host_settings(config):
-    from ..core.settings import validate_settings
+    from ..settings import validate_settings
 
     return validate_settings({k: v for k, v in config.items() if k != CONNECTION_KEY})
 

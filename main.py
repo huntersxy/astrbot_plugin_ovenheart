@@ -32,20 +32,25 @@ from astrbot.core.star.filter.regex import RegexFilter
 from astrbot.core.star.session_llm_manager import SessionServiceManager
 from astrbot.core.star.session_plugin_manager import SessionPluginManager
 
-from .chat.conversation import ConversationContext
-from .chat.direct_priority import DirectPriority
-from .chat.group_context import GroupContextBridge
-from .chat.native_context import conversation_metadata
-from .chat.participation import (
+from .core import prompts
+from .core.auxiliary import AuxiliaryUsage
+from .core.chat.conversation import ConversationContext
+from .core.chat.direct_priority import DirectPriority
+from .core.chat.group_context import GroupContextBridge
+from .core.chat.native_context import conversation_metadata
+from .core.chat.participation import (
     ParticipationController,
     bound_reply_messages,
     event_source,
 )
-from .chat.reply_payload import dumps as dump_reply_payload
-from .chat.reply_payload import message_view, payload_view, reply_messages
-from .chat.reply_rhythm import ReplyRhythm
-from .core import prompts
-from .core.auxiliary import AuxiliaryUsage
+from .core.chat.reply_payload import dumps as dump_reply_payload
+from .core.chat.reply_payload import message_view, payload_view, reply_messages
+from .core.chat.reply_rhythm import ReplyRhythm
+from .core.integrations.jev import JevService
+from .core.integrations.jev import host_settings as read_host_settings
+from .core.integrations.outgoing_media import OutgoingMediaBridge
+from .core.integrations.oven_multi import JEV_RULE, OvenMultiBridge
+from .core.integrations.oven_multi import reading as jev_reading
 from .core.learning import (
     LEARNING_DELIVERY_RULE,
     LEARNING_RHYTHM_RULE,
@@ -58,6 +63,14 @@ from .core.learning import (
     parse_learning_review,
     review_issue,
 )
+from .core.memory.emoji_actions import EmojiActions
+from .core.memory.image_memory import ImageMemory
+from .core.memory.memory_consolidation import MemoryConsolidation
+from .core.memory.memory_review import MemoryReview
+from .core.memory.midterm import MidTermMemory
+from .core.memory.person_memory import PersonMemory
+from .core.memory.room_memory import RoomMemory
+from .core.memory.self_portrait import SelfPortrait
 from .core.message_source import own_message_text
 from .core.retrieval import HabitRetriever
 from .core.settings import (
@@ -70,19 +83,6 @@ from .core.settings import (
     validate_settings,
 )
 from .core.store import Store
-from .integrations.jev import JevService
-from .integrations.jev import host_settings as read_host_settings
-from .integrations.outgoing_media import OutgoingMediaBridge
-from .integrations.oven_multi import JEV_RULE, OvenMultiBridge
-from .integrations.oven_multi import reading as jev_reading
-from .memory.emoji_actions import EmojiActions
-from .memory.image_memory import ImageMemory
-from .memory.memory_consolidation import MemoryConsolidation
-from .memory.memory_review import MemoryReview
-from .memory.midterm import MidTermMemory
-from .memory.person_memory import PersonMemory
-from .memory.room_memory import RoomMemory
-from .memory.self_portrait import SelfPortrait
 
 PLUGIN_NAME = "astrbot_plugin_ovenheart"
 _active: weakref.ReferenceType | None = None
@@ -454,7 +454,7 @@ class PersonaPlugin(Star):
         self.failures: dict[str, int] = {}
         source_root = Path(__file__).parent
         source_modules = [Path(__file__)]
-        for package in ("core", "chat", "memory", "integrations"):
+        for package in ("core", "core/chat", "core/memory", "core/integrations"):
             source_modules.extend((source_root / package).glob("*.py"))
         self.learning_code_digest = hashlib.sha256(
             b"".join(
@@ -2434,7 +2434,7 @@ class PersonaPlugin(Star):
         plan = event.get_extra("ovenheart_decision")
         if plan and plan["scope"] != scope:
             plan = None
-        from .integrations.reply_delivery import bind_text_delivery
+        from .core.integrations.reply_delivery import bind_text_delivery
 
         bind_text_delivery(event, req)
         await self.self_portrait.apply(event, persona, req)
