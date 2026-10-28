@@ -2,7 +2,7 @@
 *.jpg binary
 *.png binary
 /tests export-ignore
-/tools export-ignore
+/AGENTS.md export-ignore
 /docs export-ignore
 /CONTRIBUTING.md export-ignore
 /.github export-ignore

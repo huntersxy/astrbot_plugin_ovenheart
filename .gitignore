@@ -9,7 +9,6 @@ venv/
 .coverage.*
 htmlcov/
 .impeccable/
-AGENTS.md
 AGENTS.local.md
 *.local.*
 .env

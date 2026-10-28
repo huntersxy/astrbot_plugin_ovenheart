@@ -1,9 +1,0 @@
-{
-  "person_correction_after_reopen": [
-    {"sender": "alice", "text": "请记住我希望被叫阿梨，我不喝咖啡。以后聊天按这个来。"},
-    {"sender": "bob", "text": "请记住我叫阿柏，我每天喝咖啡；别把我和阿梨混在一起。"},
-    {"sender": "alice", "text": "更正我的记录：我现在会喝咖啡了，之前不喝。称呼仍是阿梨。请把旧的饮食偏好更正。"},
-    {"sender": "bob", "reopen_person_store": true, "text": "先查询人物记录，再分别说我和阿梨现在喝不喝咖啡；只说查询确认的信息。"},
-    {"sender": "alice", "text": "查询我的记录，确认旧的不喝咖啡是否仍为有效事实。只告诉我结论。"}
-  ]
-}
