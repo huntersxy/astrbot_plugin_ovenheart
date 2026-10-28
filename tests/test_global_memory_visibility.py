@@ -11,6 +11,32 @@ from tests.test_runtime import api_call, event
 pytest_plugins = ["tests.test_room_memory", "tests.test_person_memory"]
 
 
+async def test_cold_global_scan_does_not_budget_initialization_or_reopen_for_feedback(memories, monkeypatch):
+    from astrbot_plugin_ovenheart.memory.memory_embedding import _retrieval_deadline
+    from astrbot_plugin_ovenheart.memory.room_memory import RoomState
+
+    p = memories
+    p.settings["memory_runtime_max_rooms"] = 1
+    for index in range(6):
+        incoming, scope, persona, rows = await material(p, session=str(index))
+        await p.room_memory.remember(incoming, scope, persona, note(content=f"Neko喜欢猫咪，第{index}条原文。"), rows)
+    initialized = []
+    original = RoomState._initialize
+
+    async def tracked(state, *args):
+        assert _retrieval_deadline.get() is None
+        initialized.append(state.path.name)
+        return await original(state, *args)
+
+    monkeypatch.setattr(RoomState, "_initialize", tracked)
+    p.settings["memory_isolation"] = False
+    found = await p.room_memory.search(incoming, scope, persona, "Neko")
+    assert found
+    assert len(initialized) == 5
+    assert len(set(initialized)) == 5
+    assert len(p.room_memory.rooms) == 1
+
+
 async def test_global_recall_sees_existing_memories_and_restores_isolation(memories):
     p = memories
     a, sa, persona, rows = await material(p, "same-id", "Neko喜欢猫咪。", session="a")
