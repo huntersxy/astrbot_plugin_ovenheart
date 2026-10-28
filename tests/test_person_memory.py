@@ -378,6 +378,35 @@ async def test_background_extraction_repairs_evidence_once_before_writing(
     assert "private-invalid-model-quote" not in caplog.text
 
 
+async def test_person_extraction_bounds_fact_context_without_truncating_ledger(person, monkeypatch):
+    import json
+
+    from astrbot_plugin_ovenheart.memory import person_memory
+
+    original = await source(person, "many-facts", "我喜欢阅读。")
+    for batch in range(5):
+        await remember(person, original, *[
+            fact("many-facts", "我喜欢阅读", f"阅读偏好{batch * 10 + i}", key=f"preference{batch * 10 + i}", section="stable_facts")
+            for i in range(10)
+        ])
+    monkeypatch.setattr(person_memory, "PERSON_MODEL_TIMEOUT", 0.5)
+
+    async def delayed(**kwargs):
+        await asyncio.sleep(0.1)
+        return SimpleNamespace(completion_text='{"facts":[]}')
+
+    person.context.llm_generate.side_effect = delayed
+    person.settings["person_memory_min_messages"] = 1
+    incoming, scope, persona, _ = await source(person, "next-input", "今天也在阅读。")
+    await asyncio.gather(*person.person_memory.busy.values())
+    payload = json.loads(person.context.llm_generate.call_args.kwargs["prompt"])
+    assert len(payload["existing_facts"]) == 40
+    assert payload["existing_facts_omitted"] == 10
+    identity = person.person_memory.identity(incoming, scope, persona, "alice")
+    assert len(await person.person_memory.call("claims_many", [identity])) == 50
+    assert "next-input" in await person.person_memory.call("processed", identity)
+
+
 async def test_profile_is_injected_into_native_reply_as_temporary_reference(person):
     original = await source(person, "profile-input", "我不喜欢被叫宝宝。")
     await remember(

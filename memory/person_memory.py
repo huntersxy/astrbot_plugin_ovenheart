@@ -23,7 +23,6 @@ from ..vendor.maibot.amemorix.utils.person_profile_service import PersonProfileS
 from ..vendor.maibot.amemorix.utils.profile_text import build_profile_injection_text
 
 PERSON_MODEL_TIMEOUT = 60
-PERSON_REPAIR_RESERVE = 15
 
 SECTIONS = [
     "identity_settings",
@@ -657,13 +656,12 @@ class PersonMemory:
                             "value_text",
                             "polarity",
                             "cardinality",
-                            "stability",
-                            "profile_section",
                             "status",
                         )
                     }
-                    for claim in claims
+                    for claim in claims[:40]
                 ],
+                "existing_facts_omitted": max(0, len(claims) - 40),
                 "output_schema": FACTS_SCHEMA,
             }
             deadline = time.monotonic() + PERSON_MODEL_TIMEOUT
@@ -680,7 +678,6 @@ class PersonMemory:
                         0,
                         deadline
                         - time.monotonic()
-                        - (PERSON_REPAIR_RESERVE if not attempt else 0),
                     ),
                 )
                 phase = "validation"
