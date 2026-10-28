@@ -265,7 +265,7 @@ class RoomState:
                 "embedding": {"dimension": embedding.dimension or 1024},
                 "image_memory": {
                     "enabled": image_enabled,
-                    "recover_on_initialize": not self.image_recovered,
+                    "recover_on_initialize": False,
                     "preprocess_version": "gif_first_frame_v1",
                 },
                 "retrieval": {
@@ -277,8 +277,6 @@ class RoomState:
         kernel._runtime_writer_lock.acquire()
         try:
             await kernel.initialize()
-            if kernel.image_memory_runtime is not None:
-                self.image_recovered = True
             if kernel.image_memory_runtime is not None:
                 from .image_memory import (
                     NativeImageAssetStore,
@@ -1204,6 +1202,11 @@ class RoomMemory:
             ):
                 if operation != "close":
                     await state.initialize()
+                    # Text recall must not scan image files or acquire one
+                    # write transaction per asset before searching paragraphs.
+                    if (operation.startswith("image_") or operation == "admin") and not state.image_recovered and state.kernel.image_memory_runtime is not None:
+                        await state.kernel.image_memory_runtime.recover_assets()
+                        state.image_recovered = True
                 budget = (
                     1.5 if operation == "search"
                     else max(0.1, self.plugin.settings["retrieval_timeout"] - 0.5)
