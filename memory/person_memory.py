@@ -656,12 +656,13 @@ class PersonMemory:
                             "value_text",
                             "polarity",
                             "cardinality",
+                            "stability",
+                            "profile_section",
                             "status",
                         )
                     }
-                    for claim in claims[:40]
+                    for claim in claims
                 ],
-                "existing_facts_omitted": max(0, len(claims) - 40),
                 "output_schema": FACTS_SCHEMA,
             }
             deadline = time.monotonic() + PERSON_MODEL_TIMEOUT

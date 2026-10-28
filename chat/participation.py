@@ -1078,7 +1078,6 @@ class ParticipationController:
             )
         revision = plugin.settings_revision
         prompts_revision = plugin.prompts_revision
-        deadline = time.monotonic() + settings["retrieval_timeout"]
         # Newest real inputs and their quotes take precedence over older topics.
         query = "\n".join(
             m["text"][:300] + "\n" + (m.get("reply_to") or {}).get("text", "")[:300]
@@ -1106,7 +1105,7 @@ class ParticipationController:
         )
         memories, memory_status = [], "本次未启用参与记忆参考。"
         if settings["memory_enabled"]:
-            remaining = deadline - time.monotonic()
+            remaining = settings["retrieval_timeout"]
             if remaining > 0:
                 try:
                     recalled = await asyncio.wait_for(

@@ -378,7 +378,7 @@ async def test_background_extraction_repairs_evidence_once_before_writing(
     assert "private-invalid-model-quote" not in caplog.text
 
 
-async def test_person_extraction_bounds_fact_context_without_truncating_ledger(person, monkeypatch):
+async def test_person_extraction_preserves_fact_context_and_full_model_budget(person, monkeypatch):
     import json
 
     from astrbot_plugin_ovenheart.memory import person_memory
@@ -400,8 +400,8 @@ async def test_person_extraction_bounds_fact_context_without_truncating_ledger(p
     incoming, scope, persona, _ = await source(person, "next-input", "今天也在阅读。")
     await asyncio.gather(*person.person_memory.busy.values())
     payload = json.loads(person.context.llm_generate.call_args.kwargs["prompt"])
-    assert len(payload["existing_facts"]) == 40
-    assert payload["existing_facts_omitted"] == 10
+    assert len(payload["existing_facts"]) == 50
+    assert all("stability" in claim and "profile_section" in claim for claim in payload["existing_facts"])
     identity = person.person_memory.identity(incoming, scope, persona, "alice")
     assert len(await person.person_memory.call("claims_many", [identity])) == 50
     assert "next-input" in await person.person_memory.call("processed", identity)

@@ -365,7 +365,7 @@ class RoomState:
         if not self.metadata.count_paragraphs():
             return []
         try:
-            if await asyncio.wait_for(self._prepare_vectors(query), 1.5) and not defer_feedback:
+            if await self._prepare_vectors(query) and not defer_feedback:
                 await asyncio.wait_for(self._backfill(), 1.5)
         except Exception as exc:
             logger.warning(
@@ -1208,9 +1208,8 @@ class RoomMemory:
                         await state.kernel.image_memory_runtime.recover_assets()
                         state.image_recovered = True
                 budget = (
-                    1.5 if operation == "search"
-                    else max(0.1, self.plugin.settings["retrieval_timeout"] - 0.5)
-                    if operation == "image_search" else None
+                    self.plugin.settings["retrieval_timeout"]
+                    if operation in {"search", "image_search"} else None
                 )
                 with embedding_budget(budget) if budget is not None else nullcontext():
                     return await getattr(state, operation)(*args)

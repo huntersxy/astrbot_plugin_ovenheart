@@ -257,6 +257,22 @@ async def test_original_dual_vector_pools_find_nonlexical_query_and_reload(memor
     assert any(r["id"] == saved["id"] for r in reloaded)
 
 
+async def test_semantic_recall_waits_for_a_slow_successful_embedding(memories):
+    class DelayedEmbedding(SyntheticEmbedding):
+        async def get_embeddings(self, texts):
+            if "GATTO-only-latency" in texts:
+                await asyncio.sleep(2)
+            return await super().get_embeddings(texts)
+
+    provider = DelayedEmbedding()
+    memories.settings["embedding_provider_id"] = "semantic"
+    memories.context.get_provider_by_id = lambda _: provider
+    incoming, scope, persona, messages = await material(memories)
+    saved = await memories.room_memory.remember(incoming, scope, persona, note(), messages)
+    found = await memories.room_memory.context(incoming, scope, persona, "GATTO-only-latency")
+    assert saved["id"] in {row["id"] for row in found}
+
+
 async def test_scope_isolation_and_missing_source_rejection(memories):
     incoming, scope, persona, messages = await material(memories)
     await memories.room_memory.remember(incoming, scope, persona, note(), messages)

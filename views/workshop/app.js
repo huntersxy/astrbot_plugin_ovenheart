@@ -538,7 +538,7 @@ function renderSettings(target = "#content") {
 <div class="number-fields">${field("memory_top_k", "最多参考记忆", s.memory_top_k, "条；仅在学习时检索", {type:"number", min:1, max:8})}${field("memory_runtime_max_rooms", "同时驻留的记忆会话", s.memory_runtime_max_rooms ?? 4, "个；超出时关闭不活跃会话，记忆保留，下次访问自动加载", {type:"number", min:1, max:16})}</div>
 <h3>检索模型</h3><p class="muted">以下两项与表达检索共用，修改后两处同步生效。</p>
       ${field("embedding_provider_id", "向量模型 ID", s.embedding_provider_id, "用于回复、参与判断和旧习惯对照，生效习惯会做有界后台预热。填写 AstrBot 的 embedding 提供商 ID；留空用文字检索。", {type:"text"})}
-<div class="number-fields">${field("retrieval_timeout", "召回等待上限", s.retrieval_timeout, "秒；向量与重排序共用，情境筛选另计", {type:"number", min:1, max:15})}</div>
+<div class="number-fields">${field("retrieval_timeout", "召回等待上限", s.retrieval_timeout, "推荐 30 秒；留足完整召回时间，情境筛选另计", {type:"number", min:1, max:120})}</div>
 </section>
 </div>
 <div class="settings-panel settings-grid" id="settings-panel-background" role="tabpanel" aria-labelledby="settings-tab-background" data-settings-panel="background">
@@ -616,7 +616,7 @@ function renderSettings(target = "#content") {
       ${field("embedding_provider_id", "向量模型 ID", s.embedding_provider_id, "用于回复、参与判断和旧习惯对照，生效习惯会做有界后台预热。填写 AstrBot 的 embedding 提供商 ID；留空用文字检索。", {type:"text"})}
       ${field("rerank_provider_id", "重排序模型 ID", s.rerank_provider_id, "可选，填写 AstrBot 中已配置的 rerank 提供商 ID。只改变候选顺序，不能代替情境判断。", {type:"text"})}
       ${field("selector_timeout", "情境筛选等待上限", s.selector_timeout, "秒；异常时不选表达习惯，仍保留当前输入直接命中的本地词义。", {type:"number", min:3, max:30})}
-      <div class="number-fields">${field("retrieval_timeout", "召回等待上限", s.retrieval_timeout, "秒；向量与重排序共用，情境筛选另计", {type:"number", min:1, max:15})}${field("semantic_threshold", "语义相关性门槛", s.semantic_threshold, "余弦相似度，按模型效果调整", {type:"number", min:0, max:1, step:.01})}${field("habit_half_life", "习惯新鲜度半衰期", s.habit_half_life, "天；逐渐降权，不自动删除", {type:"number", min:7, max:730})}</div>
+      <div class="number-fields">${field("retrieval_timeout", "召回等待上限", s.retrieval_timeout, "推荐 30 秒；留足完整召回时间，情境筛选另计", {type:"number", min:1, max:120})}${field("semantic_threshold", "语义相关性门槛", s.semantic_threshold, "余弦相似度，按模型效果调整", {type:"number", min:0, max:1, step:.01})}${field("habit_half_life", "习惯新鲜度半衰期", s.habit_half_life, "天；逐渐降权，不自动删除", {type:"number", min:7, max:730})}</div>
       <p class="muted">${escape(data.retrieval?.message || "真实回复后显示检索状态。")}</p>
 </section>
 </div>
