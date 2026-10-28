@@ -4422,10 +4422,13 @@ class PersonaPlugin(Star):
         for task in tasks:
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
-        await self.auxiliary.flush()
-        await self.jev.client.close()
-        await self.person_memory.close()
-        await self.room_memory.close()
+        try:
+            await self.auxiliary.flush()
+            await self.jev.client.close()
+            await self.person_memory.close()
+            await self.room_memory.close()
+        finally:
+            await self.store.close()
         self.events.clear()
         self.speaker_events.clear()
         self.learning_context.clear()

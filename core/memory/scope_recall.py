@@ -17,8 +17,8 @@ def queue_feedback(room, scope, query, source, origin, response):
     from .room_memory import NativeMemoryIntegration
 
     metadata = MetadataStore(room.directory / scope / "metadata")
-    metadata.connect()
     try:
+        metadata.connect()
         identity = hashlib.sha256(json.dumps([scope, source, query, [h["hash"] for h in response["hits"]]]).encode()).hexdigest()
         service = MemoryFeedbackCorrectionService(SimpleNamespace(metadata_store=metadata))
         with host.bind(None, None, integration=NativeMemoryIntegration(room.plugin)):
@@ -202,6 +202,17 @@ async def read_all(room, keys, operation, args, event, source_scope):
             }
             hits = [row for row in packet["feedback"]["hits"] if row["hash"] in hashes]
             if hits and args[2]:
+                if packet["storage_scope"] in room.rooms:
+                    await room.call_storage(
+                        packet["storage_scope"],
+                        "queue_feedback",
+                        args[0],
+                        args[2],
+                        args[3],
+                        packet["feedback"] | {"hits": hits},
+                        event=event,
+                    )
+                    continue
                 await asyncio.to_thread(
                     queue_feedback,
                     room,

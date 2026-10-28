@@ -4,6 +4,7 @@ import asyncio
 import json
 import sqlite3
 import time
+from contextlib import closing
 
 from astrbot.api import logger
 
@@ -13,7 +14,9 @@ from .native_memory_kernel import correction_evidence, effective_paragraphs
 def has_review_material(path):
     if not path.exists():
         return False
-    with sqlite3.connect(path.as_uri() + "?mode=ro", uri=True, timeout=2) as db:
+    with closing(
+        sqlite3.connect(path.as_uri() + "?mode=ro", uri=True, timeout=2)
+    ) as db:
         return (
             db.execute(
                 "SELECT COUNT(*) FROM (SELECT 1 FROM paragraphs WHERE is_deleted=0 LIMIT 2)"

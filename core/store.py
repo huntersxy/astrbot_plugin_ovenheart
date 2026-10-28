@@ -7,6 +7,7 @@ import hashlib
 import json
 import sqlite3
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from uuid import uuid4
 
@@ -20,11 +21,16 @@ from .settings import (
 
 
 class Store:
-    """Serialize writes; serve reply/Panel reads from consistent WAL snapshots."""
+    """Reuse one thread-owned writer; serve reads from independent WAL snapshots."""
 
     def __init__(self, path: Path):
         self.path = path
         self.lock = asyncio.Lock()
+        self._writer = ThreadPoolExecutor(
+            max_workers=1, thread_name_prefix="ovenheart-store"
+        )
+        self._connection = None
+        self._closed = False
 
     async def call(self, operation: str, *args):
         """Run one atomic operation in a worker thread.
@@ -39,18 +45,45 @@ class Store:
         if operation in {"guidance", "scope_profile"}:
             return await self.read(operation, *args)
         async with self.lock:
-            # Shield the worker so cancellation cannot release the lock mid-write.
-            task = asyncio.create_task(
-                asyncio.to_thread(self._transaction, operation, args)
-            )
+            if self._closed:
+                raise RuntimeError("Store is closed")
+            return await self._run_writer(self._transaction, operation, args)
+
+    async def _run_writer(self, operation, *args):
+        task = asyncio.get_running_loop().run_in_executor(self._writer, operation, *args)
+        try:
+            return await asyncio.shield(task)
+        except asyncio.CancelledError:
+            # Reload can cancel more than once. Keep ownership until SQLite
+            # finishes so another transaction or shutdown cannot overtake it.
+            while not task.done():
+                try:
+                    await asyncio.shield(task)
+                except asyncio.CancelledError:
+                    continue
+            task.result()
+            raise
+
+    async def close(self):
+        """Drain writes and close their connection on its owning thread."""
+        async with self.lock:
+            if self._closed:
+                return
+            self._closed = True
             try:
-                return await asyncio.shield(task)
-            except asyncio.CancelledError:
-                await task
-                raise
+                await self._run_writer(self._close_connection)
+            finally:
+                self._writer.shutdown(wait=False)
+
+    def _close_connection(self):
+        if self._connection is not None:
+            self._connection.close()
+            self._connection = None
 
     async def read(self, operation: str, *args):
         """Consistent WAL reads never queue behind the write lock."""
+        if self._closed:
+            raise RuntimeError("Store is closed")
         if operation not in {
             "state",
             "library",
@@ -120,7 +153,7 @@ class Store:
         return result
 
     def _transaction(self, operation: str, args: tuple):
-        """Open, commit or roll back, and close one database transaction.
+        """Commit or roll back one operation on the worker's reusable connection.
 
         Args:
             operation: Internal method name.
@@ -129,14 +162,12 @@ class Store:
         Returns:
             The database operation result.
         """
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        connection = sqlite3.connect(self.path, timeout=10)
-        connection.row_factory = sqlite3.Row
-        try:
-            with connection:
-                return getattr(self, operation)(connection, *args)
-        finally:
-            connection.close()
+        if self._connection is None:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            self._connection = sqlite3.connect(self.path, timeout=10)
+            self._connection.row_factory = sqlite3.Row
+        with self._connection:
+            return getattr(self, operation)(self._connection, *args)
 
     def initialize(self, db):
         """Create the current schema and release interrupted learning jobs."""
