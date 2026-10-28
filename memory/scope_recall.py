@@ -1,8 +1,30 @@
 """Federate native stores without copying memories or maintaining another index."""
 
 import asyncio
+import hashlib
+import json
 import sqlite3
 from contextlib import closing
+from types import SimpleNamespace
+
+
+def queue_feedback(room, scope, query, source, origin, response):
+    from ..vendor.maibot.amemorix import host
+    from ..vendor.maibot.amemorix.runtime.services.feedback_correction_service import (
+        MemoryFeedbackCorrectionService,
+    )
+    from ..vendor.maibot.amemorix.storage.metadata_store import MetadataStore
+    from .room_memory import NativeMemoryIntegration
+
+    metadata = MetadataStore(room.directory / scope / "metadata")
+    metadata.connect()
+    try:
+        identity = hashlib.sha256(json.dumps([scope, source, query, [h["hash"] for h in response["hits"]]]).encode()).hexdigest()
+        service = MemoryFeedbackCorrectionService(SimpleNamespace(metadata_store=metadata))
+        with host.bind(None, None, integration=NativeMemoryIntegration(room.plugin)):
+            return asyncio.run(service.enqueue_feedback_task(query_tool_id="native:" + identity, session_id=scope, structured_content=response | {"query":query,"chat_id":scope,"source_scope":origin}))
+    finally:
+        metadata.close()
 
 
 def contains(directory, scope, table, column, identity=None):
@@ -131,47 +153,40 @@ def ranked(rows, limit):
 
 
 async def read_all(room, keys, operation, args, event, source_scope):
-    from .memory_embedding import embedding_budget
-
     outputs = []
     # Keep hot runtimes useful across global scans; cold stores share the same
     # bounded pool and provider cache instead of each keeping another corpus.
     shared = keys[-1]
     keys = sorted(keys, key=lambda key: key not in room.rooms)
-    with embedding_budget(
-        max(0.1, room.plugin.settings["retrieval_timeout"] - 0.5)
-        if operation == "image_search"
-        else 1
-    ):
-        for key in keys:
-            if operation in {
-                "image_search",
-                "image_candidates",
-            } and not await asyncio.to_thread(
-                contains, room.directory, key, "image_assets", "asset_id"
-            ):
-                continue
-            if operation in {
-                "search",
-                "person_context",
-            } and not await asyncio.to_thread(
-                contains, room.directory, key, "paragraphs", "hash"
-            ):
-                continue
-            extra = [True] if operation == "search" else []
-            if operation == "image_search":
-                extra = [
-                    f"{key}:{source_scope}:{args[1]}:{args[2]}"
-                    if key == shared
-                    else f"{source_scope}:{args[1]}:{args[2]}"
-                ]
-            result = await room.call_storage(key, operation, *args, *extra, event=event)
-            if operation == "search":
-                result["results"] = [
-                    row | {"storage_scope": key} for row in result["results"]
-                ]
-                result["storage_scope"] = key
-            outputs.append(result)
+    for key in keys:
+        if operation in {
+            "image_search",
+            "image_candidates",
+        } and not await asyncio.to_thread(
+            contains, room.directory, key, "image_assets", "asset_id"
+        ):
+            continue
+        if operation in {
+            "search",
+            "person_context",
+        } and not await asyncio.to_thread(
+            contains, room.directory, key, "paragraphs", "hash"
+        ):
+            continue
+        extra = [True] if operation == "search" else []
+        if operation == "image_search":
+            extra = [
+                f"{key}:{source_scope}:{args[1]}:{args[2]}"
+                if key == shared
+                else f"{source_scope}:{args[1]}:{args[2]}"
+            ]
+        result = await room.call_storage(key, operation, *args, *extra, event=event)
+        if operation == "search":
+            result["results"] = [
+                row | {"storage_scope": key} for row in result["results"]
+            ]
+            result["storage_scope"] = key
+        outputs.append(result)
     if operation == "search":
         selected = ranked(
             [row for result in outputs for row in result["results"]], args[1]
@@ -187,14 +202,14 @@ async def read_all(room, keys, operation, args, event, source_scope):
             }
             hits = [row for row in packet["feedback"]["hits"] if row["hash"] in hashes]
             if hits and args[2]:
-                await room.call_storage(
+                await asyncio.to_thread(
+                    queue_feedback,
+                    room,
                     packet["storage_scope"],
-                    "queue_feedback",
                     args[0],
                     args[2],
                     args[3],
                     packet["feedback"] | {"hits": hits},
-                    event=event,
                 )
         return selected
     if operation == "person_context":

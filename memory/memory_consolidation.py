@@ -174,6 +174,8 @@ class MemoryConsolidation:
                         )
                         + "\nAstrBot原文来源校验：额外输出 evidence 数组，每项为 {source_id, quote}，source_id 取本轮消息方括号中的原生ID，quote 必须是该消息原文。非空摘要必须有证据；空增量 evidence=[]。本轮只提供文字素材，facts=[]。输出结构：\n"
                         + json.dumps(SUMMARY_SCHEMA, ensure_ascii=False)
+                        + "\n证据来源清单（source_id 必须逐字复制，quote 只能摘录对应 text 的连续原文）：\n"
+                        + json.dumps([{"source_id":m["source_id"],"text":m["text"]} for m in messages], ensure_ascii=False)
                     )
                 async with self.plugin.room_memory.model_window(scope):
                     phase = "summary_model" if is_summary else "episode_model"
