@@ -2434,6 +2434,9 @@ class PersonaPlugin(Star):
         plan = event.get_extra("ovenheart_decision")
         if plan and plan["scope"] != scope:
             plan = None
+        from .integrations.reply_delivery import bind_text_delivery
+
+        bind_text_delivery(event, req)
         await self.self_portrait.apply(event, persona, req)
         people = await self.person_memory.context(
             event, scope, persona, (plan or {}).get("messages", [])
