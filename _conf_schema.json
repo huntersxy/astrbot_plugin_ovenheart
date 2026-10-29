@@ -62,12 +62,12 @@
   "activation_mode": {
     "description": "新结果生效方式",
     "type": "string",
-    "default": "review",
+    "default": "auto",
     "options": [
       "review",
       "auto"
     ],
-    "hint": "review 为先审核后生效，auto 为高置信度自动生效。原生 Panel 中保存的设置优先。"
+    "hint": "默认 auto，高置信度且通过入库自检的新习惯自动生效；review 为先审核后生效。原生 Panel 中保存的设置优先。"
   },
   "auto_confidence": {
     "description": "自动生效最低置信度",
@@ -373,13 +373,13 @@
   "participation_mode": {
     "description": "自主参与方式",
     "type": "string",
-    "default": "off",
+    "default": "auto",
     "options": [
       "off",
       "observe",
       "auto"
     ],
-    "hint": "off 关闭；observe 仅记录决策；auto 自主参与群聊。私聊、命令和直接唤醒不受影响。"
+    "hint": "默认 auto，按参与节奏自主加入群聊；observe 仅记录决策，off 关闭自主参与。私聊、命令和直接唤醒不受影响。"
   },
   "participation_min_messages": {
     "description": "参与决策最少新消息",

@@ -19,13 +19,15 @@ from astrbot.core.agent.tool import FunctionTool, ToolSet
 from ..learning import build_guidance
 from ..memory.person_memory import FACTS_SCHEMA
 from ..memory.room_memory import CHANGE_SCHEMAS, MEMORY_SCHEMA
+from ..prompts import CONVERSATION_STYLE_RULE
 from ..runtime_diagnostics import await_path
 from ..settings import SHARED_SCOPE
 from .native_context import native_time
 from .participation import event_source, offered_messages, parse_plan, planner_message
 from .preparation import context_reads
 
-PLANNER_SYSTEM = """你正在以当前人格参加真实聊天。你负责持续规划，正文由 reply 工具的回复器生成。
+PLANNER_SYSTEM = (
+    """你正在以当前人格参加真实聊天。你负责持续规划，正文由 reply 工具的回复器生成。
 根据真实消息、身份、习惯和已获准访问的记忆判断自己为什么要说话，而非每句都答。
 通过工具行动：reply 提交具体回复策略；search_memory 查询缺失的背景；query_person_profile 查看真实对象的画像和事实来源；remember_person_fact 记录或更正此人自己的明确陈述；wait 等待后续；stop 结束参与。
 人物事实只能引用目标作者自己的原文；不把引用、转述、玩笑和推测变成稳定了解。明确更正时先查当前事实，并引用对应 claim_id；新事实写入不会自动发群消息。
@@ -57,6 +59,8 @@ correct_memory 更正已查到的本插件通用段落，forget_memory 从召回
 undo_memory_change 撤销当前请求作者在当前会话、人格中的一次更正或遗忘；change_id 不填则撤销此作者最近一条可撤销操作。它不能恢复其他人的操作，也不改变用户提供的聊天原文。
 若恢复返回 metadata_restored=true、success=false，文字记录已恢复但派生索引仍待完成；先 search_memory 核对当前召回，再按实际结果说明。不能把索引待完成等同于完全查不到，也不声称已全部恢复。
 """
+    + CONVERSATION_STYLE_RULE
+)
 
 EXPRESSION_SCHEMA = {
     "type": "object",

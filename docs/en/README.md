@@ -14,10 +14,12 @@ Open **Persona Workshop** on the plugin card. It uses AstrBot authentication and
 
 ## Use
 
-- Set the persona supplement and learning scope. Learned habits require approval by default.
+- Set the persona supplement and learning scope. New habits activate automatically by default after passing AI review and meeting the confidence threshold; other candidates remain available for manual review.
 - Configure existing AstrBot provider IDs for text embeddings and, optionally, image embeddings.
 - Review sourced facts, shared experiences, images and corrections in the Memory tab.
-- Enable observation before automatic group participation. Automatic participation is off by default.
+- Automatic group participation is on by default. Adjust its frequency or select observation-only or off. Existing installations keep their saved settings.
+
+The learning library opens with all statuses visible. Planning and reply generation share the same conversation guidance: respond from the configured persona, continue the stance established in recent messages, and adjust when new information arrives. Brief reactions, banter and disagreement are valid responses; advice and follow-up questions are optional. Familiarity and relationship changes need real interaction history, while explicit tasks still receive complete answers.
 
 The dedicated **Emoji** tab includes a gallery, uploads/imports, and selection settings. Upload images with usage descriptions or copy existing meme_manager packs. Public library assets are shared with authorized chats; conversation candidates remain scoped. Native image storage handles content deduplication and preserves GIF originals. The planner can choose candidates by caption without another emotion-model call. Text and selected media are coordinated as one reply; image-only requests can send directly without generating filler text. Optional visual selection costs an additional model call. OvenHeart skips duplicate meme_manager selection for its own planner replies, while leaving its source and configuration intact.
 
