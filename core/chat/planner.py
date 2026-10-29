@@ -467,38 +467,117 @@ class PlannerSession:
         await self.actions.put(plan)
         try:
             result = (
-                await asyncio.wait_for(
-                    self.pending, self.settings["planner_reply_timeout"]
-                )
+                await self.wait_reply_receipt()
                 if plan["action"] == "reply"
                 else await self.pending
             )
-        except asyncio.TimeoutError:
-            owner_ref = self.event.get_extra("ovenheart_native_task")
-            native = owner_ref() if callable(owner_ref) else None
-            waiting = (
-                " -> ".join(await_path(native.get_coro())) if native else "unknown"
-            )
-            logger.warning(
-                "原生回复回执超过 %s 秒，取消本轮且不自动重发；等待位置=%s",
-                self.settings["planner_reply_timeout"],
-                waiting,
-            )
-            self.event.set_extra("ovenheart_planner_status", "reply_timeout")
-            self.event.set_extra("agent_stop_requested", True)
-            self.event.stop_event()
-            if (
-                native is not None
-                and native is not asyncio.current_task()
-                and not native.done()
-            ):
-                native.cancel()
-            self.owner.forget(self.scope, self)
-            raise
         except asyncio.CancelledError:
             self.owner.forget(self.scope, self)
             raise
         return json.dumps(result, ensure_ascii=False)
+
+    def reply_dispatched(self):
+        """Whether this turn already handed text or media to the platform.
+
+        Per-reply segment hooks and receipts can precede ``after_reply``.
+        The host's ``_has_send_oper`` stays true across replies on the same
+        event, so it cannot establish whether this reply has been sent.
+        """
+        event = self.event
+        segments = event.get_extra("ovenheart_actual_text_segments") or []
+        receipt = event.get_extra("ovenheart_planner_receipt") or {}
+        return bool(segments) or bool(receipt.get("send_hook"))
+
+    def settle_dispatched_reply(self):
+        """Release the planner after a late receipt without a second send."""
+        event = self.event
+        segments = event.get_extra("ovenheart_actual_text_segments") or []
+        previous = event.get_extra("ovenheart_planner_receipt") or {}
+        text = "\n".join(str(part) for part in segments)[:4000]
+        receipt = {
+            **previous,
+            "send_hook": True,
+            "reply_text": text or previous.get("reply_text", ""),
+            "partial_text": bool(event.get_extra("ovenheart_text_delivery_incomplete")),
+            "delivery_uncertain": True,
+            "delivery_status": "文字已进入发送，回执超过等待预算；不要重发已有片段。",
+            "target_sequence": (self.action or {}).get("target_sequence", 0),
+        }
+        event.set_extra("ovenheart_planner_receipt", receipt)
+        event.set_extra("ovenheart_planner_status", "reply_sent_receipt_timeout")
+        logger.warning(
+            "原生回复已进入发送，回执超过 %s 秒；不取消在途发送，也不自动重发",
+            self.settings["planner_reply_timeout"],
+        )
+        if self.pending and not self.pending.done():
+            self.acknowledge(receipt)
+        return self.pending.result()
+
+    def abort_unsent_reply(self):
+        """Cancel a reply that never reached the platform after a second wait."""
+        owner_ref = self.event.get_extra("ovenheart_native_task")
+        native = owner_ref() if callable(owner_ref) else None
+        waiting = " -> ".join(await_path(native.get_coro())) if native else "unknown"
+        logger.warning(
+            "原生回复回执超过 %s 秒，取消本轮且不自动重发；等待位置=%s",
+            self.settings["planner_reply_timeout"],
+            waiting,
+        )
+        self.event.set_extra("ovenheart_planner_status", "reply_timeout")
+        self.event.set_extra("agent_stop_requested", True)
+        self.event.stop_event()
+        if (
+            native is not None
+            and native is not asyncio.current_task()
+            and not native.done()
+        ):
+            native.cancel()
+        self.owner.forget(self.scope, self)
+
+    async def wait_reply_receipt(self):
+        """Wait for the native reply, once more if the first budget only expires.
+
+        A slow model is not the same as a lost send. When nothing has been
+        handed to the platform, wait one more ``planner_reply_timeout`` before
+        cancelling. When text or media already entered the send path, never
+        cancel that task and never synthesize another copy.
+        """
+        timeout = self.settings["planner_reply_timeout"]
+
+        async def wait_once():
+            # wait_for cancels its argument. Shield the receipt so a slow
+            # model can still acknowledge it on the next window.
+            return await asyncio.wait_for(asyncio.shield(self.pending), timeout)
+
+        try:
+            return await wait_once()
+        except asyncio.TimeoutError:
+            pass
+        if self.reply_dispatched():
+            self.event.set_extra("ovenheart_planner_status", "reply_receipt_slow")
+            logger.warning(
+                "原生回复已进入发送，回执超过 %s 秒；不取消在途发送，再等一次回执",
+                timeout,
+            )
+            try:
+                return await wait_once()
+            except asyncio.TimeoutError:
+                if self.pending.done():
+                    return self.pending.result()
+                return self.settle_dispatched_reply()
+        logger.warning(
+            "原生回复尚未发送，回执超过 %s 秒；再等一次后仍无发送才取消",
+            timeout,
+        )
+        try:
+            return await wait_once()
+        except asyncio.TimeoutError:
+            if self.reply_dispatched():
+                if self.pending.done():
+                    return self.pending.result()
+                return self.settle_dispatched_reply()
+            self.abort_unsent_reply()
+            raise
 
     async def check_current(self):
         if (
@@ -715,7 +794,11 @@ class PlannerSession:
                 ),
                 tools=ToolSet(tools),
                 max_steps=16,
-                tool_call_timeout=600,
+                # Let both receipt windows finish before the host cancels the
+                # tool, with time left to settle or abort the native reply.
+                tool_call_timeout=max(
+                    600, 2 * self.settings["planner_reply_timeout"] + 30
+                ),
             )
             if response.role == "err":
                 raise RuntimeError("Planner provider returned an error response")
