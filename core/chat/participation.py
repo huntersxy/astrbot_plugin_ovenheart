@@ -267,11 +267,13 @@ class ParticipationController:
             ).hexdigest()[:24]
         )
 
-    def notice(self, event):
+    def notice(self, event, *, queued=False):
         """Interrupt older group work after the caller verified host permissions.
 
         Args:
             event: Real human event; its native arrival time orders delayed captures.
+            queued: A direct turn released after waiting for an earlier member;
+                newer background arrivals must not discard this admitted request.
 
         Returns:
             Shared interruption state without retaining another scope's chat text.
@@ -290,7 +292,17 @@ class ParticipationController:
             )
         )
         self.rhythm.observe(key, source, event.created_at, forced=direct)
-        if previous and previous["arrival"] > event.created_at:
+        if (
+            direct
+            and self.plugin.settings["planner_mode"] == "maibot"
+            and self.plugin.settings["apply_enabled"]
+            and not event.is_private_chat()
+            and self.plugin.direct_priority.predecessor(event)
+        ):
+            # Capture still records queued input, but cannot revoke the member
+            # whose direct reply currently owns this room.
+            return previous
+        if previous and previous["arrival"] > event.created_at and not queued:
             return previous
         if direct:
             self.planner.interrupt_direct(key, event)
@@ -884,7 +896,7 @@ class ParticipationController:
                     plan["reason"] = "连续接话：" + plan["reason"][:235]
                 if (
                     changed.is_set()
-                    or (not batch and window["sequence"] != sequence)
+                    or (not direct and not batch and window["sequence"] != sequence)
                     or (not direct and plugin.pending_direct(scope))
                     or not await plugin.permitted(event)
                 ):

@@ -1137,7 +1137,23 @@ class PersonaPlugin(Star):
             if await self.merge_empty_direct(event, scope, cid):
                 event.call_llm = True
                 return
-        self.participation.notice(event)
+        queued = False
+        if (
+            self.settings["planner_mode"] == "maibot"
+            and self.settings["apply_enabled"]
+            and not event.is_private_chat()
+        ):
+            queued = await self.direct_priority.wait(event)
+            if queued and not await self.permitted(event):
+                event.stop_event()
+                return
+            if (
+                queued
+                and event.get_extra("ovenheart_mention")
+                and not await self.check_mention(event)
+            ):
+                return
+        self.participation.notice(event, queued=queued)
         for previous in self.direct_priority.preempt(event):
             self.track(self.cancel_for_direct(previous))
         if event.get_extra("ovenheart_mention"):
@@ -4433,7 +4449,7 @@ class PersonaPlugin(Star):
         self.outgoing_media.disconnect()
         self.group_context.disconnect()
         self.participation.close()
-        self.direct_priority.entries.clear()
+        self.direct_priority.close()
         self.ready = False
         async with self.settings_lock:
             pass

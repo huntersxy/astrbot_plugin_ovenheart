@@ -19,20 +19,60 @@ class DirectPriority:
         previous = self.entries.get(key)
         if previous and previous["event"]() is event and previous["task"]() is task:
             previous["direct"] = direct
+            if not direct:
+                previous["released"].set()
             return
         entry = {
             "event": weakref.ref(event),
             "task": weakref.ref(task),
             "room": self.plugin.participation.room_key(event),
             "direct": direct,
+            "released": asyncio.Event(),
         }
         self.entries[key] = entry
 
         def finished(_):
+            entry["released"].set()
             if self.entries.get(key) is entry:
                 self.entries.pop(key, None)
 
         task.add_done_callback(finished)
+
+    def predecessor(self, event):
+        """Find an earlier unanswered direct turn from another member."""
+        room = self.plugin.participation.room_key(event)
+        for key, entry in list(self.entries.items()):
+            owner, task = entry["event"](), entry["task"]()
+            if owner is None or task is None or task.done():
+                entry["released"].set()
+                self.entries.pop(key, None)
+                continue
+            if owner is event:
+                break
+            if (
+                entry["direct"]
+                and entry["room"] == room
+                and owner.get_sender_id() != event.get_sender_id()
+                and not owner.is_stopped()
+            ):
+                return entry
+        return None
+
+    async def wait(self, event):
+        """Keep the native event alive until earlier direct work has finished."""
+        self.watch(event, direct=True)
+        queued = False
+        while previous := self.predecessor(event):
+            queued = True
+            await previous["released"].wait()
+        if self.plugin.closing:
+            raise asyncio.CancelledError
+        return queued
+
+    def close(self):
+        for entry in self.entries.values():
+            entry["released"].set()
+        self.entries.clear()
 
     def occupied(self, event):
         room = self.plugin.participation.room_key(event)
