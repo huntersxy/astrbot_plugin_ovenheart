@@ -362,6 +362,7 @@ class PageAPI:
                 request.query.get("status", "pending"),
                 int(request.query.get("offset", "0")),
                 request.query.get("review", "all"),
+                request.query.get("query", ""),
             )
             return {"status": "ok", "data": result}
         except (ValueError, TypeError):

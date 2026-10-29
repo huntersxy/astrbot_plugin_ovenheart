@@ -7,7 +7,7 @@ const date = value => new Date(value * 1000).toLocaleString("zh-CN", {month:"2-d
 const reviewGroups = {passed:"自检通过", flagged:"自检存疑", unknown:"无匹配自检"};
 const reviewIssues = {learning_target:"学习对象混淆", evidence:"证据不足", scope:"适用范围或前提", identity:"身份或个人事实", merge:"合并不相容", delivery:"投递或工具要求", other:"其他问题"};
 let settingsSection = "learning", memorySection = "core";
-let libraryScope = "all", libraryOffset = 0, reviewFilter = "all";
+let libraryScope = "all", libraryOffset = 0, reviewFilter = "all", libraryQuery = "", librarySearchDraft = "";
 const librarySelection = new Map();
 const libraryPositions = new Map(), historyDetails = new Map();
 let libraryMobileDetail = false, libraryPageScroll = 0, libraryFiltersOpen = false;
@@ -44,7 +44,7 @@ const readRequests = new Map();
 const viewCache = new Map();
 const localOperations = new Set();
 let loadVersion = 0, cacheEpoch = 0, editVersion = 0, pollTimer, pollErrors = 0, toolsCache;
-const viewKey = () => JSON.stringify([selectedScope, tab, ...(tab === "library" ? [libraryScope, category, status, libraryOffset, reviewFilter] : tab === "history" ? [historySection, historyStatus, historyOffset, historyAnchor] : [])]);
+const viewKey = () => JSON.stringify([selectedScope, tab, ...(tab === "library" ? [libraryScope, category, status, libraryOffset, reviewFilter, libraryQuery] : tab === "history" ? [historySection, historyStatus, historyOffset, historyAnchor] : [])]);
 const viewName = () => ["memory", "emojis"].includes(tab) ? "settings" : tab === "portrait" ? "profile" : ["library", "prompts", "history"].includes(tab) ? "summary" : tab;
 
 function deadline(promise, milliseconds, message) {
@@ -115,7 +115,7 @@ async function load(renderContent = true) {
   const previousSettingsRevision = data?.settings_revision;
   const previousPromptsRevision = data?.prompts?.revision;
   const detail = renderContent && pageAtStart === "library"
-    ? api("library", undefined, {scope:libraryScope, kind:category, status, offset:libraryOffset, review:reviewFilter})
+    ? api("library", undefined, {scope:libraryScope, kind:category, status, offset:libraryOffset, review:reviewFilter, query:libraryQuery})
     : renderContent && pageAtStart === "history" && selectedScope ? api("history", undefined, {scope:selectedScope, section:historySection, status:historyStatus, offset:historyOffset, anchor:historyAnchor})
     : renderContent && pageAtStart === "prompts" ? api("prompts") : Promise.resolve(null);
   const current = () => version === loadVersion && key === viewKey();
@@ -263,7 +263,7 @@ function renderSelfPortrait() {
   };
 }
 
-function libraryPositionKey() { return JSON.stringify([libraryScope, category, status, libraryOffset, reviewFilter]); }
+function libraryPositionKey() { return JSON.stringify([libraryScope, category, status, libraryOffset, reviewFilter, libraryQuery]); }
 function rememberLibraryPosition() {
   const list = $("#library-list"), detail = $("#library-detail");
   if (!list?.dataset.positionKey) return;
@@ -296,17 +296,42 @@ function renderLibrary() {
     if (!traits.some(t => t.id === id && t.status === "pending" && t.updated === entry.updated)) librarySelection.delete(id);
   }
   const counts = library?.review_counts || {};
+  const searchForm = `<form id="library-search" class="library-search" role="search" aria-label="搜索学习库">
+    <div class="filter-field"><label for="library-query">搜索学习条目</label><input id="library-query" type="search" maxlength="200" autocomplete="off" placeholder="情境、习惯内容或学习原文" value="${escape(librarySearchDraft)}" aria-describedby="library-search-help"></div>
+    <button type="submit" class="tonal">搜索</button><button type="button" id="library-clear" ${librarySearchDraft || libraryQuery ? "" : "disabled"}>清空</button>
+    <small id="library-search-help">在当前会话、类别与状态筛选范围内搜索全部条目。</small></form>`;
+  const noResults = libraryQuery ? empty("未找到匹配的学习条目", "换一个关键词、清空搜索，或调整下方的会话、类别与状态筛选。") : empty(status === "pending" ? "这里等待下一次发现" : "还没有这类学习结果", "素材积累后会自动批量学习，也可以点击「开始学习」。也可能没有符合当前筛选的条目。可切换自检分组或审核状态查看。");
   const summary = `<header class="library-heading"><div><h2>学习库</h2><p class="muted">筛选、查看，再决定哪些习惯生效。</p></div><details><summary>审核说明</summary><p>提取自评不等于自检结论；先查看原文和使用条件。批量操作只处理勾选的本页待审核条目，人工决定可以覆盖模型判断。</p></details></header>`;
   const batchControls = `<div class="batch-review" aria-label="批量审核"><details class="batch-selection-tools"><summary>批量选择</summary><div class="actions"><button type="button" id="select-page">勾选本页待审</button><button type="button" id="select-passed">只选本页自检通过</button><button type="button" id="clear-selection">清空勾选</button></div></details><div class="actions"><span id="selected-count" role="status"></span><button type="button" class="tonal" data-batch-review="active">批准勾选</button><button type="button" class="danger" data-batch-review="rejected">拒绝勾选</button></div></div>`;
   const pagination = library && library.total > 100 ? `<div class="actions library-pages"><button id="library-prev" ${library.offset === 0 ? "disabled" : ""}>上一页</button><span class="muted">${library.offset / 100 + 1} / ${Math.ceil(library.total / 100)} 页</span><button id="library-next" ${library.offset + 100 >= library.total ? "disabled" : ""}>下一页</button></div>` : "";
-  $("#content").innerHTML = `${summary}<div class="library-filterbar" id="library-filterbar" data-open="${libraryFiltersOpen}"><button type="button" id="library-filter-toggle" aria-controls="library-filters" aria-expanded="${libraryFiltersOpen}">筛选条目<span>${library?.total ?? traits.length} 条结果</span></button><div class="filter-row" id="library-filters"><div class="filter-field"><label for="library-scope">会话</label><select id="library-scope"><option value="all">全部会话</option>${([...(data.shared_scope ? [data.shared_scope] : []), ...(data.scopes || [])]).map(s => `<option value="${escape(s.id)}" ${libraryScope === s.id ? "selected" : ""}>${escape(s.label)} / ${escape(s.persona === "[%None]" ? "未设置人格" : s.persona)}</option>`).join("")}</select></div><div class="filter-field"><label for="kind-filter">类别</label><select id="kind-filter"><option value="all">全部类别</option>${Object.entries(kinds).map(([value, name]) => `<option value="${value}" ${category === value ? "selected" : ""}>${name}</option>`).join("")}</select></div><div class="filter-field"><label for="status-filter">状态</label><select id="status-filter">${Object.entries({pending:"待审核", active:"已生效", disabled:"已停用", rejected:"已拒绝", all:"全部状态"}).map(([value, name]) => `<option value="${value}" ${status === value ? "selected" : ""}>${name}</option>`).join("")}</select></div><div class="filter-field"><label for="review-filter">自检分组</label><select id="review-filter"><option value="all">全部自检结论</option>${Object.entries(reviewGroups).map(([key, label]) => `<option value="${key}" ${reviewFilter === key ? "selected" : ""}>${label}（${counts[key] ?? 0}）</option>`).join("")}${Object.entries(reviewIssues).map(([key, label]) => `<option value="${key}" ${reviewFilter === key ? "selected" : ""}>存疑：${label}（${library?.issue_counts?.[key] ?? 0}）</option>`).join("")}</select></div><span class="muted">${library?.total ?? traits.length} 条结果</span></div></div>${batchControls}
-    ${traits.length ? `<div class="library" id="library-workspace" data-detail="${libraryMobileDetail}"><div class="library-list-pane"><div class="trait-list" id="library-list" tabindex="0" aria-label="学习条目，可独立滚动">${traits.map(t => `<div class="trait-choice">${t.status === "pending" ? `<label class="trait-check"><input type="checkbox" data-select-trait="${t.id}" aria-label="勾选：${escape(t.situation)}" ${librarySelection.has(t.id) ? "checked" : ""}></label>` : ""}<button type="button" class="trait-row" data-trait="${t.id}" aria-pressed="${selectedTrait === t.id}"><span class="row-meta"><span>${kinds[t.kind]}</span><span class="badge ${t.kind === "jargon" && data.shared_scope && t.scope === data.shared_scope.id ? "" : t.status}">${t.kind === "jargon" && data.shared_scope && t.scope === data.shared_scope.id ? "仅保留" : statuses[t.status]}</span></span><small class="trait-owner">${escape(t.label || data.scope?.label || "")} / ${escape((t.persona || data.scope?.persona) === "[%None]" ? "未设置人格" : (t.persona || data.scope?.persona || ""))}</small><strong>${escape(t.situation)}</strong><p>${escape(t.content)}</p><span class="row-meta">${t.evidence_count || t.evidence.length} 条证据 / ${t.support_count || 1} 批 · 提取自评 ${Math.round(t.confidence * 100)}%</span><small class="review-verdict">${escape(reviewLabel(t))}${t.manual ? " · 人工已决定" : ""}</small></button></div>`).join("")}</div>${pagination}</div><article class="detail" id="library-detail" tabindex="-1" aria-label="所选条目详情"><button id="library-back" type="button">返回条目列表</button><h2>${kinds[trait.kind]}</h2><p class="muted">所属会话：${escape(trait.label || data.scope?.label || "")} / ${escape((trait.persona || data.scope?.persona) === "[%None]" ? "未设置人格" : (trait.persona || data.scope?.persona || ""))}</p>${archived ? '<p class="muted" role="note">旧共用词汇的来源尚未确定，条目与证据完整保留，不参与回复。请在来源会话重新学习后审核。</p>' : trait.kind === "jargon" ? '<p class="muted" role="note">群聊词汇始终按来源会话与人格隔离，不受「启用会话隔离」开关影响。</p>' : ""}${reviewHint}<form id="trait-form">${expressionExamples}${field("situation", "适用情境", trait.situation, "只在适合的情境里使用，不必每次重复。", {maxlength:160})}${field("content", "习惯内容", trait.content, "你可以在生效前调整表达；编辑不会自动改变审核状态。", {maxlength:350})}<button type="submit">保存编辑</button></form><div class="actions">${!archived && trait.status !== "active" ? '<button class="primary" data-review="active">批准生效</button>' : trait.status === "active" ? '<button data-review="disabled">停用这条</button>' : ""}${trait.status === "pending" ? '<button class="danger" data-review="rejected">拒绝学习</button>' : '<button data-review="pending">移回待审核</button>'}</div><section class="evidence"><h3>积累与应用</h3><p class="muted">${trait.support_count || 1} 批独立素材，累计 ${trait.evidence_count || trait.evidence.length} 条证据。引用 ${trait.use_count || 0} 次；引用次数不代表模型采用或消息送达。${trait.manual ? " 人工决定已锁定，后续学习只补充证据。" : ""}</p><p class="muted">当前评价：${trait.rating === 1 ? "更合适" : trait.rating === -1 ? "不太合适" : "尚未评价"}</p><div class="actions" aria-label="习惯效果评价">${[[1,"更合适"],[-1,"不太合适"],[0,"清除评价"]].map(([value,label]) => `<button type="button" data-feedback="${value}" aria-pressed="${(trait.rating || 0) === value}">${label}</button>`).join("")}</div><p class="muted">评价调整后续排序；不合适的习惯也可直接停用。</p></section><details class="evidence library-evidence"><summary>最近的学习来源（${trait.evidence.length} 条）</summary><p class="muted">最多展示最近 32 条摘录，累计证据数保留。</p>${trait.evidence.map(e => `<blockquote><p>${escape(e.text)}</p><small>${e.label ? `${escape(e.label)} / ${escape(e.persona || "")} · ` : ""}${escape(e.sender)} · ${date(e.created)}</small></blockquote>`).join("")}</details></article></div>` : empty(status === "pending" ? "这里等待下一次发现" : "还没有这类学习结果", "素材积累后会自动批量学习，也可以点击「开始学习」。也可能没有符合当前筛选的条目。可切换自检分组或审核状态查看。")}`;
+  $("#content").innerHTML = `${summary}${searchForm}<div class="library-filterbar" id="library-filterbar" data-open="${libraryFiltersOpen}"><button type="button" id="library-filter-toggle" aria-controls="library-filters" aria-expanded="${libraryFiltersOpen}">筛选条目<span>${library?.total ?? traits.length} 条结果</span></button><div class="filter-row" id="library-filters"><div class="filter-field"><label for="library-scope">会话</label><select id="library-scope"><option value="all">全部会话</option>${([...(data.shared_scope ? [data.shared_scope] : []), ...(data.scopes || [])]).map(s => `<option value="${escape(s.id)}" ${libraryScope === s.id ? "selected" : ""}>${escape(s.label)} / ${escape(s.persona === "[%None]" ? "未设置人格" : s.persona)}</option>`).join("")}</select></div><div class="filter-field"><label for="kind-filter">类别</label><select id="kind-filter"><option value="all">全部类别</option>${Object.entries(kinds).map(([value, name]) => `<option value="${value}" ${category === value ? "selected" : ""}>${name}</option>`).join("")}</select></div><div class="filter-field"><label for="status-filter">状态</label><select id="status-filter">${Object.entries({pending:"待审核", active:"已生效", disabled:"已停用", rejected:"已拒绝", all:"全部状态"}).map(([value, name]) => `<option value="${value}" ${status === value ? "selected" : ""}>${name}</option>`).join("")}</select></div><div class="filter-field"><label for="review-filter">自检分组</label><select id="review-filter"><option value="all">全部自检结论</option>${Object.entries(reviewGroups).map(([key, label]) => `<option value="${key}" ${reviewFilter === key ? "selected" : ""}>${label}（${counts[key] ?? 0}）</option>`).join("")}${Object.entries(reviewIssues).map(([key, label]) => `<option value="${key}" ${reviewFilter === key ? "selected" : ""}>存疑：${label}（${library?.issue_counts?.[key] ?? 0}）</option>`).join("")}</select></div><span class="muted">${library?.total ?? traits.length} 条结果</span></div></div>${batchControls}
+    ${traits.length ? `<div class="library" id="library-workspace" data-detail="${libraryMobileDetail}"><div class="library-list-pane"><div class="trait-list" id="library-list" tabindex="0" aria-label="学习条目，可独立滚动">${traits.map(t => `<div class="trait-choice">${t.status === "pending" ? `<label class="trait-check"><input type="checkbox" data-select-trait="${t.id}" aria-label="勾选：${escape(t.situation)}" ${librarySelection.has(t.id) ? "checked" : ""}></label>` : ""}<button type="button" class="trait-row" data-trait="${t.id}" aria-pressed="${selectedTrait === t.id}"><span class="row-meta"><span>${kinds[t.kind]}</span><span class="badge ${t.kind === "jargon" && data.shared_scope && t.scope === data.shared_scope.id ? "" : t.status}">${t.kind === "jargon" && data.shared_scope && t.scope === data.shared_scope.id ? "仅保留" : statuses[t.status]}</span></span><small class="trait-owner">${escape(t.label || data.scope?.label || "")} / ${escape((t.persona || data.scope?.persona) === "[%None]" ? "未设置人格" : (t.persona || data.scope?.persona || ""))}</small><strong>${escape(t.situation)}</strong><p>${escape(t.content)}</p><span class="row-meta">${t.evidence_count || t.evidence.length} 条证据 / ${t.support_count || 1} 批 · 提取自评 ${Math.round(t.confidence * 100)}%</span><small class="review-verdict">${escape(reviewLabel(t))}${t.manual ? " · 人工已决定" : ""}</small></button></div>`).join("")}</div>${pagination}</div><article class="detail" id="library-detail" tabindex="-1" aria-label="所选条目详情"><button id="library-back" type="button">返回条目列表</button><h2>${kinds[trait.kind]}</h2><p class="muted">所属会话：${escape(trait.label || data.scope?.label || "")} / ${escape((trait.persona || data.scope?.persona) === "[%None]" ? "未设置人格" : (trait.persona || data.scope?.persona || ""))}</p>${archived ? '<p class="muted" role="note">旧共用词汇的来源尚未确定，条目与证据完整保留，不参与回复。请在来源会话重新学习后审核。</p>' : trait.kind === "jargon" ? '<p class="muted" role="note">群聊词汇始终按来源会话与人格隔离，不受「启用会话隔离」开关影响。</p>' : ""}${reviewHint}<form id="trait-form">${expressionExamples}${field("situation", "适用情境", trait.situation, "只在适合的情境里使用，不必每次重复。", {maxlength:160})}${field("content", "习惯内容", trait.content, "你可以在生效前调整表达；编辑不会自动改变审核状态。", {maxlength:350})}<button type="submit">保存编辑</button></form><div class="actions">${!archived && trait.status !== "active" ? '<button class="primary" data-review="active">批准生效</button>' : trait.status === "active" ? '<button data-review="disabled">停用这条</button>' : ""}${trait.status === "pending" ? '<button class="danger" data-review="rejected">拒绝学习</button>' : '<button data-review="pending">移回待审核</button>'}</div><section class="evidence"><h3>积累与应用</h3><p class="muted">${trait.support_count || 1} 批独立素材，累计 ${trait.evidence_count || trait.evidence.length} 条证据。引用 ${trait.use_count || 0} 次；引用次数不代表模型采用或消息送达。${trait.manual ? " 人工决定已锁定，后续学习只补充证据。" : ""}</p><p class="muted">当前评价：${trait.rating === 1 ? "更合适" : trait.rating === -1 ? "不太合适" : "尚未评价"}</p><div class="actions" aria-label="习惯效果评价">${[[1,"更合适"],[-1,"不太合适"],[0,"清除评价"]].map(([value,label]) => `<button type="button" data-feedback="${value}" aria-pressed="${(trait.rating || 0) === value}">${label}</button>`).join("")}</div><p class="muted">评价调整后续排序；不合适的习惯也可直接停用。</p></section><details class="evidence library-evidence"><summary>最近的学习来源（${trait.evidence.length} 条）</summary><p class="muted">最多展示最近 32 条摘录，累计证据数保留。</p>${trait.evidence.map(e => `<blockquote><p>${escape(e.text)}</p><small>${e.label ? `${escape(e.label)} / ${escape(e.persona || "")} · ` : ""}${escape(e.sender)} · ${date(e.created)}</small></blockquote>`).join("")}</details></article></div>` : noResults}`;
   $("#library-filter-toggle").onclick = () => {
     libraryFiltersOpen = !libraryFiltersOpen;
     $("#library-filterbar").dataset.open = String(libraryFiltersOpen);
     $("#library-filter-toggle").setAttribute?.("aria-expanded", String(libraryFiltersOpen));
   };
   $("#library-scope").value = libraryScope;
+  const search = async value => {
+    const next = value.trim();
+    if (next === libraryQuery) { librarySearchDraft = next; $("#library-query").value = next; $("#library-clear").disabled = !next; return; }
+    if (dirty && !await confirmAction("搜索会放弃未保存的编辑，继续？")) return;
+    const form = $("#library-search"), submit = form.querySelector("button[type=submit]");
+    form.setAttribute("aria-busy", "true"); submit.disabled = true; submit.textContent = "搜索中…";
+    try {
+      await readView(async () => {
+        const previous = [libraryQuery, libraryOffset, libraryMobileDetail];
+        dirty = false; libraryQuery = librarySearchDraft = next; libraryOffset = 0; libraryMobileDetail = false;
+        try { await load(); }
+        catch (error) { [libraryQuery, libraryOffset, libraryMobileDetail] = previous; librarySearchDraft = libraryQuery; renderLibrary(); throw error; }
+      });
+    } finally {
+      if (form.isConnected) { form.removeAttribute("aria-busy"); submit.disabled = false; submit.textContent = "搜索"; }
+    }
+  };
+  $("#library-search").onsubmit = event => { event.preventDefault(); return search($("#library-query").value); };
+  $("#library-clear").onclick = () => search("");
+  $("#library-query").oninput = event => { librarySearchDraft = event.target.value; $("#library-clear").disabled = !librarySearchDraft && !libraryQuery; };
   for (const [selector, current] of [["#library-scope", libraryScope], ["#kind-filter", category], ["#status-filter", status], ["#review-filter", reviewFilter]]) {
     $(selector).onchange = async event => {
       const next = event.target.value; event.target.value = current;
@@ -794,7 +819,7 @@ async function mutate(action, payload = {}, scope = selectedScope, settingsRevis
 }
 
 function markDirty(event) {
-  if (event.target.id !== "tool-search" && event.target.closest("form") && !["preview-form", "memory-search"].includes(event.target.closest("form").id)) { dirty = true; editVersion++; }
+  if (event.target.id !== "tool-search" && event.target.closest("form") && !["preview-form", "memory-search", "library-search"].includes(event.target.closest("form").id)) { dirty = true; editVersion++; }
 }
 $("#content").addEventListener("input", markDirty);
 $("#content").addEventListener("change", markDirty);
@@ -836,7 +861,7 @@ function schedulePoll(delay) {
     if (pending || polling || document.hidden) { schedulePoll(); return; }
     polling = true;
     try {
-      await load(!data || !dirty && (tab === "library" || tab === "history" && !historyOffset && !historyOpenId));
+      await load(!data || !dirty && (tab === "library" && document.activeElement?.id !== "library-query" || tab === "history" && !historyOffset && !historyOpenId));
       pollErrors = 0;
     } catch (error) { pollErrors = Math.min(2, pollErrors + 1); notify(error.message || "连接已中断，请刷新。", true); }
     finally { polling = false; schedulePoll(); }

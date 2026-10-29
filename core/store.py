@@ -884,7 +884,7 @@ class Store:
         return result
 
     def library(
-        self, db, scope="all", kind="all", status="pending", offset=0, review="all"
+        self, db, scope="all", kind="all", status="pending", offset=0, review="all", query=""
     ):
         """Read a paginated library with independent extraction and review signals.
 
@@ -895,6 +895,7 @@ class Store:
             status: Activation status, independent of review verdict.
             offset: Zero-based page offset.
             review: Review verdict or concern category filter.
+            query: Literal keyword in situations, content, examples or evidence.
 
         Returns:
             Entries, full-filter counts and stable pagination metadata.
@@ -923,6 +924,8 @@ class Store:
             )
             or type(offset) is not int
             or offset < 0
+            or not isinstance(query, str)
+            or len(query) > 200
         ):
             raise ValueError("学习库筛选无效，请刷新后重试。")
         filters, values = [], []
@@ -930,6 +933,17 @@ class Store:
             if value != "all":
                 filters.append(f"t.{column}=?")
                 values.append(value)
+        query = query.strip()
+        if query:
+            filters.append(
+                "(instr(lower(t.situation),lower(?))>0 "
+                "OR instr(lower(t.content),lower(?))>0 "
+                "OR EXISTS(SELECT 1 FROM json_each(t.examples) e "
+                "WHERE instr(lower(json_extract(e.value,'$.text')),lower(?))>0) "
+                "OR EXISTS(SELECT 1 FROM json_each(t.evidence) e "
+                "WHERE instr(lower(json_extract(e.value,'$.text')),lower(?))>0))"
+            )
+            values.extend([query] * 4)
         where = " AND ".join(filters) or "1=1"
         verdict = "CASE json_extract(t.review_audit,'$.approved') WHEN 1 THEN 'passed' WHEN 0 THEN 'flagged' ELSE 'unknown' END"
         counts = {"passed": 0, "flagged": 0, "unknown": 0}
@@ -974,6 +988,7 @@ class Store:
             "offset": offset,
             "review_counts": counts,
             "issue_counts": issues,
+            "query": query,
         }
 
     def review_batch(self, db, entries, status):
