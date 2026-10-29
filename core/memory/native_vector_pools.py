@@ -33,7 +33,8 @@ def recover_persona_pools(kernel):
             if id_bytes:
                 # An unready SDK pool used to be saved without loading it:
                 # its committed binaries survived, but known_hashes became [].
-                # Reconcile only exact IDs owned by current active metadata.
+                # Reconcile exact metadata IDs and retain inactive owners as
+                # tombstones instead of making their old vectors visible.
                 ids_path = directory / "vectors_ids.bin"
                 vectors_path = directory / "vectors.bin"
                 if (
@@ -45,15 +46,26 @@ def recover_persona_pools(kernel):
                 ):
                     return False
                 ids = np.fromfile(ids_path, dtype=">i8")
+                tables = (
+                    (("paragraphs", ""),)
+                    if kind == "paragraph"
+                    else (("entities", "entity:"), ("relations", "relation:"))
+                )
                 owners = {
-                    store._generate_id(value): value
-                    for value in kernel._v1_valid_hashes_for_pool(kind)
+                    store._generate_id(prefix + row["hash"]): prefix + row["hash"]
+                    for table, prefix in tables
+                    for row in kernel.metadata_store.query(f"SELECT hash FROM {table}")
                 }
                 if len(set(ids)) != len(ids) or any(
                     value not in owners for value in ids
                 ):
                     return False
                 metadata["known_hashes"] = [owners[value] for value in ids]
+                active = set(kernel._v1_valid_hashes_for_pool(kind))
+                metadata["deleted_ids"] = sorted(
+                    set(metadata.get("deleted_ids", []))
+                    | {int(value) for value in ids if owners[value] not in active}
+                )
                 repairs.append((path, metadata))
         pools[kind] = store
     # Reconcile both pools before changing either metadata file. Binary payloads
