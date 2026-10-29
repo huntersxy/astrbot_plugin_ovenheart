@@ -41,11 +41,14 @@ class AuxiliaryUsage:
         """Meter each native transport call without changing the shared provider."""
         from astrbot.core.star.context import Context
 
+        from .integrations.planner_logs import compact_planner_logs
+
         context = copy.copy(self.context)
         context.provider_manager = MeteredProviderManager(
             self.context.provider_manager, self, stage, kwargs["chat_provider_id"]
         )
-        return await Context.tool_loop_agent(context, **kwargs)
+        with compact_planner_logs():
+            return await Context.tool_loop_agent(context, **kwargs)
 
     async def measure(self, stage, invoke, kwargs, *, provider_id=None, timeout=None):
         started = time.monotonic()
