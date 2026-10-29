@@ -479,18 +479,14 @@ class PlannerSession:
     def reply_dispatched(self):
         """Whether this turn already handed text or media to the platform.
 
-        Segment hooks and ``_has_send_oper`` can land before ``after_reply``
-        acknowledges the planner. Cancelling in that window drops a reply that
-        already left, or aborts the rest of a segmented send.
+        Per-reply segment hooks and receipts can precede ``after_reply``.
+        The host's ``_has_send_oper`` stays true across replies on the same
+        event, so it cannot establish whether this reply has been sent.
         """
         event = self.event
         segments = event.get_extra("ovenheart_actual_text_segments") or []
         receipt = event.get_extra("ovenheart_planner_receipt") or {}
-        return (
-            bool(segments)
-            or bool(receipt.get("send_hook"))
-            or bool(getattr(event, "_has_send_oper", False))
-        )
+        return bool(segments) or bool(receipt.get("send_hook"))
 
     def settle_dispatched_reply(self):
         """Release the planner after a late receipt without a second send."""
@@ -798,7 +794,11 @@ class PlannerSession:
                 ),
                 tools=ToolSet(tools),
                 max_steps=16,
-                tool_call_timeout=600,
+                # Let both receipt windows finish before the host cancels the
+                # tool, with time left to settle or abort the native reply.
+                tool_call_timeout=max(
+                    600, 2 * self.settings["planner_reply_timeout"] + 30
+                ),
             )
             if response.role == "err":
                 raise RuntimeError("Planner provider returned an error response")

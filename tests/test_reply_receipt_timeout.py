@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import asyncio
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 
 from core.chat.planner import PlannerSession
+from core.settings import DEFAULTS
 
 
 class Event:
@@ -14,6 +17,10 @@ class Event:
         self.extra = {}
         self.stopped = False
         self._has_send_oper = False
+        self.unified_msg_origin = "test:GroupMessage:room"
+
+    def is_private_chat(self):
+        return False
 
     def get_extra(self, key, default=None):
         return self.extra.get(key, default)
@@ -47,8 +54,10 @@ def session(event, timeout=0.05):
     return planner
 
 
-async def test_slow_unsent_reply_is_waited_once_then_cancelled():
+@pytest.mark.parametrize("previous_send", [False, True])
+async def test_slow_unsent_reply_is_waited_once_then_cancelled(previous_send):
     event = Event()
+    event._has_send_oper = previous_send
     native = asyncio.create_task(asyncio.sleep(30))
     event.set_extra("ovenheart_native_task", lambda: native)
     planner = session(event)
@@ -60,6 +69,8 @@ async def test_slow_unsent_reply_is_waited_once_then_cancelled():
     assert event.get_extra("agent_stop_requested") is True
     assert native.cancelled()
     assert planner.owner.forgotten is True
+    assert planner.replied == set()
+    assert event.get_extra("ovenheart_planner_receipt") is None
 
 
 async def test_unsent_reply_uses_the_second_window_when_it_finishes():
@@ -107,6 +118,7 @@ async def test_slow_receipt_after_send_does_not_cancel_or_resend():
 async def test_dispatched_reply_keeps_the_real_receipt_when_it_arrives_late():
     event = Event()
     event._has_send_oper = True
+    event.set_extra("ovenheart_planner_receipt", {"send_hook": True})
     native = asyncio.create_task(asyncio.sleep(30))
     event.set_extra("ovenheart_native_task", lambda: native)
     planner = session(event)
@@ -127,3 +139,35 @@ async def test_dispatched_reply_keeps_the_real_receipt_when_it_arrives_late():
     assert result["delivery_uncertain"] is False
     assert event.stopped is False
     assert planner.owner.forgotten is False
+
+
+@pytest.mark.parametrize("timeout", [120, 400, 600])
+async def test_planner_tool_budget_allows_both_reply_windows(timeout):
+    planner = session(Event(), timeout)
+    planner.settings = DEFAULTS | {
+        "planner_reply_timeout": timeout,
+        "planner_provider_id": "test-provider",
+    }
+    planner.persona = "default"
+    planner.expressions = {}
+    planner.running_tools = 0
+    planner.tool_changed = asyncio.Event()
+    planner.actions = asyncio.Queue()
+    planner.direct = False
+    planner.recall = AsyncMock(return_value={})
+    planner.check_current = AsyncMock()
+    tool_loop = AsyncMock(return_value=SimpleNamespace(role="assistant"))
+    planner.plugin = SimpleNamespace(
+        context=SimpleNamespace(
+            persona_manager=SimpleNamespace(get_persona_v3_by_id=lambda _: None),
+            get_config=lambda _: {},
+        ),
+        emoji_actions=SimpleNamespace(proactive=AsyncMock(return_value={})),
+        auxiliary=SimpleNamespace(tool_loop=tool_loop),
+    )
+
+    await planner.run({})
+
+    budget = tool_loop.call_args.kwargs["tool_call_timeout"]
+    assert budget >= 600
+    assert budget > 2 * timeout
