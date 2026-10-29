@@ -2,6 +2,8 @@
 
 import copy
 
+from astrbot.core.agent.message import TextPart
+
 TEXT_DELIVERY_RULE = (
     "\n[OvenHeart text delivery]\n"
     "本次是当前会话的互动回复。需要查询或处理媒体时可先使用相应工具，"
@@ -21,8 +23,16 @@ def bind_text_delivery(event, request):
     tool = request.func_tool.get_tool("send_message_to_user")
     if not isinstance(tool, SendMessageToUserTool):
         return
-    if TEXT_DELIVERY_RULE not in request.system_prompt:
-        request.system_prompt += TEXT_DELIVERY_RULE
+    # Keep system/tools schemas cache-stable for days. Remind via temporary
+    # user content and enforce with the call wrapper instead of rewriting the
+    # host tool definition or the system prefix every request.
+    if not any(
+        isinstance(part, TextPart) and TEXT_DELIVERY_RULE.strip() in part.text
+        for part in request.extra_user_content_parts
+    ):
+        request.extra_user_content_parts.append(
+            TextPart(text=TEXT_DELIVERY_RULE).mark_as_temp()
+        )
     if getattr(tool, "ovenheart_text_delivery", False):
         return
     native_call = tool.call
@@ -46,33 +56,5 @@ def bind_text_delivery(event, request):
     routed = copy.copy(tool)
     routed.call = call
     routed.ovenheart_text_delivery = True
-    # skills_like first sees only this description, then a parameter-only
-    # schema. Both phases must describe the same delivery contract.
-    routed.description = (
-        "Send standalone media (image, record, video, file) or mentions. "
-        "For the current chat, write text and media captions directly in the final assistant response; "
-        "never use this tool for ordinary text replies. "
-        "The plain type is only for another explicitly specified session. "
-        "Do not replace the actual reply with a statement that it was sent."
-    )
-    routed.parameters = copy.deepcopy(tool.parameters)
-    properties = routed.parameters["properties"]
-    properties["messages"]["description"] = (
-        "Ordered media or mention components. Current-chat text and captions belong "
-        "in the final assistant response. Plain text requires another explicit session."
-    )
-    component = properties["messages"]["items"]["properties"]
-    component["type"]["description"] = (
-        "image, record (voice), video, file, or mention_user for the current chat. "
-        "plain is only for another explicitly specified session."
-    )
-    component["text"]["description"] = (
-        "Plain text for another explicitly specified session only. "
-        "Write current-chat text directly in the final assistant response instead."
-    )
-    properties["session"]["description"] = (
-        "Leave empty for current-chat media or mentions. To send plain text, specify "
-        "another session as platform_id:message_type:session_id; do not target the current chat."
-    )
     local.tools = [routed if item is tool else item for item in local.tools]
     request.func_tool = local

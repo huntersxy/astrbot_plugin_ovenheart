@@ -177,30 +177,34 @@ class SkillsLikeToolSet(ParticipationToolSet):
 def narrow_toolset(
     toolset: ToolSet | None, allowed: set[str], *, skills_like: bool, permit=None
 ):
-    """Restrict a prepared tool set to an exact-name allowlist.
+    """Keep the host tool schema intact and enforce the allowlist at lookup.
 
     Args:
         toolset: Native tool set already present on the request, or None.
         allowed: Exact tool names the autonomous request may still use.
         skills_like: Host schema mode. AstrBot 4.29.1 returns early from its runner
             reset when a skills_like request carries a falsy tool set, leaving stats
-            and the message list unset. A truthy input wrapper avoids that branch
-            without retaining any denied or host-inactive tool handlers.
+            and the message list unset. A truthy input wrapper avoids that branch.
         permit: Optional synchronous name-lookup check for this request only.
 
     Returns:
-        The restricted tool set, or None when the request had no tool set.
+        A tool set that still exposes the host-visible schema for prompt-cache
+        stability, or None when the request had no tool set.
     """
     if toolset is None and not skills_like:
         return None
-    selected = [
+    tools = [
         tool
         for tool in (toolset.tools if toolset is not None else [])
-        if tool.name in allowed and tool.active
+        if tool.active
     ]
-    return (SkillsLikeToolSet if skills_like else ParticipationToolSet)(
-        selected, permit
-    )
+
+    def check(name: str) -> bool:
+        if name not in allowed:
+            return False
+        return True if permit is None else permit(name)
+
+    return (SkillsLikeToolSet if skills_like else ParticipationToolSet)(tools, check)
 
 
 def reply_people(event: AstrMessageEvent, plan: dict | None) -> dict[str, str]:
@@ -2047,10 +2051,10 @@ class PersonaPlugin(Star):
         event.clear_result()
 
     def describe_request_tools(self, event, req):
-        """Expose supported avatar arguments in this request's light tool list.
+        """Expose supported avatar arguments without rewriting tool schemas.
 
-        Copy only the tool description and container, retaining native handlers,
-        parameters and any autonomous permission gate. Never enable a missing tool.
+        Keep host tool descriptions cache-stable. Surface the avatar hint as
+        temporary user content so light/parameter schemas stay identical.
         """
         tools = req.func_tool
         tool = tools.get_tool("generate_image") if tools is not None else None
@@ -2061,15 +2065,16 @@ class PersonaPlugin(Star):
         )
         supported = isinstance(parameter, dict) and parameter.get("type") == "array"
         event.set_extra("ovenheart_tool_capabilities", {"avatar_references": supported})
-        if not supported or prompts.AVATAR_TOOL_HINT in (tool.description or ""):
+        if not supported:
             return
-        described = copy.copy(tool)
-        described.description = (tool.description or "") + prompts.AVATAR_TOOL_HINT
-        local = copy.copy(tools)
-        local.tools = [
-            described if current is tool else current for current in tools.tools
-        ]
-        req.func_tool = local
+        if any(
+            isinstance(part, TextPart) and prompts.AVATAR_TOOL_HINT.strip() in part.text
+            for part in req.extra_user_content_parts
+        ):
+            return
+        req.extra_user_content_parts.append(
+            TextPart(text=prompts.AVATAR_TOOL_HINT).mark_as_temp()
+        )
 
     # Run after request decorators (-30000), but before diagnostic tails (-100000).
     # Equal priorities depend on plugin load order: an obsolete request can then
@@ -2393,10 +2398,10 @@ class PersonaPlugin(Star):
         if plan.get("jev_reading"):
             user_injection += JEV_RULE
         if plan.get("planner_session"):
-            # Keep the system rule constant for caching. Only the validated
-            # turn's action goes into the unsaved request tail, after history.
-            if prompts.REPLY_EXECUTION_RULE not in req.system_prompt:
-                req.system_prompt += prompts.REPLY_EXECUTION_RULE
+            # Keep the host system prefix cache-stable. Put the constant rule and
+            # the validated turn action in temporary user content after history.
+            if prompts.REPLY_EXECUTION_RULE.strip() not in user_injection:
+                user_injection = prompts.REPLY_EXECUTION_RULE + user_injection
             event.set_extra("ovenheart_reply_execution_injected", True)
             user_injection += "\n[OvenHeart current reply execution]\n" + json.dumps(
                 {
@@ -2822,22 +2827,47 @@ class PersonaPlugin(Star):
                 guidance += "\n" + notice
         system_injection = ""
         user_injection = ""
-        if guidance and guidance not in req.system_prompt:
-            system_injection = "\n\n" + guidance
-            req.system_prompt += "\n\n" + guidance
-        # Direct and planned replies share one constant system prefix. Per-turn
-        # plans remain temporary; switching routes must not change this rule.
-        if prompts.REPLY_EXECUTION_RULE not in req.system_prompt:
-            req.system_prompt += prompts.REPLY_EXECUTION_RULE
-        if user_guidance and not any(
-            isinstance(part, TextPart)
-            and part.text.startswith("[OvenHeart turn context]\n")
-            for part in req.extra_user_content_parts
-        ):
-            user_injection = user_guidance
-            req.extra_user_content_parts.append(
-                TextPart(text=user_injection).mark_as_temp()
+        # Keep the host system prefix cache-stable for days. Author profile and
+        # the constant reply-execution rule stay in system only when delivery is
+        # not cached; cached mode already puts the profile in guidance while
+        # per-turn habits remain temporary user content.
+        if settings["guidance_delivery"] == "cached":
+            parts = []
+            if guidance.strip():
+                parts.append("[OvenHeart stable guidance]\n" + guidance.strip())
+            if user_guidance:
+                parts.append(user_guidance)
+            user_injection = "\n\n".join(parts)
+            existing = "\n".join(
+                part.text
+                for part in req.extra_user_content_parts
+                if isinstance(part, TextPart)
             )
+            if (
+                user_injection
+                and prompts.REPLY_EXECUTION_RULE.strip() not in existing
+                and prompts.REPLY_EXECUTION_RULE.strip() not in user_injection
+            ):
+                user_injection = prompts.REPLY_EXECUTION_RULE + user_injection
+            if user_injection:
+                req.extra_user_content_parts.append(
+                    TextPart(text=user_injection).mark_as_temp()
+                )
+        else:
+            if guidance and guidance not in req.system_prompt:
+                system_injection = "\n\n" + guidance
+                req.system_prompt += "\n\n" + guidance
+            if prompts.REPLY_EXECUTION_RULE not in req.system_prompt:
+                req.system_prompt += prompts.REPLY_EXECUTION_RULE
+            if user_guidance and not any(
+                isinstance(part, TextPart)
+                and part.text.startswith("[OvenHeart turn context]\n")
+                for part in req.extra_user_content_parts
+            ):
+                user_injection = user_guidance
+                req.extra_user_content_parts.append(
+                    TextPart(text=user_injection).mark_as_temp()
+                )
         if system_injection or user_injection:
             event.set_extra("ovenheart_guided", True)
             event.set_extra(
