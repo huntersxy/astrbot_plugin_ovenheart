@@ -187,6 +187,20 @@ class Store:
     def person_memory_inputs(self, db, scope, sender):
         return self.room_memory_inputs(db, scope, sender)
 
+    def person_visible_senders(self, db, scopes):
+        scopes = [scope for scope in scopes if scope]
+        if not scopes:
+            return []
+        return [
+            row[0]
+            for row in db.execute(
+                "SELECT DISTINCT sender FROM messages WHERE scope IN ("
+                + ",".join("?" for _ in scopes)
+                + ") AND sender<>''",
+                scopes,
+            )
+        ]
+
     def room_memory_inputs(self, db, scope, sender=None):
         rows = db.execute(
             "SELECT id,source_id,sender,text,created,reply_context FROM messages WHERE scope=?"

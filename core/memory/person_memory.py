@@ -184,8 +184,22 @@ class NativePersonProfileService(PersonProfileService):
         return [*evidence[: top_k - len(recent)], *recent]
 
 
-def person_identity(platform, bot, origin, persona, sender):
-    return hashlib.md5(json.dumps([platform, bot, *origin, persona, str(sender)], ensure_ascii=False).encode()).hexdigest()
+def get_person_id(platform, user_id):
+    """MaiBot-compatible account id: md5("{platform}_{user_id}").
+
+    AstrBot passes platform_meta.name (for example aiocqhttp). Do not apply
+    MaiBot's hyphen strip: AstrBot already separates type name from instance id.
+    """
+    platform = str(platform or "").strip()
+    user_id = str(user_id or "").strip()
+    if not platform or not user_id:
+        raise ValueError("人物 ID 需要平台名与用户 ID。")
+    return hashlib.md5(f"{platform}_{user_id}".encode()).hexdigest()
+
+
+def person_identity(platform, sender, *_args, **_kwargs):
+    """Compatibility wrapper; identity is platform name + account only."""
+    return get_person_id(platform, sender)
 
 
 class PersonMemory:
@@ -223,42 +237,59 @@ class PersonMemory:
                     person_id TEXT NOT NULL, source_id TEXT NOT NULL,
                     PRIMARY KEY(person_id,source_id)
                 );
+                CREATE TABLE IF NOT EXISTS ovenheart_person_id_aliases (
+                    old_person_id TEXT PRIMARY KEY,
+                    person_id TEXT NOT NULL,
+                    user_id TEXT NOT NULL,
+                    platform TEXT NOT NULL DEFAULT ''
+                );
             """)
+            columns = {
+                row[1]
+                for row in self.metadata._conn.execute(
+                    "PRAGMA table_info(ovenheart_amemorix_people)"
+                )
+            }
+            if "platform" not in columns:
+                self.metadata._conn.execute(
+                    "ALTER TABLE ovenheart_amemorix_people ADD COLUMN platform TEXT NOT NULL DEFAULT ''"
+                )
+                self.metadata._conn.commit()
         if operation == "initialize":
             return self.engine
         with bind(self.engine):
             return getattr(self, "_" + operation)(*args)
 
     def identity(self, event, scope, persona, sender):
-        origin = [event.unified_msg_origin, scope]
-        return person_identity(
-            event.get_platform_id(), event.get_self_id(), origin, persona, sender
-        )
+        return get_person_id(event.get_platform_name(), sender)
 
     async def scope_ids(self, event, scope, persona, sender):
-        own = self.identity(event, scope, persona, sender)
-        if self.plugin.settings["memory_isolation"]:
-            return [own]
-        scopes = await self.plugin.store.read("memory_scopes", persona)
-        ids = [
-            person_identity(
-                event.get_platform_id(),
-                event.get_self_id(),
-                [r["umo"], r["id"]],
-                persona,
-                sender,
-            )
-            for r in scopes
-            if r["umo"].split(":", 1)[0] == event.get_platform_id()
-        ]
-        shared = person_identity(
-            event.get_platform_id(),
-            event.get_self_id(),
-            ["global-memory"],
-            persona,
-            sender,
+        person_id = self.identity(event, scope, persona, sender)
+        return await self.call(
+            "ledger_ids", person_id, sender, event.get_platform_name()
         )
-        return list(dict.fromkeys([own, *ids, shared]))
+
+    def _ledger_ids(self, person_id, sender, platform=""):
+        sender = str(sender)
+        platform = str(platform or "")
+        ids = [person_id]
+        for row in self.metadata._conn.execute(
+            "SELECT person_id, platform FROM ovenheart_amemorix_people WHERE user_id=?",
+            (sender,),
+        ):
+            other, other_platform = row[0], row[1] or ""
+            if other == person_id:
+                continue
+            if other_platform and platform and other_platform != platform:
+                continue
+            ids.append(other)
+        for row in self.metadata._conn.execute(
+            "SELECT old_person_id FROM ovenheart_person_id_aliases WHERE person_id=? OR user_id=?",
+            (person_id, sender),
+        ):
+            if row[0] not in ids:
+                ids.append(row[0])
+        return ids
 
     def _claims_many(self, ids):
         return sorted(
@@ -268,9 +299,11 @@ class PersonMemory:
         )[:100]
 
     def _query_many(self, ids, room_context):
+        if not ids:
+            return {}
         if len(ids) == 1:
             return self._query(ids[0], False, room_context)
-        target = ids[-1]
+        target = ids[0]
         with Session(self.engine) as session:
             source = next(
                 (
@@ -282,32 +315,53 @@ class PersonMemory:
             )
             if source is None:
                 return {}
-            sender, name = source.user_id, source.user_nickname
-        self._register(target, sender, name)
+            sender, name, platform = source.user_id, source.user_nickname, source.platform
+        self._register(target, sender, name or sender, platform)
         return self._query(target, True, room_context, ids)
 
-    def _register(self, person_id, sender, name):
+    def _register(self, person_id, sender, name, platform=""):
+        sender = str(sender)
+        platform = str(platform or "")
         with Session(self.engine) as session:
             row = session.get(PersonInfo, person_id)
             if row is None:
-                row = PersonInfo(person_id=person_id, user_id=sender)
-            aliases = json.loads(row.group_cardname)
+                row = PersonInfo(person_id=person_id, user_id=sender, platform=platform)
+            aliases = json.loads(row.group_cardname or "[]")
+            if not isinstance(aliases, list):
+                aliases = []
             row.group_cardname = json.dumps(
                 list(dict.fromkeys([name, *aliases]))[:8], ensure_ascii=False
             )
             row.user_nickname = name
+            if platform:
+                row.platform = platform
             session.add(row)
             session.commit()
         self.metadata._conn.execute(
             "INSERT OR IGNORE INTO ovenheart_person_progress(person_id) VALUES (?)",
             (person_id,),
         )
+        if platform:
+            for row in self.metadata._conn.execute(
+                "SELECT person_id, platform FROM ovenheart_amemorix_people WHERE user_id=?",
+                (sender,),
+            ):
+                other, other_platform = row[0], row[1] or ""
+                if other == person_id:
+                    continue
+                if other_platform and other_platform != platform:
+                    continue
+                self.metadata._conn.execute(
+                    "INSERT OR IGNORE INTO ovenheart_person_id_aliases"
+                    "(old_person_id, person_id, user_id, platform) VALUES (?,?,?,?)",
+                    (other, person_id, sender, platform),
+                )
         self.metadata._conn.commit()
         return self._progress(person_id)
 
     def _panel_people(self):
         return [dict(row) for row in self.metadata._conn.execute(
-            "SELECT person_id,user_id,user_nickname FROM ovenheart_amemorix_people"
+            "SELECT person_id,user_id,user_nickname,platform FROM ovenheart_amemorix_people"
         )]
 
     def _panel_action(self, operation, payload, permitted):
@@ -479,7 +533,14 @@ class PersonMemory:
                     "UPDATE ovenheart_person_progress SET last_message=? WHERE person_id=?",
                     (last_message, person_id),
                 )
-        return self._query(person_id, refresh=True)
+        return self._query(person_id, refresh=True, source_ids=self._account_ids(person_id))
+
+    def _account_ids(self, person_id):
+        with Session(self.engine) as session:
+            row = session.get(PersonInfo, person_id)
+            if row is None:
+                return [person_id]
+            return self._ledger_ids(person_id, row.user_id, row.platform)
 
     def _write_one(self, person_id, facts, messages, last_message=0):
         sources = {m["source_id"]: m for m in messages}
@@ -543,7 +604,7 @@ class PersonMemory:
                     "UPDATE ovenheart_person_progress SET last_message=? WHERE person_id=?",
                     (last_message, person_id),
                 )
-        return self._query(person_id, refresh=True)
+        return self._query(person_id, refresh=True, source_ids=self._account_ids(person_id))
 
     def _attempt(self, person_id):
         self.metadata._conn.execute(
@@ -590,7 +651,11 @@ class PersonMemory:
         sender = event.get_sender_id()
         person_id = self.identity(event, scope, persona, sender)
         progress = await self.call(
-            "register", person_id, sender, event.get_sender_name() or sender
+            "register",
+            person_id,
+            sender,
+            event.get_sender_name() or sender,
+            event.get_platform_name(),
         )
         if (
             self.busy
@@ -766,6 +831,7 @@ class PersonMemory:
             person_id,
             source.get_sender_id(),
             source.get_sender_name() or source.get_sender_id(),
+            source.get_platform_name(),
         )
         messages = [
             {

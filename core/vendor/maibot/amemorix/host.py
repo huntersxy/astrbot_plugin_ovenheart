@@ -17,6 +17,7 @@ class PersonInfo(SQLModel, table=True):
     __table_args__ = {"extend_existing": True}
     person_id: str = Field(primary_key=True)
     user_id: str
+    platform: str = ""
     person_name: str = ""
     user_nickname: str = ""
     group_cardname: str = "[]"
