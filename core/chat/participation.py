@@ -1493,11 +1493,23 @@ def offered_messages(messages, settings):
 
 
 def planner_message(message):
-    """Keep semantic evidence and target IDs; omit transport and empty metadata."""
-    return {
+    """Keep semantic evidence and planner msg_id; omit transport and empty metadata.
+
+    Expose ``msg_id`` as the sequence string tools must copy. Hide platform
+    ``message_id`` / ``source`` so models do not put transport IDs into msg_id.
+    """
+    row = {
         key: value
         for key, value in message.items()
-        if key not in {"image_refs", "arrival_order", "answered_source"}
-        and not (key == "source" and message.get("message_id"))
+        if key
+        not in {
+            "image_refs",
+            "arrival_order",
+            "answered_source",
+            "message_id",
+            "source",
+        }
         and not (key in {"reply_to", "media", "mentions"} and not value)
     }
+    row["msg_id"] = str(message.get("sequence", ""))
+    return row
