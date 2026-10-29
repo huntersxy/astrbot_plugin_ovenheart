@@ -31,10 +31,7 @@
           </div>
         </div>
         <div class="head-actions">
-          <button id="refresh" type="button">刷新</button
-          ><button id="learn" class="primary" type="button" disabled>
-            开始学习
-          </button>
+          <button id="refresh" type="button">刷新</button>
         </div>
       </header>
       <div class="workshop-layout">
@@ -62,9 +59,9 @@
           </div>
         </aside>
         <div class="workshop-main">
-          <section class="session-bar" aria-label="当前会话">
+          <section class="session-bar" id="session-context" aria-label="当前会话" hidden>
             <div class="scope-field">
-              <label id="scope-label" for="scope-filter">会话与人格</label>
+              <label for="scope-filter">会话与人格</label>
               <div class="scope-combo">
                 <input
                   id="scope-filter"

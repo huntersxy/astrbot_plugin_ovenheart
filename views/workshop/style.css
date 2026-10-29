@@ -117,9 +117,8 @@ input[type="checkbox"]:disabled { opacity: .5; cursor: not-allowed; }
 .head-actions button { min-height: 38px; }
 #refresh { background: transparent; }
 #refresh:hover { background: var(--sunken); }
-#refresh::before, #learn::before, .tabs button::before { content: ""; width: 17px; height: 17px; flex-shrink: 0; background: currentColor; mask: var(--icon) no-repeat center / contain; -webkit-mask: var(--icon) no-repeat center / contain; }
+#refresh::before, .tabs button::before { content: ""; width: 17px; height: 17px; flex-shrink: 0; background: currentColor; mask: var(--icon) no-repeat center / contain; -webkit-mask: var(--icon) no-repeat center / contain; }
 #refresh { --icon: var(--i-refresh); }
-#learn { --icon: var(--i-spark); }
 .workshop-layout { display: grid; grid-template-columns: 188px minmax(0, 1fr); align-items: stretch; min-height: calc(100vh - 180px); border: 1px solid var(--line); border-radius: 16px; background: var(--surface); }
 .workshop-sidebar { padding: 22px 12px; border-right: 1px solid var(--line); border-radius: 16px 0 0 16px; background: var(--surface-2); }
 .sidebar-content { position: sticky; top: 22px; min-width: 0; }
@@ -141,6 +140,7 @@ input[type="checkbox"]:disabled { opacity: .5; cursor: not-allowed; }
 #review-count:empty { display: none; }
 .sidebar-note { margin: 34px 12px 0; padding-top: 20px; border-top: 1px solid var(--line); color: var(--muted); font-size: 11px; line-height: 1.9; }
 .workshop-main { min-width: 0; padding: 0 32px 32px; }
+.workshop-main:has(> .session-bar[hidden]) { padding-top: 28px; }
 .session-bar { display: grid; grid-template-columns: minmax(240px, 1.4fr) minmax(0, 1fr); align-items: end; gap: 12px 28px; margin-bottom: 28px; padding: 20px 0; border-bottom: 1px solid var(--line); }
 .scope-field { min-width: 0; }
 .scope-field label { margin-bottom: 7px; color: var(--muted); font-size: 11px; }
@@ -181,6 +181,7 @@ input[type="checkbox"]:disabled { opacity: .5; cursor: not-allowed; }
 .preview > p.muted { margin: 18px 0 0; }
 .preview form > small { display: block; margin-top: 10px; }
 .preview textarea { min-height: 140px; }
+.preview select { margin-bottom: 14px; }
 .preview-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
 .preview-actions button { flex: 1 1 auto; font-size: 12px; }
 pre { max-height: 440px; margin: 16px 0 0; padding: 16px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--ink); background: var(--surface-2); border: 1px solid var(--line); border-radius: 8px; font: 12px/1.8 var(--mono); }
@@ -484,7 +485,7 @@ footer { display: flex; justify-content: space-between; gap: 20px; padding: 18px
   .brand-mark { width: 32px; height: 36px; }
   .brand-mark svg { width: 26px; height: 26px; }
   h1 { font-size: 23px; }
-  .head-actions { width: 100%; justify-content: flex-end; }
+  .head-actions { margin-left: auto; }
   .head-actions button { min-height: 40px; }
   .workshop-main { padding: 0 18px 22px; }
   .workshop-sidebar { padding: 8px; }

@@ -107,7 +107,6 @@ function fillScopeOptions() {
 }
 function updateHeader() {
   fillScopeOptions();
-  $("#scope-label").textContent = ["memory", "emojis"].includes(tab) || data.settings.session_isolation ? "会话与人格" : "学习素材来源";
   const activeHabits = data.active_count ?? data.traits?.filter(t => t.status === "active").length ?? 0;
   const memoryNote = !data.memory_runtime?.available ? "记忆降级" : !data.settings.memory_enabled ? "记忆关闭" : data.settings.native_memory_enabled ? (data.settings.memory_isolation ? "记忆按会话" : "记忆同人格共享") : "原生记忆未开";
   $("#session-status").textContent = data.scope
@@ -118,10 +117,7 @@ function updateHeader() {
     notify(`记忆以降级模式运行：${data.memory_runtime.degraded_reason || "准备失败，学习与参与仍可用。"}`, true);
   }
   $("#review-count").textContent = (data.review_count ?? data.scopes.reduce((sum, scope) => sum + scope.review_count, 0)) || "";
-  const busy = data.busy.includes(selectedScope);
-  $("#learn").disabled = pending || !data.scope || !!data.busy.length || !data.settings.enabled || !data.settings.learning_enabled || !!data.learning_blocked || !data.scope.profile.learning_enabled || data.scope.pending < data.settings.min_evidence;
-  $("#learn").title = data.learning_blocked ? "当前群聊在学习黑名单中；聊天与已有习惯继续生效" : "";
-  $("#learn").textContent = busy ? "正在学习…" : "开始学习";
+  renderNavigation();
 }
 function rememberView() {
   viewCache.delete(viewKey());
@@ -200,6 +196,9 @@ function field(name, label, value, help, options = {}) {
 }
 
 function renderNavigation() {
+  $("#session-context").hidden = !(["portrait", "history", "memory", "emojis"].includes(tab)
+    || tab === "profile" && data?.settings.session_isolation
+    || tab === "settings" && settingsSection === "maintenance");
   for (const button of document.querySelectorAll("[data-tab]")) {
     if (button.dataset.tab === tab) button.setAttribute("aria-current", "page"); else button.removeAttribute("aria-current");
   }
@@ -213,7 +212,7 @@ function render() {
     return;
   }
   if (tab === "profile") renderProfile();
-  if (tab === "portrait") renderSelfPortrait();
+  else if (tab === "portrait") renderSelfPortrait();
   else if (tab === "library") renderLibrary();
   else if (tab === "history") renderHistory();
   else if (tab === "memory") renderMemory();
@@ -231,7 +230,8 @@ function renderProfile() {
     ${field("behavior", "行为准则", p.behavior, "例如：先倾听；拿不准时先澄清。")}
     <div class="switches">${switchField("learning_enabled", "积累并学习", data.settings.session_isolation ? "仅当前会话与人格" : "影响所有允许的会话", p.learning_enabled)}${switchField("apply_enabled", "应用已生效的习惯", "关闭后仍保留学习数据", p.apply_enabled)}</div>
     <button class="primary" type="submit">保存人格底稿</button></form>
-    <aside class="preview"><h2>试一句看看</h2><p>免费预览本插件会追加的表达参考；不调用模型、不发消息。</p><form id="preview-form"><label for="preview-query">试一句话</label><textarea id="preview-query" placeholder="例如：今天又搞砸了，有点难过。" maxlength="1200"></textarea><div class="preview-actions"><button class="tonal" type="submit">预览生效内容</button><button class="tonal" type="button" id="model-preview" ${!selectedScope || selectedScope === data.shared_scope?.id ? "disabled" : ""}>生成示例回复</button></div><details class="field-help"><summary>说明</summary><small>示例回复会调用模型，可能产生费用；不保存。请先选真实会话。预览用文字检索，真实回复还可能经向量与情境筛选。</small></details></form><pre id="preview-output" hidden></pre><div id="model-preview-result" class="model-preview-result" hidden aria-live="polite"><p id="model-preview-meta" class="muted"></p><div id="model-preview-text" class="model-preview-text"></div></div></aside></div>`;
+    <aside class="preview"><h2>试一句看看</h2><p>免费预览本插件会追加的表达参考；不调用模型、不发消息。</p><form id="preview-form">${!data.settings.session_isolation && data.scopes.length > 1 ? `<label for="preview-scope">示例会话</label><select id="preview-scope">${data.scopes.map(scope => `<option value="${escape(scope.id)}" ${scope.id === selectedScope ? "selected" : ""}>${escape(scopeOptionLabel(scope))}</option>`).join("")}</select>` : ""}<label for="preview-query">试一句话</label><textarea id="preview-query" placeholder="例如：今天又搞砸了，有点难过。" maxlength="1200"></textarea><div class="preview-actions"><button class="tonal" type="submit">预览生效内容</button><button class="tonal" type="button" id="model-preview" ${!selectedScope || selectedScope === data.shared_scope?.id ? "disabled" : ""}>生成示例回复</button></div><details class="field-help"><summary>说明</summary><small>示例回复会调用模型，可能产生费用；不保存。请先选真实会话。预览用文字检索，真实回复还可能经向量与情境筛选。</small></details></form><pre id="preview-output" hidden></pre><div id="model-preview-result" class="model-preview-result" hidden aria-live="polite"><p id="model-preview-meta" class="muted"></p><div id="model-preview-text" class="model-preview-text"></div></div></aside></div>`;
+  if ($("#preview-scope")) $("#preview-scope").onchange = changeScope;
   $("#profile-form").addEventListener("submit", async event => {
     event.preventDefault();
     const form = event.currentTarget;
@@ -577,6 +577,7 @@ function bindSettingsTabs(active, memoryPage) {
     }
     for (const panel of panels) panel.hidden = panel.dataset.settingsPanel !== key;
     if (memoryPage) memorySection = key; else settingsSection = key;
+    renderNavigation();
   }
   for (const [index, button] of buttons.entries()) {
     button.onclick = () => select(button.dataset.settingsTab);
@@ -882,7 +883,6 @@ async function mutate(action, payload = {}, scope = selectedScope, settingsRevis
     const result = await api("action", {action, scope, payload, ...(action === "profile" ? {effect_scope:scope} : {}), ...(settingsRevision !== undefined ? {settings_revision:settingsRevision} : {})});
     notify(result.message || "已保存。");
     await afterWrite(context);
-    if (action === "learn") schedulePoll(1500);
   });
 }
 
@@ -907,11 +907,12 @@ async function navigateView() {
     if (tab === page && selectedScope === scope && !dirty) $("#content").scrollIntoView?.({block:"start",behavior:"auto"});
   } catch (error) { notify(error.message || "本页数据读取失败，请点击刷新重试。", true); }
 }
-$("#scope").onchange = async event => {
+async function changeScope(event) {
   const next = event.target.value; event.target.value = selectedScope;
   if (dirty && !await confirmAction("切换会话会放弃未保存的编辑，继续？")) return;
   selectedScope = next; selectedTrait = null; historyOpenId = null; historyAnchor = historyOffset = 0; dirty = false; await navigateView();
-};
+}
+$("#scope").onchange = changeScope;
 $("#refresh").onclick = async () => {
   if (dirty && !await confirmAction("刷新会放弃未保存的编辑，继续？")) return;
   dirty = false; invalidateViews();
@@ -919,7 +920,6 @@ $("#refresh").onclick = async () => {
   scopeFilter = "";
   try { await load(); } catch (error) { notify(error.message, true); }
 };
-$("#learn").onclick = async () => { if (!dirty || await confirmAction("开始学习会放弃当前未保存的编辑，继续？")) await mutate("learn"); };
 for (const button of document.querySelectorAll("[data-tab]")) button.onclick = async () => {
   if (dirty && !await confirmAction("离开此页会放弃未保存的编辑，继续？")) return;
   dirty = false; tab = button.dataset.tab; await navigateView();
