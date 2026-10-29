@@ -3293,6 +3293,15 @@ class PersonaPlugin(Star):
                 application["mode"],
                 application.get("shared", False),
             )
+        if (
+            not event.get_extra("ovenheart_decision")
+            and id(event) in self.direct_priority.entries
+            and event.get_extra("ovenheart_first_text_send_seconds") is not None
+            and not event.get_extra("ovenheart_text_delivery_incomplete")
+        ):
+            # Native empty-At handlers may wait 60 seconds after sending. Their
+            # completed text must not keep other members' direct requests queued.
+            self.direct_priority.watch(event, direct=False)
 
     async def poll(self):
         """Run eligible batches serially with cooldowns and bounded resource use."""

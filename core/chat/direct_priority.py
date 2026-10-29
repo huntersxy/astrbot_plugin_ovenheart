@@ -5,6 +5,8 @@ from __future__ import annotations
 import asyncio
 import weakref
 
+from astrbot.core.utils.session_lock import session_lock_manager
+
 
 class DirectPriority:
     def __init__(self, plugin):
@@ -65,6 +67,25 @@ class DirectPriority:
         while previous := self.predecessor(event):
             queued = True
             await previous["released"].wait()
+        room = self.plugin.participation.room_key(event)
+        for entry in list(self.entries.values()):
+            owner, task = entry["event"](), entry["task"]()
+            if owner is event:
+                break
+            if (
+                owner is not None
+                and task is not None
+                and not task.done()
+                and entry["room"] == room
+                and not entry["direct"]
+                and not owner.get_extra("ovenheart_decision")
+                and owner.get_extra("ovenheart_first_text_send_seconds") is not None
+            ):
+                # The send hook precedes the host's history commit. Let that
+                # finish before preempting only its post-reply empty-At wait.
+                queued = True
+                async with session_lock_manager.acquire_lock(owner.unified_msg_origin):
+                    pass
         if self.plugin.closing:
             raise asyncio.CancelledError
         return queued
