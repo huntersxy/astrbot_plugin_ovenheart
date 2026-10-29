@@ -224,6 +224,8 @@ class PersonMemory:
                     PRIMARY KEY(person_id,source_id)
                 );
             """)
+        if operation == "initialize":
+            return self.engine
         with bind(self.engine):
             return getattr(self, "_" + operation)(*args)
 

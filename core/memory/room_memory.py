@@ -328,6 +328,7 @@ class RoomState:
                 },
             },
         )
+        kernel.feedback_sources = self.identities
         kernel._runtime_writer_lock.acquire()
         try:
             await kernel.initialize()
@@ -1285,8 +1286,15 @@ class RoomMemory:
             )
             self.thread.start()
         host = asyncio.get_running_loop()
+        people_engine = (
+            self.plugin.person_memory.engine
+            or await self.plugin.person_memory.call("initialize")
+        )
         source_scope = source_scope or state.path.name
-        shared = not self.plugin.settings["memory_isolation"] and source_scope != SHARED_SCOPE
+        shared = (
+            not self.plugin.settings["memory_isolation"]
+            and source_scope != SHARED_SCOPE
+        )
         result, started = host.create_future(), host.create_future()
 
         def finish(task):
@@ -1310,9 +1318,7 @@ class RoomMemory:
                             return await self.generate(state, request)
                     return await self.generate(state, request)
 
-                future = asyncio.run_coroutine_threadsafe(
-                    generate(), host
-                )
+                future = asyncio.run_coroutine_threadsafe(generate(), host)
                 return await asyncio.wrap_future(future)
 
             def native_messages(**options):
@@ -1335,7 +1341,7 @@ class RoomMemory:
                     image_embedding=state.image_embedding,
                 ),
                 memory_host.bind(
-                    None,
+                    people_engine,
                     native_generate,
                     integration=NativeMemoryIntegration(self.plugin),
                 ),
@@ -1345,12 +1351,17 @@ class RoomMemory:
                     await state.initialize()
                     # Text recall must not scan image files or acquire one
                     # write transaction per asset before searching paragraphs.
-                    if (operation.startswith("image_") or operation == "admin") and not state.image_recovered and state.kernel.image_memory_runtime is not None:
+                    if (
+                        (operation.startswith("image_") or operation == "admin")
+                        and not state.image_recovered
+                        and state.kernel.image_memory_runtime is not None
+                    ):
                         await state.kernel.image_memory_runtime.recover_assets()
                         state.image_recovered = True
                 budget = (
                     self.plugin.settings["retrieval_timeout"]
-                    if operation in {"search", "image_search"} else None
+                    if operation in {"search", "image_search"}
+                    else None
                 )
                 with embedding_budget(budget) if budget is not None else nullcontext():
                     return await getattr(state, operation)(*args)
@@ -1375,7 +1386,12 @@ class RoomMemory:
 
         origin = feedback_origin.get()
         event = (
-            self.plugin.events.get(origin) or (state.identities[origin].identity if origin in state.identities else None)
+            self.plugin.events.get(origin)
+            or (
+                state.identities[origin].identity
+                if origin in state.identities
+                else None
+            )
             if origin
             else state.identity or state.event_ref()
         )
@@ -1394,27 +1410,37 @@ class RoomMemory:
                 event.unified_msg_origin
             )
         )
-        response = await self.plugin.auxiliary.generate(
+        stage = (
             "memory_feedback"
             if "feedback" in request.request_type.lower()
             else "memory_episode"
             if "episode" in request.request_type.lower()
             else "memory_review"
             if state.operation == "review"
-            else "memory_maintenance",
-            chat_provider_id=provider,
-            prompt=request.prompt,
-            **(
-                {"temperature": request.temperature}
-                if request.temperature is not None
-                else {}
-            ),
-            **(
-                {"max_tokens": request.max_tokens}
-                if request.max_tokens is not None
-                else {}
-            ),
+            else "memory_maintenance"
         )
+        try:
+            response = await self.plugin.auxiliary.generate(
+                stage,
+                chat_provider_id=provider,
+                prompt=request.prompt,
+                **(
+                    {"temperature": request.temperature}
+                    if request.temperature is not None
+                    else {}
+                ),
+                **(
+                    {"max_tokens": request.max_tokens}
+                    if request.max_tokens is not None
+                    else {}
+                ),
+            )
+        except TimeoutError as exc:
+            from ..auxiliary import BACKGROUND_MODEL_TIMEOUTS
+
+            raise TimeoutError(
+                f"记忆后台模型请求超过 {BACKGROUND_MODEL_TIMEOUTS[stage]} 秒 ({stage})，保留现有记忆。"
+            ) from exc
         if revision != self.plugin.settings_revision or not await self.permitted(
             event, scope, persona, learning=True
         ):
@@ -1438,12 +1464,14 @@ class RoomMemory:
         )
         revision = self.plugin.settings_revision
         if event is None:
-            raise ValueError("后台记忆消息缺少真实会话身份或请求了其他会话。")
+            return []
         scope, persona, _ = await self.plugin.resolve_scope(event)
-        if state.path.name not in await self.scope_keys(
-            scope
-        ) or not await self.permitted(event, scope, persona, learning=True):
-            raise ValueError("后台记忆消息来源或学习权限已撤销。")
+        if (
+            scope != chat_id
+            or state.path.name not in await self.scope_keys(scope)
+            or not await self.permitted(event, scope, persona, learning=True)
+        ):
+            return []
         limit = min(1000, max(1, int(limit)))
         if self.plugin.conversation.active(event):
             window = self.plugin.participation.windows.get(scope)

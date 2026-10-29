@@ -4446,8 +4446,8 @@ class PersonaPlugin(Star):
         try:
             await self.auxiliary.flush()
             await self.jev.client.close()
-            await self.person_memory.close()
             await self.room_memory.close()
+            await self.person_memory.close()
         finally:
             await self.store.close()
         self.events.clear()

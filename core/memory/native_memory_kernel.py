@@ -1,14 +1,20 @@
 """AstrBot lifecycle boundaries around the original A_memorix SDK kernel."""
 
+import asyncio
 import copy
 import time
 from contextvars import ContextVar
 from types import SimpleNamespace
 
+from astrbot.api import logger
+
 from ..runtime_diagnostics import limit_metadata_cache
 from ..vendor.maibot.amemorix.runtime.sdk_memory_kernel import SDKMemoryKernel
 from ..vendor.maibot.amemorix.runtime.services.correction_admin_service import (
     MemoryCorrectionAdminService,
+)
+from ..vendor.maibot.amemorix.runtime.services.dual_vector_state_service import (
+    MemoryDualVectorStateService,
 )
 from ..vendor.maibot.amemorix.runtime.services.feedback_correction_service import (
     MemoryFeedbackCorrectionService,
@@ -18,6 +24,11 @@ from ..vendor.maibot.amemorix.utils.episode_retrieval_service import (
     EpisodeRetrievalService,
 )
 from ..vendor.maibot.amemorix.utils.episode_service import EpisodeService
+from ..vendor.maibot.amemorix.utils.feedback_policy import (
+    feedback_cfg_batch_size,
+    feedback_cfg_check_interval_seconds,
+    feedback_cfg_enabled,
+)
 
 feedback_origin = ContextVar("ovenheart_feedback_origin", default="")
 correction_evidence = ContextVar("ovenheart_memory_correction_evidence", default=None)
@@ -103,19 +114,69 @@ class NativeCorrectionService(MemoryCorrectionAdminService):
 
 
 class NativeFeedbackService(MemoryFeedbackCorrectionService):
+    async def _feedback_correction_loop(self):
+        # A reloaded kernel must not consume another chat's queued tasks before
+        # that chat has supplied a real, current native authorization identity.
+        try:
+            while not self._background_stopping:
+                tasks = []
+                if self.metadata_store is not None and feedback_cfg_enabled():
+                    tasks = self._due_source_tasks()
+                    for task in tasks:
+                        if self._background_stopping:
+                            break
+                        await self._process_feedback_task(task)
+                await asyncio.sleep(
+                    2 if tasks else feedback_cfg_check_interval_seconds()
+                )
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.warning("原生记忆反馈调度未完成 (%s: %s)", type(exc).__name__, exc)
+
+    def _due_source_tasks(self):
+        sources = tuple(self.feedback_sources)
+        if not sources:
+            return []
+        now = time.time()
+        placeholders = ",".join("?" for _ in sources)
+        rows = self.metadata_store._conn.execute(
+            "SELECT * FROM memory_feedback_tasks WHERE due_at<=? "
+            "AND (status='pending' OR (status='running' AND updated_at<=?)) "
+            f"AND COALESCE(NULLIF(json_extract(query_snapshot_json,'$.source_scope'),''),session_id) IN ({placeholders}) "
+            "ORDER BY due_at,id LIMIT ?",
+            (now, now - 300, *sources, feedback_cfg_batch_size()),
+        )
+        return [self.metadata_store._feedback_task_row_to_dict(row) for row in rows]
+
     async def _process_feedback_task(self, task):
         # A shared memory pool is not a shared conversation: feedback must come
         # from the original chat, even after another room has used this kernel.
-        token = feedback_origin.set((task.get("query_snapshot") or {}).get("source_scope", ""))
+        origin = (task.get("query_snapshot") or {}).get("source_scope") or task[
+            "session_id"
+        ]
+        if origin not in self.feedback_sources:
+            return
+        token = feedback_origin.set(origin)
         try:
             return await super()._process_feedback_task(task)
         finally:
             feedback_origin.reset(token)
 
     def _extract_feedback_messages(self, **kwargs):
-        return super()._extract_feedback_messages(**(kwargs | {
-            "session_id": feedback_origin.get() or kwargs["session_id"]
-        }))
+        return super()._extract_feedback_messages(
+            **(kwargs | {"session_id": feedback_origin.get() or kwargs["session_id"]})
+        )
+
+
+class NativeDualVectorStateService(MemoryDualVectorStateService):
+    def _try_recover_dual_ready_manifest(self):
+        if (self.data_dir / "persona_store.json").exists():
+            from .native_vector_pools import recover_persona_pools
+
+            if recover_persona_pools(self._kernel):
+                return True
+        return super()._try_recover_dual_ready_manifest()
 
 
 class NativeMemoryKernel(SDKMemoryKernel):
@@ -124,12 +185,22 @@ class NativeMemoryKernel(SDKMemoryKernel):
         super().__init__(plugin_root=plugin_root, config=config)
         self._correction_admin_service = NativeCorrectionService(self)
         self._feedback_service = NativeFeedbackService(self)
+        self._dual_vector_state_service = NativeDualVectorStateService(self)
         self._scope_statistics_ready = False
+        self.feedback_sources = {}
 
     async def initialize(self):
         await super().initialize()
         limit_metadata_cache(self.metadata_store)
         if not self._scope_statistics_ready:
+            # These failures happened before feedback/model application.
+            # Source filtering keeps unavailable chats pending after reload.
+            with self.metadata_store.transaction() as db:
+                db.execute(
+                    "UPDATE memory_feedback_tasks SET status='pending',last_error=NULL "
+                    "WHERE status='error' AND last_error=?",
+                    ("后台记忆消息缺少真实会话身份或请求了其他会话。",),
+                )
             await run_sync_work(self._refresh_scope_statistics)
             # ANALYZE ran on the worker's connection. Reload its statistics on
             # the owning read connection without repeating table analysis.
