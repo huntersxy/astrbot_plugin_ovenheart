@@ -53,6 +53,33 @@ async def test_register_aliases_legacy_session_buckets(person_memory):
     assert legacy in ids
 
 
+async def test_register_keeps_person_name_and_group_cards(person_memory):
+    import json
+
+    from sqlmodel import Session
+
+    from core.vendor.maibot.amemorix.host import PersonInfo
+
+    person_id = get_person_id("aiocqhttp", "42")
+    await person_memory.call(
+        "register", person_id, "42", "群里叫小雨", "aiocqhttp", "1001"
+    )
+    await person_memory.call(
+        "register", person_id, "42", "另一个群名片", "aiocqhttp", "1002"
+    )
+    await person_memory.call(
+        "register", person_id, "42", "私聊昵称", "aiocqhttp", ""
+    )
+    with Session(person_memory.engine) as session:
+        row = session.get(PersonInfo, person_id)
+    assert row.person_name == "群里叫小雨"
+    assert row.user_nickname == "私聊昵称"
+    cards = json.loads(row.group_cardname)
+    assert cards[0] == {"group_id": "1002", "group_cardname": "另一个群名片"}
+    assert {"group_id": "1001", "group_cardname": "群里叫小雨"} in cards
+    assert all(isinstance(item, dict) for item in cards)
+
+
 async def test_identity_uses_platform_name(person_memory):
     event = SimpleNamespace(
         get_platform_name=lambda: "aiocqhttp",

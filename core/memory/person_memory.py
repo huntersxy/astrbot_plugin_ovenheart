@@ -319,20 +319,30 @@ class PersonMemory:
         self._register(target, sender, name or sender, platform)
         return self._query(target, True, room_context, ids)
 
-    def _register(self, person_id, sender, name, platform=""):
+    def _register(self, person_id, sender, name, platform="", group_id=""):
         sender = str(sender)
         platform = str(platform or "")
+        group_id = str(group_id or "").strip()
+        name = str(name or sender).strip() or sender
         with Session(self.engine) as session:
             row = session.get(PersonInfo, person_id)
             if row is None:
                 row = PersonInfo(person_id=person_id, user_id=sender, platform=platform)
-            aliases = json.loads(row.group_cardname or "[]")
-            if not isinstance(aliases, list):
-                aliases = []
-            row.group_cardname = json.dumps(
-                list(dict.fromkeys([name, *aliases]))[:8], ensure_ascii=False
-            )
+            cards = self._group_cards(row.group_cardname)
+            if group_id:
+                cards = [
+                    item
+                    for item in cards
+                    if not (
+                        isinstance(item, dict)
+                        and str(item.get("group_id") or "") == group_id
+                    )
+                ]
+                cards.insert(0, {"group_id": group_id, "group_cardname": name})
+            row.group_cardname = json.dumps(cards[:16], ensure_ascii=False)
             row.user_nickname = name
+            if not (row.person_name or "").strip():
+                row.person_name = name
             if platform:
                 row.platform = platform
             session.add(row)
@@ -358,6 +368,28 @@ class PersonMemory:
                 )
         self.metadata._conn.commit()
         return self._progress(person_id)
+
+    @staticmethod
+    def _group_cards(raw):
+        try:
+            items = json.loads(raw or "[]")
+        except json.JSONDecodeError:
+            return []
+        if not isinstance(items, list):
+            return []
+        cards = []
+        for item in items:
+            if isinstance(item, dict):
+                group_id = str(item.get("group_id") or "").strip()
+                card = str(
+                    item.get("group_cardname") or item.get("group_nick_name") or ""
+                ).strip()
+                if group_id and card:
+                    cards.append({"group_id": group_id, "group_cardname": card})
+            elif isinstance(item, str) and item.strip():
+                # Legacy nickname bag from older builds; keep as free-form alias.
+                cards.append(item.strip())
+        return cards
 
     def _panel_people(self):
         return [dict(row) for row in self.metadata._conn.execute(
@@ -656,6 +688,7 @@ class PersonMemory:
             sender,
             event.get_sender_name() or sender,
             event.get_platform_name(),
+            event.get_group_id() or "",
         )
         if (
             self.busy
@@ -832,6 +865,7 @@ class PersonMemory:
             source.get_sender_id(),
             source.get_sender_name() or source.get_sender_id(),
             source.get_platform_name(),
+            source.get_group_id() or "",
         )
         messages = [
             {
