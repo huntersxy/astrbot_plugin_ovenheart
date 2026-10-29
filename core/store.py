@@ -799,6 +799,7 @@ class Store:
         offset=0,
         anchor=0,
         shared=False,
+        query="",
     ):
         """Read one bounded category; an ID anchor keeps older pages stable."""
         table, column, choices, fields = self._history_spec(section)
@@ -809,8 +810,10 @@ class Store:
             or not 0 <= offset < 2**63
             or type(anchor) is not int
             or not 0 <= anchor < 2**63
+            or not isinstance(query, str)
+            or len(query) > 200
         ):
-            raise ValueError("记录页码无效。")
+            raise ValueError("记录页码或搜索词无效。")
         scopes = self._history_scopes(db, scope, section, shared)
         where = "scope IN (" + ",".join("?" for _ in scopes) + ")"
         counts = {}
@@ -840,6 +843,24 @@ class Store:
         if status != "all":
             where += f" AND {column}=?"
             values.append(status)
+        query = query.strip()
+        search_columns = {
+            "learning": ["message"],
+            "participation": ["reason"],
+            "replies": ["details"],
+            "applications": ["trait_ids", "mode"],
+            "versions": ["action"],
+        }[section]
+        if query:
+            where += (
+                " AND ("
+                + " OR ".join(
+                    f"instr(lower(COALESCE({name},'')), lower(?))>0"
+                    for name in search_columns
+                )
+                + ")"
+            )
+            values.extend([query] * len(search_columns))
         total = db.execute(
             f"SELECT COUNT(*) FROM {table} WHERE {where}", values
         ).fetchone()[0]
@@ -855,6 +876,7 @@ class Store:
             "scope": scope,
             "section": section,
             "status": status,
+            "query": query,
             "items": items,
             "total": total,
             "offset": offset,

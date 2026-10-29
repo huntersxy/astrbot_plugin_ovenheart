@@ -239,6 +239,7 @@ class PageAPI:
                     numbers["offset"],
                     numbers["anchor"],
                     shared,
+                    request.query.get("query", ""),
                 )
             return {"status": "ok", "data": result}
         except (ValueError, TypeError) as exc:

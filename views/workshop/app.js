@@ -12,6 +12,7 @@ const librarySelection = new Map();
 const libraryPositions = new Map(), historyDetails = new Map();
 let libraryMobileDetail = false, libraryPageScroll = 0, libraryFiltersOpen = false;
 let historySection = "learning", historyStatus = "all", historyOffset = 0, historyAnchor = 0, historyOpenId = null;
+let historyQuery = "", historySearchDraft = "", scopeFilter = "";
 const historySections = {learning:"学习批次", participation:"参与判断", replies:"回复链路", applications:"习惯引用", versions:"历史版本"};
 const historyStatuses = {learning:{error:"失败", running:"学习中", success:"完成"}, participation:{admitted:"交给宿主", waiting:"静默等待", observed:"旁观", limited:"冷却或限额", cancelled:"已取消", error:"决策失败"}, replies:{send_hook:"发送阶段", prepared:"已组装", cancelled:"已取消", empty_response:"未生成回复"}, applications:{}, versions:{}};
 
@@ -44,7 +45,7 @@ const readRequests = new Map();
 const viewCache = new Map();
 const localOperations = new Set();
 let loadVersion = 0, cacheEpoch = 0, editVersion = 0, pollTimer, pollErrors = 0, toolsCache;
-const viewKey = () => JSON.stringify([selectedScope, tab, ...(tab === "library" ? [libraryScope, category, status, libraryOffset, reviewFilter, libraryQuery] : tab === "history" ? [historySection, historyStatus, historyOffset, historyAnchor] : [])]);
+const viewKey = () => JSON.stringify([selectedScope, tab, ...(tab === "library" ? [libraryScope, category, status, libraryOffset, reviewFilter, libraryQuery] : tab === "history" ? [historySection, historyStatus, historyOffset, historyAnchor, historyQuery] : [])]);
 const viewName = () => ["memory", "emojis"].includes(tab) ? "settings" : tab === "portrait" ? "profile" : ["library", "prompts", "history"].includes(tab) ? "summary" : tab;
 
 function deadline(promise, milliseconds, message) {
@@ -77,20 +78,47 @@ async function afterWrite(context) {
   if (context.key === viewKey() && context.edit === editVersion) dirty = false;
   load(!dirty).catch(error => notify(`修改已提交，但本页刷新失败：${error.message}。可稍后点击刷新。`, true));
 }
+function scopeOptionLabel(scope) {
+  return `${scope.label} / ${scope.persona === "[%None]" ? "未设置人格" : scope.persona}`;
+}
+function fillScopeOptions() {
+  const scopeSelect = $("#scope"), filterInput = $("#scope-filter");
+  const needle = scopeFilter.trim().toLowerCase();
+  const scopes = data?.scopes || [];
+  const matched = needle
+    ? scopes.filter(scope => scopeOptionLabel(scope).toLowerCase().includes(needle) || scope.id.toLowerCase().includes(needle))
+    : scopes;
+  const keepSelected = selectedScope && !matched.some(scope => scope.id === selectedScope)
+    ? scopes.find(scope => scope.id === selectedScope)
+    : null;
+  const options = keepSelected ? [keepSelected, ...matched.filter(scope => scope.id !== selectedScope)] : matched;
+  scopeSelect.innerHTML = options.length
+    ? options.map(scope => `<option value="${escape(scope.id)}">${escape(scopeOptionLabel(scope))}</option>`).join("")
+    : scopes.length
+      ? '<option value="">无匹配会话</option>'
+      : '<option value="">尚无学习会话</option>';
+  if (selectedScope && options.some(scope => scope.id === selectedScope)) scopeSelect.value = selectedScope;
+  scopeSelect.disabled = !scopes.length;
+  if (filterInput) {
+    filterInput.disabled = !scopes.length;
+    filterInput.value = scopeFilter;
+    filterInput.placeholder = scopes.length > 8 ? `搜索 ${scopes.length} 个会话或人格` : "搜索会话或人格";
+  }
+}
 function updateHeader() {
-  const scopeSelect = $("#scope");
-  scopeSelect.innerHTML = data.scopes.length ? data.scopes.map(s => `<option value="${escape(s.id)}">${escape(s.label)} / ${escape(s.persona === "[%None]" ? "未设置人格" : s.persona)}</option>`).join("") : '<option value="">尚无学习会话</option>';
-  scopeSelect.value = selectedScope;
-  scopeSelect.disabled = !data.scopes.length;
+  fillScopeOptions();
   $("#scope-label").textContent = ["memory", "emojis"].includes(tab) || data.settings.session_isolation ? "会话与人格" : "学习素材来源";
-  $("#session-status").textContent = data.scope ? `${data.scope.pending} 条待学素材，${data.active_count ?? data.traits.filter(t => t.status === "active").length} 条当前可用习惯已生效` : "收到有效聊天消息后，会话将自动出现在这里。";
-  $("#memory-status").textContent = !data.settings.memory_enabled ? "记忆参考已关闭" : data.settings.native_memory_enabled ? `原生记忆已启用 · ${data.settings.memory_isolation ? "按会话隔离" : "同人格全局共享"}` : "原生记忆未启用";
+  const activeHabits = data.active_count ?? data.traits?.filter(t => t.status === "active").length ?? 0;
+  const memoryNote = !data.settings.memory_enabled ? "记忆关闭" : data.settings.native_memory_enabled ? (data.settings.memory_isolation ? "记忆按会话" : "记忆同人格共享") : "原生记忆未开";
+  $("#session-status").textContent = data.scope
+    ? `${data.scope.pending} 条待学 · ${activeHabits} 条已生效 · ${memoryNote}`
+    : "收到有效聊天后，会话会出现在这里。";
   $("#review-count").textContent = (data.review_count ?? data.scopes.reduce((sum, scope) => sum + scope.review_count, 0)) || "";
   const busy = data.busy.includes(selectedScope);
   $("#learn").disabled = pending || !data.scope || !!data.busy.length || !data.settings.enabled || !data.settings.learning_enabled || !!data.learning_blocked || !data.scope.profile.learning_enabled || data.scope.pending < data.settings.min_evidence;
   $("#learn").title = data.learning_blocked ? "当前群聊在学习黑名单中；聊天与已有习惯继续生效" : "";
   $("#learn").textContent = busy ? "正在学习…" : "开始学习";
- }
+}
 function rememberView() {
   viewCache.delete(viewKey());
   viewCache.set(viewKey(), {data, at:Date.now()});
@@ -116,7 +144,7 @@ async function load(renderContent = true) {
   const previousPromptsRevision = data?.prompts?.revision;
   const detail = renderContent && pageAtStart === "library"
     ? api("library", undefined, {scope:libraryScope, kind:category, status, offset:libraryOffset, review:reviewFilter, query:libraryQuery})
-    : renderContent && pageAtStart === "history" && selectedScope ? api("history", undefined, {scope:selectedScope, section:historySection, status:historyStatus, offset:historyOffset, anchor:historyAnchor})
+    : renderContent && pageAtStart === "history" && selectedScope ? api("history", undefined, {scope:selectedScope, section:historySection, status:historyStatus, offset:historyOffset, anchor:historyAnchor, query:historyQuery})
     : renderContent && pageAtStart === "prompts" ? api("prompts") : Promise.resolve(null);
   const current = () => version === loadVersion && key === viewKey();
   const [next, extra] = await Promise.all([api("state", undefined, {scope:scopeAtStart, view}), detail]).catch(error => { if (!current()) return [null, null]; throw error; });
@@ -130,7 +158,7 @@ async function load(renderContent = true) {
   if (pageAtStart === "prompts" && extra) data.prompts = extra;
   if (pageAtStart === "history" && extra) { data.history = extra; historyOffset = extra.offset || 0; historyAnchor = extra.anchor || 0; }
   if (renderContent && pageAtStart === "history" && !extra && data.scope) {
-    const history = await api("history", undefined, {scope:selectedScope, section:historySection, status:historyStatus, offset:historyOffset, anchor:historyAnchor});
+    const history = await api("history", undefined, {scope:selectedScope, section:historySection, status:historyStatus, offset:historyOffset, anchor:historyAnchor, query:historyQuery});
     if (version !== loadVersion || tab !== pageAtStart) return;
     data.history = history; historyOffset = history.offset || 0; historyAnchor = history.anchor || 0;
   }
@@ -149,13 +177,22 @@ function empty(title, description) {
   return `<div class="empty"><h2>${escape(title)}</h2><p>${escape(description)}</p></div>`;
 }
 
+function fieldHelp(id, help) {
+  if (!help) return "";
+  if (help.length <= 72) return `<small id="${id}">${help}</small>`;
+  return `<details class="field-help" id="${id}"><summary>说明</summary><small>${help}</small></details>`;
+}
 function switchField(name, label, description, checked) {
-  return `<label class="switch"><input type="checkbox" name="${name}" ${checked ? "checked" : ""}><span>${label}${description ? `<small>${description}</small>` : ""}</span></label>`;
+  const shortHelp = description && description.length <= 48 ? `<small>${description}</small>` : "";
+  const longHelp = description && description.length > 48
+    ? `<details class="field-help"><summary>说明</summary><small>${description}</small></details>`
+    : "";
+  return `${longHelp ? '<div class="switch-block">' : ""}<label class="switch"><input type="checkbox" name="${name}" ${checked ? "checked" : ""}><span>${label}${shortHelp}</span></label>${longHelp}${longHelp ? "</div>" : ""}`;
 }
 
 function field(name, label, value, help, options = {}) {
   const hint = help ? `aria-describedby="${name}-help"` : "";
-  return `<div class="field"><label for="field-${name}">${label}</label>${options.type === "number" ? `<input id="field-${name}" name="${name}" type="number" min="${options.min}" max="${options.max}" step="${options.step || 1}" value="${escape(value)}" ${hint} required>` : options.type === "text" ? `<input id="field-${name}" name="${name}" value="${escape(value)}" ${hint} maxlength="256">` : `<textarea id="field-${name}" name="${name}" ${hint} maxlength="${options.maxlength || 1000}" ${options.large ? 'class="large"' : ""}>${escape(value)}</textarea>`}${help ? `<small id="${name}-help">${help}</small>` : ""}</div>`;
+  return `<div class="field"><label for="field-${name}">${label}</label>${options.type === "number" ? `<input id="field-${name}" name="${name}" type="number" min="${options.min}" max="${options.max}" step="${options.step || 1}" value="${escape(value)}" ${hint} required>` : options.type === "text" ? `<input id="field-${name}" name="${name}" value="${escape(value)}" ${hint} maxlength="256">` : `<textarea id="field-${name}" name="${name}" ${hint} maxlength="${options.maxlength || 1000}" ${options.large ? 'class="large"' : ""}>${escape(value)}</textarea>`}${fieldHelp(`${name}-help`, help)}</div>`;
 }
 
 function renderNavigation() {
@@ -184,13 +221,13 @@ function render() {
 function renderProfile() {
   const p = data.scope.profile;
   const profileScope = data.effect_scope || selectedScope;
-  $("#content").innerHTML = `<div class="two-col"><form id="profile-form"><h2>${data.settings.session_isolation ? "当前会话的人格底稿" : "所有会话共用的人格底稿"}</h2><p class="section-intro">${data.settings.session_isolation ? "当前设置只影响所选会话与人格。" : "当前底稿、人格、表达与行为习惯在所有允许的会话中共用；群聊词汇始终只用于来源会话与人格。顶部选择决定素材来源和记录。"}AstrBot 原有人格继续生效。在这里补充身份、表达和应对方式，让学来的习惯有一个稳定的落点。</p>
-    ${field("identity", "人格补充", p.identity, "留空时，完整沿用 AstrBot 中配置的核心人格。", {large:true})}
-    ${field("reply_style", "表达基调", p.reply_style, "例如：日常、简短，接得住玩笑，不过度解释。")}
-    ${field("behavior", "行为准则", p.behavior, "例如：先倾听；拿不准时先澄清；对方难过时少说教。")}
-    <div class="switches">${switchField("learning_enabled", "积累并学习", data.settings.session_isolation ? "仅影响当前会话与人格" : "影响所有允许的会话", p.learning_enabled)}${switchField("apply_enabled", "应用已生效的习惯", "关闭后保留全部学习数据", p.apply_enabled)}</div>
+  $("#content").innerHTML = `<div class="two-col"><form id="profile-form"><h2>${data.settings.session_isolation ? "当前会话的人格底稿" : "共用人格底稿"}</h2><p class="section-intro">${data.settings.session_isolation ? "只影响所选会话与人格。" : "底稿与习惯在允许的会话共用；群聊词汇仍按来源隔离。"}在 AstrBot 人格之上补充身份、表达和应对方式。</p>
+    ${field("identity", "人格补充", p.identity, "留空则沿用 AstrBot 核心人格。", {large:true})}
+    ${field("reply_style", "表达基调", p.reply_style, "例如：日常、简短，接得住玩笑。")}
+    ${field("behavior", "行为准则", p.behavior, "例如：先倾听；拿不准时先澄清。")}
+    <div class="switches">${switchField("learning_enabled", "积累并学习", data.settings.session_isolation ? "仅当前会话与人格" : "影响所有允许的会话", p.learning_enabled)}${switchField("apply_enabled", "应用已生效的习惯", "关闭后仍保留学习数据", p.apply_enabled)}</div>
     <button class="primary" type="submit">保存人格底稿</button></form>
-    <aside class="preview"><h2>看看它会带上哪些习惯</h2><p>输入一句可能出现的话，查看本插件会追加给模型的表达参考。免费预览使用文字检索，不调用模型或发送消息；真实回复还可使用向量、重排序与情境筛选，结果可能不同；兼容模式的角色资料未纳入此预览。实际投递会按所选模式分为系统提示词或本轮临时上下文。</p><form id="preview-form"><label for="preview-query">试一句话</label><textarea id="preview-query" placeholder="例如：今天又搞砸了，有点难过。" maxlength="1200"></textarea><div class="preview-actions"><button class="tonal" type="submit">预览生效内容</button><button class="tonal" type="button" id="model-preview" ${!selectedScope || selectedScope === data.shared_scope?.id ? "disabled" : ""}>生成示例回复</button></div><small>生成示例会按设置调用模型，可能产生费用；不调用工具，不发送消息，也不保存为素材或聊天历史。请先选择真实来源会话。</small></form><pre id="preview-output" hidden></pre><div id="model-preview-result" class="model-preview-result" hidden aria-live="polite"><p id="model-preview-meta" class="muted"></p><div id="model-preview-text" class="model-preview-text"></div></div><p class="muted">示例使用已保存底稿和已生效习惯，不含真实聊天历史与其他插件注入；未保存的编辑需先保存。生产回复可能不同。</p></aside></div>`;
+    <aside class="preview"><h2>试一句看看</h2><p>免费预览本插件会追加的表达参考；不调用模型、不发消息。</p><form id="preview-form"><label for="preview-query">试一句话</label><textarea id="preview-query" placeholder="例如：今天又搞砸了，有点难过。" maxlength="1200"></textarea><div class="preview-actions"><button class="tonal" type="submit">预览生效内容</button><button class="tonal" type="button" id="model-preview" ${!selectedScope || selectedScope === data.shared_scope?.id ? "disabled" : ""}>生成示例回复</button></div><details class="field-help"><summary>说明</summary><small>示例回复会调用模型，可能产生费用；不保存。请先选真实会话。预览用文字检索，真实回复还可能经向量与情境筛选。</small></details></form><pre id="preview-output" hidden></pre><div id="model-preview-result" class="model-preview-result" hidden aria-live="polite"><p id="model-preview-meta" class="muted"></p><div id="model-preview-text" class="model-preview-text"></div></div></aside></div>`;
   $("#profile-form").addEventListener("submit", async event => {
     event.preventDefault();
     const form = event.currentTarget;
@@ -291,20 +328,27 @@ function renderLibrary() {
   const review = trait && (trait.review || (library ? [] : data.runs || []).filter(run => !run.scope || run.scope === trait.scope).flatMap(run => run.review?.candidates || []).find(candidate => candidate.kind === trait.kind && candidate.situation === trait.situation && candidate.content === trait.content));
   const archived = trait && data.shared_scope && trait.kind === "jargon" && trait.scope === data.shared_scope.id;
   const expressionExamples = trait?.kind === "expression" && trait.examples?.length ? `<section class="evidence" aria-label="原话片段"><h3>原话片段</h3><p class="muted">勾选要移除的片段，随下方保存或审核一起生效；原证据与历史版本保留。实际改写规则时会清除全部旧片段。</p>${trait.examples.map((example, index) => `<blockquote><p>${escape(example.text)}</p><small>${escape(example.sender || "学习对象")} · ${date(example.created)}</small><label class="switch sample-removal"><input type="checkbox" name="remove_examples" value="${index}" aria-label="移除片段：${escape(example.text)}"><span>移除此片段</span></label></blockquote>`).join("")}</section>` : "";
-  const reviewHint = trait ? `<section class="review-note" aria-label="学习自检"><h3>${escape(reviewLabel(trait))}</h3><p>${review?.approved === false ? escape(review.reason) : review?.approved === true ? "这份候选通过了入库自检；仍是模型判断，不保证适合每次对话。" : "没有与当前内容匹配的自检记录。可能尚未自检、旧记录已过期，或内容及片段经过编辑；不代表通过。"}</p><p class="muted">提取自评分 ${Math.round(trait.confidence * 100)}% 是提取阶段的模型自评，不是正确率，也不能覆盖自检结论。${trait.manual ? "人工决定已锁定；自检记录仅供参考。" : "当前是否生效由审核状态决定。"}</p>${review?.issue ? '<small>问题类别按自检原因中的关键词归组，供筛选定位；以完整原因和原文为准。</small>' : ""}${review?.run_id ? `<small>来源：学习批次 #${escape(review.run_id)} · ${date(review.checked_at)}</small>` : ""}</section>` : "";
+  const reviewHint = trait ? `<section class="review-note" aria-label="学习自检"><h3>${escape(reviewLabel(trait))}</h3><p>${review?.approved === false ? escape(review.reason) : review?.approved === true ? "入库自检通过；仍是模型判断。" : "无匹配自检记录，不代表通过。"}</p><p class="muted">提取自评 ${Math.round(trait.confidence * 100)}% · ${trait.manual ? "人工已锁定" : "以审核状态为准"}</p>${review?.run_id ? `<small>批次 #${escape(review.run_id)} · ${date(review.checked_at)}</small>` : ""}</section>` : "";
   for (const [id, entry] of librarySelection) {
     if (!traits.some(t => t.id === id && t.status === "pending" && t.updated === entry.updated)) librarySelection.delete(id);
   }
   const counts = library?.review_counts || {};
+  const filterActive = libraryScope !== "all" || category !== "all" || status !== "pending" || reviewFilter !== "all";
+  const filterSummary = [
+    libraryScope !== "all" ? "会话" : "",
+    category !== "all" ? kinds[category] : "",
+    status !== "pending" ? (statuses[status] || "全部状态") : "",
+    reviewFilter !== "all" ? (reviewGroups[reviewFilter] || reviewIssues[reviewFilter] || "自检") : "",
+  ].filter(Boolean).join(" · ") || "默认：待审核";
   const searchForm = `<form id="library-search" class="library-search" role="search" aria-label="搜索学习库">
-    <div class="filter-field"><label for="library-query">搜索学习条目</label><input id="library-query" type="search" maxlength="200" autocomplete="off" placeholder="情境、习惯内容或学习原文" value="${escape(librarySearchDraft)}" aria-describedby="library-search-help"></div>
-    <button type="submit" class="tonal">搜索</button><button type="button" id="library-clear" ${librarySearchDraft || libraryQuery ? "" : "disabled"}>清空</button>
-    <small id="library-search-help">在当前会话、类别与状态筛选范围内搜索全部条目。</small></form>`;
-  const noResults = libraryQuery ? empty("未找到匹配的学习条目", "换一个关键词、清空搜索，或调整下方的会话、类别与状态筛选。") : empty(status === "pending" ? "这里等待下一次发现" : "还没有这类学习结果", "素材积累后会自动批量学习，也可以点击「开始学习」。也可能没有符合当前筛选的条目。可切换自检分组或审核状态查看。");
-  const summary = `<header class="library-heading"><div><h2>学习库</h2><p class="muted">筛选、查看，再决定哪些习惯生效。</p></div><details><summary>审核说明</summary><p>提取自评不等于自检结论；先查看原文和使用条件。批量操作只处理勾选的本页待审核条目，人工决定可以覆盖模型判断。</p></details></header>`;
-  const batchControls = `<div class="batch-review" aria-label="批量审核"><details class="batch-selection-tools"><summary>批量选择</summary><div class="actions"><button type="button" id="select-page">勾选本页待审</button><button type="button" id="select-passed">只选本页自检通过</button><button type="button" id="clear-selection">清空勾选</button></div></details><div class="actions"><span id="selected-count" role="status"></span><button type="button" class="tonal" data-batch-review="active">批准勾选</button><button type="button" class="danger" data-batch-review="rejected">拒绝勾选</button></div></div>`;
+    <div class="filter-field"><label for="library-query">搜索</label><input id="library-query" type="search" maxlength="200" autocomplete="off" placeholder="情境、习惯内容或学习原文" value="${escape(librarySearchDraft)}"></div>
+    <button type="submit" class="primary">搜索</button><button type="button" id="library-clear" ${librarySearchDraft || libraryQuery ? "" : "disabled"}>清空</button>
+    </form>`;
+  const noResults = libraryQuery ? empty("未找到匹配条目", "换关键词，或调整筛选条件。") : empty(status === "pending" ? "暂无待审核条目" : "没有符合条件的结果", "可点「开始学习」，或换筛选查看。");
+  const summary = `<header class="library-heading"><div><h2>学习库</h2><p class="muted">${library?.total ?? traits.length} 条 · 先搜再审</p></div></header>`;
+  const batchControls = `<div class="batch-review" aria-label="批量审核"><details class="batch-selection-tools"><summary>批量审核</summary><div class="actions"><button type="button" id="select-page">勾选本页待审</button><button type="button" id="select-passed">只选自检通过</button><button type="button" id="clear-selection">清空勾选</button><span id="selected-count" role="status"></span><button type="button" class="tonal" data-batch-review="active">批准勾选</button><button type="button" class="danger" data-batch-review="rejected">拒绝勾选</button></div></details></div>`;
   const pagination = library && library.total > 100 ? `<div class="actions library-pages"><button id="library-prev" ${library.offset === 0 ? "disabled" : ""}>上一页</button><span class="muted">${library.offset / 100 + 1} / ${Math.ceil(library.total / 100)} 页</span><button id="library-next" ${library.offset + 100 >= library.total ? "disabled" : ""}>下一页</button></div>` : "";
-  $("#content").innerHTML = `${summary}${searchForm}<div class="library-filterbar" id="library-filterbar" data-open="${libraryFiltersOpen}"><button type="button" id="library-filter-toggle" aria-controls="library-filters" aria-expanded="${libraryFiltersOpen}">筛选条目<span>${library?.total ?? traits.length} 条结果</span></button><div class="filter-row" id="library-filters"><div class="filter-field"><label for="library-scope">会话</label><select id="library-scope"><option value="all">全部会话</option>${([...(data.shared_scope ? [data.shared_scope] : []), ...(data.scopes || [])]).map(s => `<option value="${escape(s.id)}" ${libraryScope === s.id ? "selected" : ""}>${escape(s.label)} / ${escape(s.persona === "[%None]" ? "未设置人格" : s.persona)}</option>`).join("")}</select></div><div class="filter-field"><label for="kind-filter">类别</label><select id="kind-filter"><option value="all">全部类别</option>${Object.entries(kinds).map(([value, name]) => `<option value="${value}" ${category === value ? "selected" : ""}>${name}</option>`).join("")}</select></div><div class="filter-field"><label for="status-filter">状态</label><select id="status-filter">${Object.entries({pending:"待审核", active:"已生效", disabled:"已停用", rejected:"已拒绝", all:"全部状态"}).map(([value, name]) => `<option value="${value}" ${status === value ? "selected" : ""}>${name}</option>`).join("")}</select></div><div class="filter-field"><label for="review-filter">自检分组</label><select id="review-filter"><option value="all">全部自检结论</option>${Object.entries(reviewGroups).map(([key, label]) => `<option value="${key}" ${reviewFilter === key ? "selected" : ""}>${label}（${counts[key] ?? 0}）</option>`).join("")}${Object.entries(reviewIssues).map(([key, label]) => `<option value="${key}" ${reviewFilter === key ? "selected" : ""}>存疑：${label}（${library?.issue_counts?.[key] ?? 0}）</option>`).join("")}</select></div><span class="muted">${library?.total ?? traits.length} 条结果</span></div></div>${batchControls}
+  $("#content").innerHTML = `${summary}${searchForm}<div class="library-filterbar" id="library-filterbar" data-open="${libraryFiltersOpen}"><button type="button" id="library-filter-toggle" aria-controls="library-filters" aria-expanded="${libraryFiltersOpen}">筛选${filterActive ? " · 已调整" : ""}<span>${escape(filterSummary)}</span></button><div class="filter-row" id="library-filters"><div class="filter-field"><label for="library-scope">会话</label><select id="library-scope"><option value="all">全部会话</option>${([...(data.shared_scope ? [data.shared_scope] : []), ...(data.scopes || [])]).map(s => `<option value="${escape(s.id)}" ${libraryScope === s.id ? "selected" : ""}>${escape(s.label)} / ${escape(s.persona === "[%None]" ? "未设置人格" : s.persona)}</option>`).join("")}</select></div><div class="filter-field"><label for="kind-filter">类别</label><select id="kind-filter"><option value="all">全部类别</option>${Object.entries(kinds).map(([value, name]) => `<option value="${value}" ${category === value ? "selected" : ""}>${name}</option>`).join("")}</select></div><div class="filter-field"><label for="status-filter">状态</label><select id="status-filter">${Object.entries({pending:"待审核", active:"已生效", disabled:"已停用", rejected:"已拒绝", all:"全部状态"}).map(([value, name]) => `<option value="${value}" ${status === value ? "selected" : ""}>${name}</option>`).join("")}</select></div><div class="filter-field"><label for="review-filter">自检</label><select id="review-filter"><option value="all">全部自检结论</option>${Object.entries(reviewGroups).map(([key, label]) => `<option value="${key}" ${reviewFilter === key ? "selected" : ""}>${label}（${counts[key] ?? 0}）</option>`).join("")}${Object.entries(reviewIssues).map(([key, label]) => `<option value="${key}" ${reviewFilter === key ? "selected" : ""}>存疑：${label}（${library?.issue_counts?.[key] ?? 0}）</option>`).join("")}</select></div></div></div>${batchControls}
     ${traits.length ? `<div class="library" id="library-workspace" data-detail="${libraryMobileDetail}"><div class="library-list-pane"><div class="trait-list" id="library-list" tabindex="0" aria-label="学习条目，可独立滚动">${traits.map(t => `<div class="trait-choice">${t.status === "pending" ? `<label class="trait-check"><input type="checkbox" data-select-trait="${t.id}" aria-label="勾选：${escape(t.situation)}" ${librarySelection.has(t.id) ? "checked" : ""}></label>` : ""}<button type="button" class="trait-row" data-trait="${t.id}" aria-pressed="${selectedTrait === t.id}"><span class="row-meta"><span>${kinds[t.kind]}</span><span class="badge ${t.kind === "jargon" && data.shared_scope && t.scope === data.shared_scope.id ? "" : t.status}">${t.kind === "jargon" && data.shared_scope && t.scope === data.shared_scope.id ? "仅保留" : statuses[t.status]}</span></span><small class="trait-owner">${escape(t.label || data.scope?.label || "")} / ${escape((t.persona || data.scope?.persona) === "[%None]" ? "未设置人格" : (t.persona || data.scope?.persona || ""))}</small><strong>${escape(t.situation)}</strong><p>${escape(t.content)}</p><span class="row-meta">${t.evidence_count || t.evidence.length} 条证据 / ${t.support_count || 1} 批 · 提取自评 ${Math.round(t.confidence * 100)}%</span><small class="review-verdict">${escape(reviewLabel(t))}${t.manual ? " · 人工已决定" : ""}</small></button></div>`).join("")}</div>${pagination}</div><article class="detail" id="library-detail" tabindex="-1" aria-label="所选条目详情"><button id="library-back" type="button">返回条目列表</button><h2>${kinds[trait.kind]}</h2><p class="muted">所属会话：${escape(trait.label || data.scope?.label || "")} / ${escape((trait.persona || data.scope?.persona) === "[%None]" ? "未设置人格" : (trait.persona || data.scope?.persona || ""))}</p>${archived ? '<p class="muted" role="note">旧共用词汇的来源尚未确定，条目与证据完整保留，不参与回复。请在来源会话重新学习后审核。</p>' : trait.kind === "jargon" ? '<p class="muted" role="note">群聊词汇始终按来源会话与人格隔离，不受「启用会话隔离」开关影响。</p>' : ""}${reviewHint}<form id="trait-form">${expressionExamples}${field("situation", "适用情境", trait.situation, "只在适合的情境里使用，不必每次重复。", {maxlength:160})}${field("content", "习惯内容", trait.content, "你可以在生效前调整表达；编辑不会自动改变审核状态。", {maxlength:350})}<button type="submit">保存编辑</button></form><div class="actions">${!archived && trait.status !== "active" ? '<button class="primary" data-review="active">批准生效</button>' : trait.status === "active" ? '<button data-review="disabled">停用这条</button>' : ""}${trait.status === "pending" ? '<button class="danger" data-review="rejected">拒绝学习</button>' : '<button data-review="pending">移回待审核</button>'}</div><section class="evidence"><h3>积累与应用</h3><p class="muted">${trait.support_count || 1} 批独立素材，累计 ${trait.evidence_count || trait.evidence.length} 条证据。引用 ${trait.use_count || 0} 次；引用次数不代表模型采用或消息送达。${trait.manual ? " 人工决定已锁定，后续学习只补充证据。" : ""}</p><p class="muted">当前评价：${trait.rating === 1 ? "更合适" : trait.rating === -1 ? "不太合适" : "尚未评价"}</p><div class="actions" aria-label="习惯效果评价">${[[1,"更合适"],[-1,"不太合适"],[0,"清除评价"]].map(([value,label]) => `<button type="button" data-feedback="${value}" aria-pressed="${(trait.rating || 0) === value}">${label}</button>`).join("")}</div><p class="muted">评价调整后续排序；不合适的习惯也可直接停用。</p></section><details class="evidence library-evidence"><summary>最近的学习来源（${trait.evidence.length} 条）</summary><p class="muted">最多展示最近 32 条摘录，累计证据数保留。</p>${trait.evidence.map(e => `<blockquote><p>${escape(e.text)}</p><small>${e.label ? `${escape(e.label)} / ${escape(e.persona || "")} · ` : ""}${escape(e.sender)} · ${date(e.created)}</small></blockquote>`).join("")}</details></article></div>` : noResults}`;
   $("#library-filter-toggle").onclick = () => {
     libraryFiltersOpen = !libraryFiltersOpen;
@@ -459,8 +503,8 @@ function renderHistory() {
   const items = page?.items || (data[legacyKeys[historySection]] || []).slice(0,10);
   const counts = page?.counts || Object.fromEntries(Object.entries(legacyKeys).map(([key,value]) => [key,(data[value] || []).length]));
   const total = page?.total ?? items.length, offset = page?.offset ?? 0;
-  const descriptions = {learning:"成功批次才消耗素材；失败批次保留素材。展开一条记录查看自检与原因。", participation:`${data.settings?.participation_mode === "off" ? "自主参与已关闭。" : data.settings?.participation_mode === "observe" ? "当前仅记录判断，不主动回复。" : "当前允许自主参与，冷却与限额仍有效。"}交给宿主不保证模型生成或平台送达。`, replies:"发送阶段不等于平台送达；缓存仅指情境筛选和重排序，不代表提供商 KV 命中。", applications:"记录进入宿主发送阶段的习惯引用，不推断满意度或实际送达。", versions:"共用与当前会话的版本分别恢复；只恢复底稿和条目，不恢复原始素材。"};
-  $("#content").innerHTML = `${renderModelUsage()}<section class="history-workspace"><header class="history-heading"><div><h2>学习与参与</h2><p class="muted">按类型查看，展开单条详情。</p></div><button id="history-latest" type="button" class="tonal">查看最新</button></header><nav class="history-categories" aria-label="记录类型">${Object.entries(historySections).map(([key,label]) => `<button type="button" data-history-section="${key}" aria-pressed="${key === historySection}">${label}<span>${counts[key] || 0}</span></button>`).join("")}</nav><div class="history-filter"><p>${descriptions[historySection]}</p><label>状态<select id="history-status"><option value="all">全部状态</option>${Object.entries(historyStatuses[historySection]).map(([key,label]) => `<option value="${key}" ${historyStatus === key ? "selected" : ""}>${label}</option>`).join("")}</select></label></div><div class="history-records">${items.length ? items.map(row => {
+  const searchHints = {learning:"搜索学习消息", participation:"搜索参与理由", replies:"搜索回复详情", applications:"搜索习惯编号或模式", versions:"搜索操作类型"};
+  $("#content").innerHTML = `${renderModelUsage()}<section class="history-workspace"><header class="history-heading"><div><h2>学习与参与</h2><p class="muted">${total} 条记录</p></div><button id="history-latest" type="button" class="tonal">查看最新</button></header><nav class="history-categories" aria-label="记录类型">${Object.entries(historySections).map(([key,label]) => `<button type="button" data-history-section="${key}" aria-pressed="${key === historySection}">${label}<span>${counts[key] || 0}</span></button>`).join("")}</nav><form id="history-search" class="history-search" role="search" aria-label="搜索记录"><div class="filter-field"><label for="history-query">搜索</label><input id="history-query" type="search" maxlength="200" autocomplete="off" placeholder="${escape(searchHints[historySection])}" value="${escape(historySearchDraft)}"></div><button type="submit" class="primary">搜索</button><button type="button" id="history-clear" ${historySearchDraft || historyQuery ? "" : "disabled"}>清空</button><label class="history-status-field">状态<select id="history-status"><option value="all">全部状态</option>${Object.entries(historyStatuses[historySection]).map(([key,label]) => `<option value="${key}" ${historyStatus === key ? "selected" : ""}>${label}</option>`).join("")}</select></label></form><div class="history-records">${items.length ? items.map(row => {
     const state = historySection === "participation" ? row.outcome : row.status;
     const label = historyStatuses[historySection][state] || (historySection === "versions" ? "版本" : historySection === "applications" ? "引用" : state || "记录");
     const tone = ["error","cancelled","empty_response"].includes(state) ? "error" : ["running","waiting"].includes(state) ? "pending" : ["success","admitted","send_hook"].includes(state) ? "success" : "";
@@ -468,9 +512,22 @@ function renderHistory() {
     const inline = row.review || row.details || row.trait_ids || historySection === "participation" || historySection === "versions" ? row : historyDetails.get(historyDetailKey(row))?.data;
     const open = Number(row.id) === historyOpenId || expanded.has(String(row.id));
     return `<details class="history-record" data-history-id="${row.id}" ${historySection === "learning" ? `data-review-run="${row.id}"` : ""} ${open ? "open" : ""}><summary><time>${date(row.started || row.created)}</time><span class="badge ${tone}">${escape(label)}</span><span class="history-record-title">${escape(title)}${historySection === "learning" && row.flagged ? `<small>${row.flagged} 条自检存疑</small>` : ""}</span></summary><div class="history-record-detail">${inline ? historyDetail(historySection, inline) : '<p class="muted">展开后读取详情。</p>'}</div></details>`;
-  }).join("") : empty("没有符合条件的记录", "切换类型或状态，或等待下一次学习与回复。")}</div><footer class="history-pagination"><span class="muted">${total ? `${offset + 1}–${Math.min(offset + 10,total)} / ${total} 条` : "0 条记录"}</span><div class="actions"><button id="history-prev" ${offset ? "" : "disabled"}>上一页</button><button id="history-next" ${offset + 10 < total ? "" : "disabled"}>下一页</button></div></footer><p class="history-reading-note muted">展开详情或翻页时保持位置；点击「查看最新」更新记录。</p></section>`;
+  }).join("") : empty(historyQuery ? "未找到匹配记录" : "没有符合条件的记录", historyQuery ? "换关键词，或清空搜索后再试。" : "切换类型或状态，或等待下一次学习与回复。")}</div><footer class="history-pagination"><span class="muted">${total ? `${offset + 1}–${Math.min(offset + 10,total)} / ${total} 条` : "0 条记录"}</span><div class="actions"><button id="history-prev" ${offset ? "" : "disabled"}>上一页</button><button id="history-next" ${offset + 10 < total ? "" : "disabled"}>下一页</button></div></footer></section>`;
+  const runHistorySearch = async value => {
+    const next = value.trim();
+    if (next === historyQuery) { historySearchDraft = next; $("#history-query").value = next; $("#history-clear").disabled = !next; return; }
+    await readView(async () => {
+      const previous = [historyQuery, historyOffset, historyAnchor, historyOpenId];
+      historyQuery = historySearchDraft = next; historyOffset = historyAnchor = 0; historyOpenId = null;
+      try { await load(); }
+      catch (error) { [historyQuery, historyOffset, historyAnchor, historyOpenId] = previous; historySearchDraft = historyQuery; renderHistory(); throw error; }
+    });
+  };
+  $("#history-search").onsubmit = event => { event.preventDefault(); return runHistorySearch($("#history-query").value); };
+  $("#history-clear").onclick = () => runHistorySearch("");
+  $("#history-query").oninput = event => { historySearchDraft = event.target.value; $("#history-clear").disabled = !historySearchDraft && !historyQuery; };
   for (const button of document.querySelectorAll("[data-history-section]")) button.onclick = async () => {
-    historySection = button.dataset.historySection; historyStatus = "all"; historyOffset = historyAnchor = 0; historyOpenId = null;
+    historySection = button.dataset.historySection; historyStatus = "all"; historyQuery = historySearchDraft = ""; historyOffset = historyAnchor = 0; historyOpenId = null;
     await readView(() => load());
   };
   $("#history-status").onchange = async event => {
@@ -550,7 +607,7 @@ function renderSettings(target = "#content") {
   const active = memoryPage ? memorySection : settingsSection;
   const review = Object.values(data.memory_review?.rooms || {}).sort((a,b) => b.attempted-a.attempted)[0];
   const reviewStatus = {kept:"无需修改，原记录保留",corrected:"已按新证据修正，可在修正历史回滚",needs_confirmation:"有复核建议待确认，请查看修正历史",up_to_date:"已检查，没有需要复核的新内容",paused:"设置已变化，本次未自动执行",failed:"复核未完成，原记录保留，将按间隔重试",running:"正在复核"}[review?.status] || "等待检查";
-  $(target).innerHTML = `<div class="settings-heading"><h2>${memoryPage ? "记忆设置" : "设置"}</h2><p>${memoryPage ? "管理记忆范围、图片与后台整理。不同人格的记忆始终分开。" : "按用途调整学习与聊天方式。页内切换标签会保留未保存的修改。"}</p></div>
+  $(target).innerHTML = `<div class="settings-heading"><h2>${memoryPage ? "记忆设置" : "设置"}</h2><p>${memoryPage ? "范围、图片与后台整理；人格之间始终分开。" : "按任务调整。未保存修改可在页内换标签。"}</p></div>
     <form id="settings-form"><div class="settings-tabs" role="tablist" aria-label="${memoryPage ? "记忆分类" : "设置分类"}">${Object.entries(tabs).map(([key,label]) => `<button type="button" id="settings-tab-${key}" role="tab" aria-controls="settings-panel-${key}" aria-selected="${key === active}" tabindex="${key === active ? 0 : -1}" data-settings-tab="${key}">${label}</button>`).join("")}</div>
     ${memoryPage ? `<div class="settings-panel settings-grid" id="settings-panel-core" role="tabpanel" aria-labelledby="settings-tab-core" data-settings-panel="core">
 <section class="settings-group"><h2>通用与图片记忆</h2><p>选择记忆的使用范围，管理通用记忆与图片。</p>
@@ -757,9 +814,16 @@ function renderPrompts() {
   const promptsRevision = data.prompts.revision;
   const variables = item.placeholders.length ? item.placeholders.map(p => `<li><code>${escape(promptPlaceholder(p.name))}</code> ${escape(p.description)}</li>`).join("") : "<li>这段提示词不接受变量。</li>";
   const unknown = item.unknown.length ? `<p class="prompt-unknown">未识别的引用：${escape(item.unknown.map(promptPlaceholder).join("、"))}。它们会原样保留，不会被替换。</p>` : "";
-  $("#content").innerHTML = `<h2>提示词</h2><p class="section-intro">这里写的是本插件自己发出的每一条提示词。用两个花括号引用运行时内容，例如 <code>{{persona}}</code> 的宿主人格，或 <code>{{recent_messages}}</code> 的最近群聊。保存后立即生效；正在学习或筛选的旧结果会被丢弃，素材保留，后续请求使用新措辞。目标、候选与上下文仍由插件按结构追加，模板只改变说明文字。留空的变量保持为空字符串。</p>
-    <div class="prompts"><div class="trait-list">${items.map(entry => `<button type="button" class="trait-row" data-prompt="${escape(entry.key)}" aria-pressed="${entry.key === item.key}"><span class="row-meta"><span>${escape(entry.title)}</span><span class="badge ${entry.customized ? "active" : ""}">${entry.customized ? "已自定义" : "出厂默认"}</span></span><strong>${escape(entry.description)}</strong></button>`).join("")}</div>
+  $("#content").innerHTML = `<header class="library-heading"><div><h2>提示词</h2><p class="muted">用 <code>{{变量}}</code> 引用运行时内容；保存立即生效。</p></div></header>
+    <form id="prompt-search" class="library-search" role="search" aria-label="搜索提示词"><div class="filter-field"><label for="prompt-query">搜索</label><input id="prompt-query" type="search" maxlength="120" autocomplete="off" placeholder="标题或说明"></div></form>
+    <div class="prompts"><div class="trait-list" id="prompt-list">${items.map(entry => `<button type="button" class="trait-row" data-prompt="${escape(entry.key)}" data-prompt-text="${escape(`${entry.title} ${entry.description}`.toLowerCase())}" aria-pressed="${entry.key === item.key}"><span class="row-meta"><span>${escape(entry.title)}</span><span class="badge ${entry.customized ? "active" : ""}">${entry.customized ? "已自定义" : "出厂默认"}</span></span><strong>${escape(entry.description)}</strong></button>`).join("")}</div>
     <div class="prompt-editor"><form id="prompt-form"><div class="field"><label for="field-prompt-body">${escape(item.title)}</label><textarea id="field-prompt-body" name="body" class="large prompt-body" maxlength="8000" spellcheck="false">${escape(item.body)}</textarea><small>${item.body.length} / 8000 字 · 保存后立即生效</small></div>${unknown}<details class="prompt-placeholders"><summary>可用变量</summary><ul>${variables}</ul></details><div class="form-end"><button class="primary" type="submit">保存这段提示词</button><button type="button" class="tonal" id="prompt-reset" ${item.customized ? "" : "disabled"}>恢复默认</button></div></form><details class="prompt-default"><summary>查看出厂默认</summary><pre>${escape(item.default)}</pre></details></div></div>`;
+  $("#prompt-query").oninput = event => {
+    const needle = event.target.value.trim().toLowerCase();
+    for (const button of document.querySelectorAll("#prompt-list [data-prompt]")) {
+      button.hidden = Boolean(needle) && !button.dataset.promptText.includes(needle);
+    }
+  };
   for (const button of document.querySelectorAll("[data-prompt]")) button.onclick = async () => { if (dirty && !await confirmAction("切换提示词会放弃未保存的编辑，继续？")) return; dirty = false; selectedPrompt = button.dataset.prompt; renderPrompts(); };
   $("#prompt-form").onsubmit = event => {
     event.preventDefault();
@@ -819,8 +883,12 @@ async function mutate(action, payload = {}, scope = selectedScope, settingsRevis
 }
 
 function markDirty(event) {
-  if (event.target.id !== "tool-search" && event.target.closest("form") && !["preview-form", "memory-search", "library-search"].includes(event.target.closest("form").id)) { dirty = true; editVersion++; }
+  if (event.target.id !== "tool-search" && event.target.closest("form") && !["preview-form", "memory-search", "library-search", "history-search", "prompt-search"].includes(event.target.closest("form").id)) { dirty = true; editVersion++; }
 }
+$("#scope-filter").oninput = event => {
+  scopeFilter = event.target.value;
+  fillScopeOptions();
+};
 $("#content").addEventListener("input", markDirty);
 $("#content").addEventListener("change", markDirty);
 async function navigateView() {
@@ -844,6 +912,7 @@ $("#refresh").onclick = async () => {
   if (dirty && !await confirmAction("刷新会放弃未保存的编辑，继续？")) return;
   dirty = false; invalidateViews();
   if (tab === "history") { historyOpenId = null; historyOffset = historyAnchor = 0; historyDetails.clear(); }
+  scopeFilter = "";
   try { await load(); } catch (error) { notify(error.message, true); }
 };
 $("#learn").onclick = async () => { if (!dirty || await confirmAction("开始学习会放弃当前未保存的编辑，继续？")) await mutate("learn"); };
@@ -861,7 +930,7 @@ function schedulePoll(delay) {
     if (pending || polling || document.hidden) { schedulePoll(); return; }
     polling = true;
     try {
-      await load(!data || !dirty && (tab === "library" && document.activeElement?.id !== "library-query" || tab === "history" && !historyOffset && !historyOpenId));
+      await load(!data || !dirty && (tab === "library" && document.activeElement?.id !== "library-query" || tab === "history" && document.activeElement?.id !== "history-query" && !historyOffset && !historyOpenId));
       pollErrors = 0;
     } catch (error) { pollErrors = Math.min(2, pollErrors + 1); notify(error.message || "连接已中断，请刷新。", true); }
     finally { polling = false; schedulePoll(); }
