@@ -19,6 +19,35 @@ from .settings import (
     learning_blocked,
 )
 
+# Bump when additive columns or indexes require an ordered migration step.
+SCHEMA_VERSION = 1
+# Columns that older CREATE TABLE IF NOT EXISTS installs may lack. ALTER only.
+SCHEMA_COLUMNS = {
+    "context_heads": (
+        ("native_seen", "INTEGER NOT NULL DEFAULT 0"),
+    ),
+    "decisions": (("room", "TEXT NOT NULL DEFAULT ''"),),
+    "messages": (("reply_context", "TEXT NOT NULL DEFAULT '{}'"),),
+    "runs": (("review", "TEXT NOT NULL DEFAULT '{}'"),),
+    "traits": (
+        ("support_count", "INTEGER NOT NULL DEFAULT 1"),
+        ("evidence_count", "INTEGER NOT NULL DEFAULT 0"),
+        ("last_seen", "REAL NOT NULL DEFAULT 0"),
+        ("use_count", "INTEGER NOT NULL DEFAULT 0"),
+        ("last_used", "REAL NOT NULL DEFAULT 0"),
+        ("rating", "INTEGER NOT NULL DEFAULT 0"),
+        ("manual", "INTEGER NOT NULL DEFAULT 0"),
+        ("meaning_stage", "INTEGER NOT NULL DEFAULT 0"),
+        ("examples", "TEXT NOT NULL DEFAULT '[]'"),
+        ("review_audit", "TEXT NOT NULL DEFAULT '{}'"),
+    ),
+    "learning_runtime": (
+        ("draft_key", "TEXT NOT NULL DEFAULT ''"),
+        ("draft", "TEXT NOT NULL DEFAULT '[]'"),
+        ("draft_created", "REAL NOT NULL DEFAULT 0"),
+    ),
+}
+
 
 class Store:
     """Reuse one thread-owned writer; serve reads from independent WAL snapshots."""
@@ -73,7 +102,7 @@ class Store:
             try:
                 await self._run_writer(self._close_connection)
             finally:
-                self._writer.shutdown(wait=False)
+                self._writer.shutdown(wait=True)
 
     def _close_connection(self):
         if self._connection is not None:
@@ -281,6 +310,13 @@ class Store:
                 persona TEXT PRIMARY KEY, description TEXT NOT NULL, image BLOB,
                 mime_type TEXT NOT NULL, content_hash TEXT NOT NULL, updated REAL NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS schema_meta (
+                id INTEGER PRIMARY KEY CHECK(id=1), version INTEGER NOT NULL
+            );
+        """)
+        # Additive columns must exist before indexes that reference them.
+        self.migrate_schema(db)
+        db.executescript("""
             CREATE INDEX IF NOT EXISTS context_messages_order ON context_messages(scope,epoch,created,sequence);
             CREATE INDEX IF NOT EXISTS decisions_room_created ON decisions(room,created);
             CREATE INDEX IF NOT EXISTS decisions_scope ON decisions(scope,created);
@@ -307,6 +343,30 @@ class Store:
                 "SELECT scope,attempted,failures FROM learning_runtime"
             )
         }
+
+    def migrate_schema(self, db):
+        """Add missing columns on upgrades; CREATE IF NOT EXISTS never alters."""
+        row = db.execute("SELECT version FROM schema_meta WHERE id=1").fetchone()
+        version = int(row["version"]) if row else 0
+        if version > SCHEMA_VERSION:
+            raise ValueError(
+                f"学习库 schema 版本 {version} 高于插件支持的 {SCHEMA_VERSION}，请升级插件。"
+            )
+        for table, columns in SCHEMA_COLUMNS.items():
+            existing = {
+                info["name"]
+                for info in db.execute(f"PRAGMA table_info({table})").fetchall()
+            }
+            if not existing:
+                raise ValueError(f"学习库缺少表 {table}，无法继续启动。")
+            for name, declaration in columns:
+                if name not in existing:
+                    db.execute(f"ALTER TABLE {table} ADD COLUMN {name} {declaration}")
+        db.execute(
+            "INSERT INTO schema_meta(id, version) VALUES (1, ?) "
+            "ON CONFLICT(id) DO UPDATE SET version=excluded.version",
+            (SCHEMA_VERSION,),
+        )
 
     def chat_context(self, db, scope, cid, record=None, seed=None, native_seen=None):
         """Restore or append the one bounded room ledger, isolated by native dialog."""

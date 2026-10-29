@@ -159,6 +159,7 @@ class PageAPI:
             conversation=self.plugin.conversation.status(),
             oven_multi=self.plugin.oven_multi.status(),
             jev=self.plugin.jev.status(),
+            memory_runtime=self.plugin.room_memory.status(),
             outgoing_media={
                 "meme_bound": self.plugin.outgoing_media._owner is not None
             },

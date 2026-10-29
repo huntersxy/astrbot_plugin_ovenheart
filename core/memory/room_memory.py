@@ -1183,6 +1183,19 @@ class RoomMemory:
         self.recovered_images = set()
         self.room_pool_lock = asyncio.Lock()
         self.migrations = []
+        self.available = True
+        self.degraded_reason = ""
+
+    def mark_degraded(self, reason):
+        """Keep the plugin alive while memory stays offline until the next reload."""
+        self.available = False
+        self.degraded_reason = str(reason or "记忆准备失败")[:500]
+
+    def status(self):
+        return {
+            "available": self.available,
+            "degraded_reason": self.degraded_reason,
+        }
 
     async def prepare(self):
         from .persona_store import migrate_persona
@@ -1221,6 +1234,8 @@ class RoomMemory:
             encoding="utf-8",
         )
         temporary.replace(ownership)
+        self.available = True
+        self.degraded_reason = ""
 
     async def storage_scope(self, scope):
         from .persona_store import persona_key
@@ -1545,7 +1560,8 @@ class RoomMemory:
     async def permitted(self, event, scope, persona, learning=False):
         s = self.plugin.settings
         if (
-            not s["memory_enabled"]
+            not self.available
+            or not s["memory_enabled"]
             or not s["native_memory_enabled"]
             or not s["apply_enabled"]
             or not await self.plugin.permitted(event)
@@ -1804,7 +1820,8 @@ class RoomMemory:
 
     async def context(self, event, scope, persona, query):
         if (
-            not self.plugin.settings["native_memory_enabled"]
+            not self.available
+            or not self.plugin.settings["native_memory_enabled"]
             or not self.plugin.settings["memory_enabled"]
         ):
             return []

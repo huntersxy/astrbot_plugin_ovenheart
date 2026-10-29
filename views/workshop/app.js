@@ -109,10 +109,14 @@ function updateHeader() {
   fillScopeOptions();
   $("#scope-label").textContent = ["memory", "emojis"].includes(tab) || data.settings.session_isolation ? "会话与人格" : "学习素材来源";
   const activeHabits = data.active_count ?? data.traits?.filter(t => t.status === "active").length ?? 0;
-  const memoryNote = !data.settings.memory_enabled ? "记忆关闭" : data.settings.native_memory_enabled ? (data.settings.memory_isolation ? "记忆按会话" : "记忆同人格共享") : "原生记忆未开";
+  const memoryNote = !data.memory_runtime?.available ? "记忆降级" : !data.settings.memory_enabled ? "记忆关闭" : data.settings.native_memory_enabled ? (data.settings.memory_isolation ? "记忆按会话" : "记忆同人格共享") : "原生记忆未开";
   $("#session-status").textContent = data.scope
     ? `${data.scope.pending} 条待学 · ${activeHabits} 条已生效 · ${memoryNote}`
     : "收到有效聊天后，会话会出现在这里。";
+  if (!window.__ovenheartMemoryWarned && data.memory_runtime && !data.memory_runtime.available) {
+    window.__ovenheartMemoryWarned = true;
+    notify(`记忆以降级模式运行：${data.memory_runtime.degraded_reason || "准备失败，学习与参与仍可用。"}`, true);
+  }
   $("#review-count").textContent = (data.review_count ?? data.scopes.reduce((sum, scope) => sum + scope.review_count, 0)) || "";
   const busy = data.busy.includes(selectedScope);
   $("#learn").disabled = pending || !data.scope || !!data.busy.length || !data.settings.enabled || !data.settings.learning_enabled || !!data.learning_blocked || !data.scope.profile.learning_enabled || data.scope.pending < data.settings.min_evidence;

@@ -1076,9 +1076,9 @@ class ParticipationController:
         if settings.get("jev_enabled") and settings.get(
             "jev_participation_enabled", True
         ):
-            # Jev owns this decision. Do not pay for a main-model planner or
-            # fall back to one after an unavailable/uncertain typed judgment.
-            return await plugin.jev.plan(
+            # Prefer Jev; on transport/format failure fall through to the
+            # legacy planner so autonomous chat does not go silently mute.
+            plan = await plugin.jev.plan(
                 event,
                 scope,
                 persona,
@@ -1087,6 +1087,13 @@ class ParticipationController:
                 settings,
                 waited,
                 followup,
+            )
+            if plan.get("jev_status") != "unavailable":
+                return plan
+            logger.warning(
+                "Jev 参与不可用，回落原规划：%s（连续失败 %s）",
+                plan.get("reason"),
+                getattr(plugin.jev, "failures", 1),
             )
         revision = plugin.settings_revision
         prompts_revision = plugin.prompts_revision

@@ -214,6 +214,7 @@ class JevService:
         self.plugin = plugin
         self.client = SystemOne()
         self.last = {}
+        self.failures = 0
 
     def config(self):
         settings = self.plugin.settings
@@ -248,6 +249,7 @@ class JevService:
             ),
             "learning_enabled": self.plugin.settings.get("jev_learning_enabled", True),
             "last": self.last,
+            "failures": self.failures,
             "transport": self.client.status(),
         }
 
@@ -442,6 +444,7 @@ class JevService:
             target_sequence=0,
             decoration=None,
             expression_intent={},
+            jev_status="ready",
         )
         if not rows or not eligible:
             return plan
@@ -500,8 +503,14 @@ class JevService:
             and 0 <= confidence <= 1
         )
         if result.get("status") != "ready" or not valid_choice:
-            plan["reason"] = "Jev 不可用或返回无效行动，本轮旁观。"
+            # Mark transport/format failure so the legacy planner can own the turn.
+            self.failures = getattr(self, "failures", 0) + 1
+            plan.update(
+                jev_status="unavailable",
+                reason="Jev 不可用或返回无效行动，回落原规划。",
+            )
         elif selected == "wait" and confidence >= settings["jev_reply_threshold"]:
+            self.failures = 0
             plan.update(
                 action="wait",
                 confidence=confidence,
@@ -513,6 +522,7 @@ class JevService:
             and value is not None
             and value >= settings["jev_reply_threshold"]
         ):
+            self.failures = 0
             plan.update(
                 action="reply",
                 confidence=value,
@@ -528,6 +538,8 @@ class JevService:
                 f"{act}本轮目标；结合其引用、自己的原话与已知背景，给出有依据的新回应。"
             )
             plan["expression_intent"]["focus"] = target.get("text", "")[:60]
+        else:
+            self.failures = 0
         plan["memory_status"] = memory_status
         return plan
 

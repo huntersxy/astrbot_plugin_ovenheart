@@ -650,7 +650,15 @@ class PersonaPlugin(Star):
         self.prompt_overrides = await self.store.call("prompt_overrides")
         self.prompts = prompts.merge(self.prompt_overrides)
         self.retriever.templates = self.prompts
-        await self.room_memory.prepare()
+        try:
+            await self.room_memory.prepare()
+        except Exception as exc:
+            # Migration/ownership conflicts must not unload learning or chat.
+            self.room_memory.mark_degraded(exc)
+            logger.error(
+                "记忆准备失败，插件以降级模式启动（学习与参与仍可用）：%s",
+                exc,
+            )
         await self.store.call("prune", self.settings["retention_days"])
         self.page_api = PageAPI(self)
         self.page_api.register()
@@ -659,9 +667,17 @@ class PersonaPlugin(Star):
         self.ready = True
         _active = weakref.ref(self)
         self.worker = self.track(self.poll())
-        if not self.settings["session_isolation"]:
+        if (
+            self.room_memory.available
+            and not self.settings["session_isolation"]
+        ):
             self.track(self.prewarm_embeddings(SHARED_SCOPE))
-        logger.info("Persona learning plugin initialized")
+        logger.info(
+            "Persona learning plugin initialized%s",
+            ""
+            if self.room_memory.available
+            else f" (memory degraded: {self.room_memory.degraded_reason})",
+        )
 
     @filter.on_plugin_loaded()
     async def refresh_integrations(self, metadata):
