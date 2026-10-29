@@ -123,6 +123,7 @@ class Store:
             "history_detail",
             "memory_review_status",
             "self_portrait",
+            "self_portraits",
             "native_accounts",
             "memory_scopes",
             "memory_catalog",
@@ -161,12 +162,14 @@ class Store:
             )
         ]
 
-    def memory_scopes(self, db, persona):
+    def memory_scopes(self, db, persona=None):
         return [
             dict(row)
             for row in db.execute(
-                "SELECT id,umo,persona FROM scopes WHERE persona=? AND id<>? ORDER BY updated DESC",
-                (persona, SHARED_SCOPE),
+                "SELECT id,umo,persona,label FROM scopes WHERE id<>?"
+                + (" AND persona=?" if persona is not None else "")
+                + " ORDER BY updated DESC",
+                (SHARED_SCOPE, persona) if persona is not None else (SHARED_SCOPE,),
             )
         ]
 
@@ -852,6 +855,8 @@ class Store:
 
     @staticmethod
     def _history_scopes(db, scope, section, shared):
+        if scope == "all":
+            return [row[0] for row in db.execute("SELECT id FROM scopes")]
         if (
             not isinstance(scope, str)
             or len(scope) != 24
@@ -946,6 +951,10 @@ class Store:
                 (*values, offset),
             )
         ]
+        owners = {row["id"]: dict(row) for row in db.execute("SELECT id,label,persona FROM scopes")}
+        for item in items:
+            owner = owners[item["scope"]]
+            item.update(label=owner["label"], persona=owner["persona"])
         return {
             "scope": scope,
             "section": section,
@@ -980,7 +989,7 @@ class Store:
         return result
 
     def library(
-        self, db, scope="all", kind="all", status="pending", offset=0, review="all", query=""
+        self, db, scope="all", kind="all", status="all", offset=0, review="all", query=""
     ):
         """Read a paginated library with independent extraction and review signals.
 
@@ -2141,6 +2150,11 @@ class Store:
             for row in db.execute("SELECT scope,attempted,details FROM memory_review_state ORDER BY attempted DESC LIMIT 128")
         }
         return {"latest": max((row["attempted"] for row in rooms.values()), default=0), "rooms": rooms}
+
+    def self_portraits(self, db):
+        return [dict(row) for row in db.execute(
+            "SELECT persona,description,mime_type,updated,image IS NOT NULL AS has_image FROM self_portraits ORDER BY updated DESC"
+        )]
 
     def self_portrait(self, db, persona, payload=None, include_image=False):
         if payload is not None:

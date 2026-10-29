@@ -12,7 +12,8 @@ const librarySelection = new Map();
 const libraryPositions = new Map(), historyDetails = new Map();
 let libraryMobileDetail = false, libraryPageScroll = 0, libraryFiltersOpen = false;
 let historySection = "learning", historyStatus = "all", historyOffset = 0, historyAnchor = 0, historyOpenId = null;
-let historyQuery = "", historySearchDraft = "", scopeFilter = "";
+let historyQuery = "", historySearchDraft = "", historyScope = "all";
+let portraitPersona = "", portraitEditor = "";
 const historySections = {learning:"学习批次", participation:"参与判断", replies:"回复链路", applications:"习惯引用", versions:"历史版本"};
 const historyStatuses = {learning:{error:"失败", running:"学习中", success:"完成"}, participation:{admitted:"交给宿主", waiting:"静默等待", observed:"旁观", limited:"冷却或限额", cancelled:"已取消", error:"决策失败"}, replies:{send_hook:"发送阶段", prepared:"已组装", cancelled:"已取消", empty_response:"未生成回复"}, applications:{}, versions:{}};
 
@@ -45,8 +46,8 @@ const readRequests = new Map();
 const viewCache = new Map();
 const localOperations = new Set();
 let loadVersion = 0, cacheEpoch = 0, editVersion = 0, pollTimer, pollErrors = 0, toolsCache;
-const viewKey = () => JSON.stringify([selectedScope, tab, ...(tab === "library" ? [libraryScope, category, status, libraryOffset, reviewFilter, libraryQuery] : tab === "history" ? [historySection, historyStatus, historyOffset, historyAnchor, historyQuery] : [])]);
-const viewName = () => ["memory", "emojis"].includes(tab) ? "settings" : tab === "portrait" ? "profile" : ["library", "prompts", "history"].includes(tab) ? "summary" : tab;
+const viewKey = () => JSON.stringify([selectedScope, tab, ...(tab === "library" ? [libraryScope, category, status, libraryOffset, reviewFilter, libraryQuery] : tab === "history" ? [historyScope, historySection, historyStatus, historyOffset, historyAnchor, historyQuery] : [])]);
+const viewName = () => ["memory", "emojis"].includes(tab) ? "settings" : tab === "portrait" ? "profile" : tab === "history" ? "history" : ["library", "prompts"].includes(tab) ? "summary" : tab;
 
 function deadline(promise, milliseconds, message) {
   let timer;
@@ -81,37 +82,14 @@ async function afterWrite(context) {
 function scopeOptionLabel(scope) {
   return `${scope.label} / ${scope.persona === "[%None]" ? "未设置人格" : scope.persona}`;
 }
-function fillScopeOptions() {
-  const scopeSelect = $("#scope"), filterInput = $("#scope-filter");
-  const needle = scopeFilter.trim().toLowerCase();
-  const scopes = data?.scopes || [];
-  const matched = needle
-    ? scopes.filter(scope => scopeOptionLabel(scope).toLowerCase().includes(needle) || scope.id.toLowerCase().includes(needle))
-    : scopes;
-  const keepSelected = selectedScope && !matched.some(scope => scope.id === selectedScope)
-    ? scopes.find(scope => scope.id === selectedScope)
-    : null;
-  const options = keepSelected ? [keepSelected, ...matched.filter(scope => scope.id !== selectedScope)] : matched;
-  scopeSelect.innerHTML = options.length
-    ? options.map(scope => `<option value="${escape(scope.id)}">${escape(scopeOptionLabel(scope))}</option>`).join("")
-    : scopes.length
-      ? '<option value="">无匹配会话</option>'
-      : '<option value="">尚无学习会话</option>';
-  if (selectedScope && options.some(scope => scope.id === selectedScope)) scopeSelect.value = selectedScope;
-  scopeSelect.disabled = !scopes.length;
-  if (filterInput) {
-    filterInput.disabled = !scopes.length;
-    filterInput.value = scopeFilter;
-    filterInput.placeholder = scopes.length > 8 ? `搜索 ${scopes.length} 个会话或人格` : "搜索会话或人格";
-  }
+function scopeOptions(selected = "all", persona = "") {
+  return `<option value="all">全部会话</option>${(data?.scopes || []).filter(row => !persona || row.persona === persona).map(row => `<option value="${escape(row.id)}" ${row.id === selected ? "selected" : ""}>${escape(scopeOptionLabel(row))}</option>`).join("")}`;
+}
+function personaOptions(selected = "") {
+  const personas = [...new Set([...(data?.scopes || []).map(row => row.persona), ...(data?.self_portraits || []).map(row => row.persona)])];
+  return `<option value="">全部人格</option>${personas.map(persona => `<option value="${escape(persona)}" ${persona === selected ? "selected" : ""}>${escape(persona === "[%None]" ? "未设置人格" : persona)}</option>`).join("")}`;
 }
 function updateHeader() {
-  fillScopeOptions();
-  const activeHabits = data.active_count ?? data.traits?.filter(t => t.status === "active").length ?? 0;
-  const memoryNote = !data.memory_runtime?.available ? "记忆降级" : !data.settings.memory_enabled ? "记忆关闭" : data.settings.native_memory_enabled ? (data.settings.memory_isolation ? "记忆按会话" : "记忆同人格共享") : "原生记忆未开";
-  $("#session-status").textContent = data.scope
-    ? `${data.scope.pending} 条待学 · ${activeHabits} 条已生效 · ${memoryNote}`
-    : "收到有效聊天后，会话会出现在这里。";
   if (!window.__ovenheartMemoryWarned && data.memory_runtime && !data.memory_runtime.available) {
     window.__ovenheartMemoryWarned = true;
     notify(`记忆以降级模式运行：${data.memory_runtime.degraded_reason || "准备失败，学习与参与仍可用。"}`, true);
@@ -144,24 +122,19 @@ async function load(renderContent = true) {
   const previousPromptsRevision = data?.prompts?.revision;
   const detail = renderContent && pageAtStart === "library"
     ? api("library", undefined, {scope:libraryScope, kind:category, status, offset:libraryOffset, review:reviewFilter, query:libraryQuery})
-    : renderContent && pageAtStart === "history" && selectedScope ? api("history", undefined, {scope:selectedScope, section:historySection, status:historyStatus, offset:historyOffset, anchor:historyAnchor, query:historyQuery})
+    : renderContent && pageAtStart === "history" ? api("history", undefined, {scope:historyScope, section:historySection, status:historyStatus, offset:historyOffset, anchor:historyAnchor, query:historyQuery})
     : renderContent && pageAtStart === "prompts" ? api("prompts") : Promise.resolve(null);
   const current = () => version === loadVersion && key === viewKey();
-  const [next, extra] = await Promise.all([api("state", undefined, {scope:scopeAtStart, view}), detail]).catch(error => { if (!current()) return [null, null]; throw error; });
+  const [next, extra] = await Promise.all([api("state", undefined, {scope:pageAtStart === "profile" ? scopeAtStart : "all", view}), detail]).catch(error => { if (!current()) return [null, null]; throw error; });
   if (!current() || !next) return;
   const previous = data;
   const preserved = view === "summary" && previous?.scope?.id === next.scope?.id
     ? Object.fromEntries(["traits", "runs", "revisions", "applications", "decisions", "turn_traces"].filter(k => k in previous).map(k => [k, previous[k]])) : {};
   data = {...previous, ...next, ...preserved};
-  if (!selectedScope && data.scope) selectedScope = data.scope.id;
+  if (!selectedScope && pageAtStart === "profile" && data.scope && !data.settings.session_isolation) selectedScope = data.scope.id;
   if (pageAtStart === "library" && extra) { data.library = extra; libraryOffset = extra.offset; }
   if (pageAtStart === "prompts" && extra) data.prompts = extra;
   if (pageAtStart === "history" && extra) { data.history = extra; historyOffset = extra.offset || 0; historyAnchor = extra.anchor || 0; }
-  if (renderContent && pageAtStart === "history" && !extra && data.scope) {
-    const history = await api("history", undefined, {scope:selectedScope, section:historySection, status:historyStatus, offset:historyOffset, anchor:historyAnchor, query:historyQuery});
-    if (version !== loadVersion || tab !== pageAtStart) return;
-    data.history = history; historyOffset = history.offset || 0; historyAnchor = history.anchor || 0;
-  }
   if (pageAtStart === "prompts" && !extra && next.prompts_revision && next.prompts_revision !== previousPromptsRevision) {
     const prompts = await api("prompts");
     if (version !== loadVersion || tab !== pageAtStart || selectedScope !== data.scope?.id && data.scope) return;
@@ -196,9 +169,6 @@ function field(name, label, value, help, options = {}) {
 }
 
 function renderNavigation() {
-  $("#session-context").hidden = !(["portrait", "history", "memory", "emojis"].includes(tab)
-    || tab === "profile" && data?.settings.session_isolation
-    || tab === "settings" && settingsSection === "maintenance");
   for (const button of document.querySelectorAll("[data-tab]")) {
     if (button.dataset.tab === tab) button.setAttribute("aria-current", "page"); else button.removeAttribute("aria-current");
   }
@@ -207,30 +177,34 @@ function renderNavigation() {
 function render() {
   renderNavigation();
   if (!data) return;
-  if (!data.scope && tab !== "settings" && tab !== "memory" && tab !== "emojis" && tab !== "library" && tab !== "prompts") {
-    $("#content").innerHTML = empty("从一段真实的对话开始", "在已启用的 AstrBot 会话中聊几句，工坊会自动积累文字素材。也可以先打开设置，选择学习对象与生效方式。");
-    return;
-  }
   if (tab === "profile") renderProfile();
   else if (tab === "portrait") renderSelfPortrait();
   else if (tab === "library") renderLibrary();
   else if (tab === "history") renderHistory();
   else if (tab === "memory") renderMemory();
-  else if (tab === "emojis") window.OvenHeartEmojis.render({root:$("#content"),data,api,escape,notify,confirmAction,isDirty:()=>dirty,clearDirty:()=>{dirty=false;},saveSettings:(payload)=>mutate("settings",payload,selectedScope,data.settings_revision)});
+  else if (tab === "emojis") window.OvenHeartEmojis.render({root:$("#content"),data,api,escape,notify,confirmAction,scopeOptions,personaOptions,isDirty:()=>dirty,clearDirty:()=>{dirty=false;},saveSettings:(payload)=>mutate("settings",payload,selectedScope,data.settings_revision)});
   else if (tab === "prompts") renderPrompts();
   else renderSettings();
 }
 
 function renderProfile() {
-  const p = data.scope.profile;
+  const filter = data.settings.session_isolation ? `<div class="local-filters"><label for="profile-filter-scope">会话<select id="profile-filter-scope">${scopeOptions(selectedScope)}</select></label></div>` : "";
+  if (data.settings.session_isolation && !selectedScope) {
+    $("#content").innerHTML = `<section><h2>人格底稿</h2><p class="section-intro">查看全部会话的独立底稿，选择一项编辑。</p>${filter}<div class="overview-list">${data.scopes.map(row => `<button type="button" class="overview-row" data-profile-edit="${escape(row.id)}"><strong>${escape(scopeOptionLabel(row))}</strong><span>${escape(row.profile.reply_style || row.profile.identity || "沿用 AstrBot 人格，可补充表达与行为偏好。")}</span><small>编辑底稿</small></button>`).join("") || empty("暂无会话底稿", "收到真实聊天后，会话会出现在这里。")}</div></section>`;
+    $("#profile-filter-scope").onchange = changeScope;
+    for (const button of document.querySelectorAll("[data-profile-edit]")) button.onclick = () => changeScope({target:{value:button.dataset.profileEdit}});
+    return;
+  }
+  const p = data.settings.session_isolation ? data.scope.profile : data.shared_scope.profile;
   const profileScope = data.effect_scope || selectedScope;
-  $("#content").innerHTML = `<div class="two-col"><form id="profile-form"><h2>${data.settings.session_isolation ? "当前会话的人格底稿" : "共用人格底稿"}</h2><p class="section-intro">${data.settings.session_isolation ? "只影响所选会话与人格。" : "底稿与习惯在允许的会话共用；群聊词汇仍按来源隔离。"}在 AstrBot 人格之上补充身份、表达和应对方式。</p>
+  $("#content").innerHTML = `${filter}<div class="two-col"><form id="profile-form"><h2>${data.settings.session_isolation ? "当前会话的人格底稿" : "共用人格底稿"}</h2><p class="section-intro">${data.settings.session_isolation ? "只影响所选会话与人格。" : "底稿与习惯在允许的会话共用；群聊词汇仍按来源隔离。"}在 AstrBot 人格之上补充身份、表达和应对方式。</p>
     ${field("identity", "人格补充", p.identity, "留空则沿用 AstrBot 核心人格。", {large:true})}
     ${field("reply_style", "表达基调", p.reply_style, "例如：日常、简短，接得住玩笑。")}
     ${field("behavior", "行为准则", p.behavior, "例如：先倾听；拿不准时先澄清。")}
     <div class="switches">${switchField("learning_enabled", "积累并学习", data.settings.session_isolation ? "仅当前会话与人格" : "影响所有允许的会话", p.learning_enabled)}${switchField("apply_enabled", "应用已生效的习惯", "关闭后仍保留学习数据", p.apply_enabled)}</div>
     <button class="primary" type="submit">保存人格底稿</button></form>
     <aside class="preview"><h2>试一句看看</h2><p>免费预览本插件会追加的表达参考；不调用模型、不发消息。</p><form id="preview-form">${!data.settings.session_isolation && data.scopes.length > 1 ? `<label for="preview-scope">示例会话</label><select id="preview-scope">${data.scopes.map(scope => `<option value="${escape(scope.id)}" ${scope.id === selectedScope ? "selected" : ""}>${escape(scopeOptionLabel(scope))}</option>`).join("")}</select>` : ""}<label for="preview-query">试一句话</label><textarea id="preview-query" placeholder="例如：今天又搞砸了，有点难过。" maxlength="1200"></textarea><div class="preview-actions"><button class="tonal" type="submit">预览生效内容</button><button class="tonal" type="button" id="model-preview" ${!selectedScope || selectedScope === data.shared_scope?.id ? "disabled" : ""}>生成示例回复</button></div><details class="field-help"><summary>说明</summary><small>示例回复会调用模型，可能产生费用；不保存。请先选真实会话。预览用文字检索，真实回复还可能经向量与情境筛选。</small></details></form><pre id="preview-output" hidden></pre><div id="model-preview-result" class="model-preview-result" hidden aria-live="polite"><p id="model-preview-meta" class="muted"></p><div id="model-preview-text" class="model-preview-text"></div></div></aside></div>`;
+  if ($("#profile-filter-scope")) $("#profile-filter-scope").onchange = changeScope;
   if ($("#preview-scope")) $("#preview-scope").onchange = changeScope;
   $("#profile-form").addEventListener("submit", async event => {
     event.preventDefault();
@@ -272,12 +246,23 @@ function imageFileData(file) {
 }
 
 function renderSelfPortrait() {
-  const scope = data.scope?.id || selectedScope, persona = data.scope?.persona;
+  if (portraitEditor) { renderPortraitEditor(); return; }
+  const personas = [...new Set([...data.scopes.map(row => row.persona), ...(data.self_portraits || []).map(row => row.persona)])].filter(persona => !portraitPersona || persona === portraitPersona);
+  const rows = personas.map(persona => ({persona, owner:data.scopes.find(row => row.persona === persona), portrait:data.self_portraits?.find(row => row.persona === persona)}));
+  $("#content").innerHTML = `<section class="self-portrait"><h2>人格自画像</h2><p class="section-intro">查看全部人格的外观描述和参考图。同一人格在各会话共用一份自画像。</p><div class="local-filters"><label for="portrait-persona">人格<select id="portrait-persona">${personaOptions(portraitPersona)}</select></label></div><div class="overview-list">${rows.map(({persona,owner,portrait}) => `<article class="overview-row"><div><strong>${escape(persona === "[%None]" ? "未设置人格" : persona)}</strong><p>${escape(portrait?.description || "尚未填写外观描述。")}</p><small>${portrait?.has_image ? "已添加参考图" : "未添加参考图"}</small></div><button type="button" data-portrait-edit="${escape(owner?.id || "")}" ${owner ? "" : "disabled"}>${portrait ? "编辑自画像" : "设置自画像"}</button></article>`).join("") || empty("暂无人格自画像", "收到使用 AstrBot 人格的真实聊天后，可在这里设置外观资料。")}</div></section>`;
+  $("#portrait-persona").onchange = event => { portraitPersona = event.target.value; renderSelfPortrait(); };
+  for (const button of document.querySelectorAll("[data-portrait-edit]")) button.onclick = () => { portraitEditor = button.dataset.portraitEdit; renderPortraitEditor(); };
+}
+
+function renderPortraitEditor() {
+  const owner = data.scopes.find(row => row.id === portraitEditor);
+  const scope = owner?.id, persona = owner?.persona;
   const canSave = Boolean(scope && scope !== data.shared_scope?.id && scope !== "0".repeat(24) && persona);
-  const portrait = data.self_portrait;
-  $("#content").innerHTML = `<section class="self-portrait"><h2>人格自画像</h2><p class="section-intro">给当前 AstrBot 人格设置外观描述和参考图，帮助它在聊天图片中辨认自己的形象。不同人格分别保存，同一人格在各会话共用。</p>${canSave ? `<p class="muted">当前人格：${escape(persona)}</p>` : '<p class="notice">先在顶部选择一个真实会话，再为它当前使用的人格设置自画像。</p>'}<form id="portrait-form"><fieldset ${canSave ? "" : "disabled"}><div class="portrait-layout"><div class="portrait-reference"><img id="portrait-preview" alt="当前人格的自画像参考图" hidden><p id="portrait-image-status" class="muted">${portrait?.has_image ? "正在读取参考图…" : "尚未添加参考图，也可以先只填写外观描述。"}</p><label for="portrait-file">参考图片（可选）</label><input id="portrait-file" name="image" type="file" accept="image/png,image/jpeg,image/webp"><small>静态 PNG、JPG 或 WebP，2 MB 以内，最多 419 万像素。更换图片后保存才会生效。</small></div><div><label for="portrait-description">外观特征</label><textarea id="portrait-description" name="description" maxlength="1200" required placeholder="例如：金色短发，头上有插座形发饰，常穿白色连衣裙。描述外观即可，不用重写人格。">${escape(portrait?.description || "")}</textarea><p class="muted">文字聊天只使用这段描述；处理来图且回复模型支持识图时，才会附上参考图。外观资料不会替换人格身份。</p><div class="actions"><button type="submit" class="primary">保存自画像</button>${portrait ? '<button type="button" id="portrait-clear" class="danger">清除自画像</button>' : ""}</div></div></div></fieldset></form></section>`;
+  const portrait = data.self_portraits?.find(row => row.persona === persona);
+  $("#content").innerHTML = `<section class="self-portrait"><button type="button" id="portrait-back" class="text">返回自画像列表</button><h2>人格自画像</h2><p class="section-intro">给当前 AstrBot 人格设置外观描述和参考图，帮助它在聊天图片中辨认自己的形象。不同人格分别保存，同一人格在各会话共用。</p>${canSave ? `<p class="muted">当前人格：${escape(persona)}</p>` : '<p class="notice">该人格暂无关联会话，请返回列表重新选择。</p>'}<form id="portrait-form"><fieldset ${canSave ? "" : "disabled"}><div class="portrait-layout"><div class="portrait-reference"><img id="portrait-preview" alt="当前人格的自画像参考图" hidden><p id="portrait-image-status" class="muted">${portrait?.has_image ? "正在读取参考图…" : "尚未添加参考图，也可以先只填写外观描述。"}</p><label for="portrait-file">参考图片（可选）</label><input id="portrait-file" name="image" type="file" accept="image/png,image/jpeg,image/webp"><small>静态 PNG、JPG 或 WebP，2 MB 以内，最多 419 万像素。更换图片后保存才会生效。</small></div><div><label for="portrait-description">外观特征</label><textarea id="portrait-description" name="description" maxlength="1200" required placeholder="例如：金色短发，头上有插座形发饰，常穿白色连衣裙。描述外观即可，不用重写人格。">${escape(portrait?.description || "")}</textarea><p class="muted">文字聊天只使用这段描述；处理来图且回复模型支持识图时，才会附上参考图。外观资料不会替换人格身份。</p><div class="actions"><button type="submit" class="primary">保存自画像</button>${portrait ? '<button type="button" id="portrait-clear" class="danger">清除自画像</button>' : ""}</div></div></div></fieldset></form></section>`;
+  $("#portrait-back").onclick = async () => { if (dirty && !await confirmAction("返回会放弃未保存的自画像编辑，继续？")) return; dirty = false; portraitEditor = ""; renderSelfPortrait(); };
   const form = $("#portrait-form"), fileInput = $("#portrait-file");
-  const live = () => tab === "portrait" && selectedScope === scope && $("#portrait-form") === form;
+  const live = () => tab === "portrait" && portraitEditor === scope && $("#portrait-form") === form;
   const show = url => { $("#portrait-preview").src = url; $("#portrait-preview").hidden = false; $("#portrait-image-status").textContent = ""; };
   if (canSave && portrait?.has_image) api("portrait", undefined, {scope, image:"true"}).then(saved => {
     if (live() && !fileInput.files?.length && saved?.encoded) show(`data:${saved.mime_type};base64,${saved.encoded}`);
@@ -294,13 +279,14 @@ function renderSelfPortrait() {
       const encoded = file ? (await imageFileData(file)).split(",", 2)[1] : undefined;
       await api("portrait", {scope, action:"save", description, ...(encoded ? {encoded} : {})});
       notify("自画像已保存，后续对话会使用当前人格的外观资料。");
+      portraitEditor = "";
       await afterWrite(context);
     }, event);
   };
   if (portrait) $("#portrait-clear").onclick = async event => {
     if (!await confirmAction("清除当前人格的参考图和外观描述？")) return;
     const context = writeContext();
-    await guarded(async () => { await api("portrait", {scope, action:"clear"}); notify("自画像已清除。"); await afterWrite(context); }, event);
+    await guarded(async () => { await api("portrait", {scope, action:"clear"}); notify("自画像已清除。"); portraitEditor = ""; await afterWrite(context); }, event);
   };
 }
 
@@ -470,7 +456,7 @@ function renderLibrary() {
 }
 
 function historyDetailKey(row) {
-  return JSON.stringify([selectedScope, historySection, row.id, row.status, row.outcome, row.finished, row.updated]);
+  return JSON.stringify([row.scope, historySection, row.id, row.status, row.outcome, row.finished, row.updated]);
 }
 function historyDetail(section, row) {
   if (section === "learning") {
@@ -484,7 +470,7 @@ function historyDetail(section, row) {
     return `<p>${escape(t.cancel_reason || t.reason)}</p><p>${escape(t.retrieval_message)}</p><p>检索选中 ${selected.length} 条，装入 ${included.length} 条，上限 ${escape(t.max_traits)} 条。</p><p>习惯与底稿 ${escape(t.habit_chars)} / ${escape(t.habit_budget)} 字符；额外群聊 ${escape(t.context_count)} / ${escape(t.context_limit)} 条、${escape(t.context_chars)} / ${escape(t.context_budget)} 字符。</p>${t.selection_seconds != null ? `<p>习惯检索 ${escape(t.selection_seconds)} 秒；请求组装 ${escape(t.assembly_seconds)} 秒；收到消息至组装 ${escape(t.input_age_seconds)} 秒${t.elapsed_seconds != null ? `；至当前阶段 ${escape(t.elapsed_seconds)} 秒` : ""}。</p>` : ""}<p>已装入：${included.length ? included.map(id => `#${escape(id)}`).join("、") : "无学习习惯"}${dropped.length ? `；选中未装入：${dropped.map(id => `#${escape(id)}`).join("、")}（受生效状态或字符预算限制）` : ""}</p><p>${escape(cache)}</p><small>目标用户 ${escape(t.target_sender_id)} · 消息 ${escape(t.target_message_id || "无平台编号")}。临时文本 ${escape(t.temporary_chars)} 字符；不是整个请求的字符数。</small>`;
   }
   if (section === "applications") return `<p>记录引用：${(row.trait_ids || []).map(id => `#${escape(id)}`).join("、") || "无条目"}</p><p class="muted">引用次数不代表模型采用，也不代表平台送达。</p>`;
-  return `<p>${row.scope === data.shared_scope?.id ? "共用空间" : "当前会话"}的${escape(actions[row.action] || row.action)}之前版本。</p><p class="muted">恢复底稿和学习条目，不恢复原始素材。恢复前也会留存当前版本。</p><button type="button" data-restore="${escape(row.id)}" data-restore-scope="${escape(row.scope)}">恢复此版本</button>`;
+  return `<p>${row.scope === data.shared_scope?.id ? "共用空间" : (data.scopes.find(scope => scope.id === row.scope)?.label || "来源会话")}的${escape(actions[row.action] || row.action)}之前版本。</p><p class="muted">恢复底稿和学习条目，不恢复原始素材。恢复前也会留存当前版本。</p><button type="button" data-restore="${escape(row.id)}" data-restore-scope="${escape(row.scope)}">恢复此版本</button>`;
 }
 function bindHistoryRestore(root = document) {
   for (const button of root.querySelectorAll("[data-restore]")) button.onclick = async () => {
@@ -508,14 +494,14 @@ function renderHistory() {
   const counts = page?.counts || Object.fromEntries(Object.entries(legacyKeys).map(([key,value]) => [key,(data[value] || []).length]));
   const total = page?.total ?? items.length, offset = page?.offset ?? 0;
   const searchHints = {learning:"搜索学习消息", participation:"搜索参与理由", replies:"搜索回复详情", applications:"搜索习惯编号或模式", versions:"搜索操作类型"};
-  $("#content").innerHTML = `${renderModelUsage()}<section class="history-workspace"><header class="history-heading"><div><h2>学习与参与</h2><p class="muted">${total} 条记录</p></div><button id="history-latest" type="button" class="tonal">查看最新</button></header><nav class="history-categories" aria-label="记录类型">${Object.entries(historySections).map(([key,label]) => `<button type="button" data-history-section="${key}" aria-pressed="${key === historySection}">${label}<span>${counts[key] || 0}</span></button>`).join("")}</nav><form id="history-search" class="history-search" role="search" aria-label="搜索记录"><div class="filter-field"><label for="history-query">搜索</label><input id="history-query" type="search" maxlength="200" autocomplete="off" placeholder="${escape(searchHints[historySection])}" value="${escape(historySearchDraft)}"></div><button type="submit" class="primary">搜索</button><button type="button" id="history-clear" ${historySearchDraft || historyQuery ? "" : "disabled"}>清空</button><label class="history-status-field">状态<select id="history-status"><option value="all">全部状态</option>${Object.entries(historyStatuses[historySection]).map(([key,label]) => `<option value="${key}" ${historyStatus === key ? "selected" : ""}>${label}</option>`).join("")}</select></label></form><div class="history-records">${items.length ? items.map(row => {
+  $("#content").innerHTML = `${renderModelUsage()}<section class="history-workspace"><header class="history-heading"><div><h2>学习与参与</h2><p class="muted">${total} 条记录</p></div><button id="history-latest" type="button" class="tonal">查看最新</button></header><nav class="history-categories" aria-label="记录类型">${Object.entries(historySections).map(([key,label]) => `<button type="button" data-history-section="${key}" aria-pressed="${key === historySection}">${label}<span>${counts[key] || 0}</span></button>`).join("")}</nav><form id="history-search" class="history-search" role="search" aria-label="搜索记录"><div class="filter-field"><label for="history-query">搜索</label><input id="history-query" type="search" maxlength="200" autocomplete="off" placeholder="${escape(searchHints[historySection])}" value="${escape(historySearchDraft)}"></div><button type="submit" class="primary">搜索</button><button type="button" id="history-clear" ${historySearchDraft || historyQuery ? "" : "disabled"}>清空</button><label class="history-status-field" for="history-scope">会话<select id="history-scope">${scopeOptions(historyScope)}</select></label><label class="history-status-field">状态<select id="history-status"><option value="all">全部状态</option>${Object.entries(historyStatuses[historySection]).map(([key,label]) => `<option value="${key}" ${historyStatus === key ? "selected" : ""}>${label}</option>`).join("")}</select></label></form><div class="history-records">${items.length ? items.map(row => {
     const state = historySection === "participation" ? row.outcome : row.status;
     const label = historyStatuses[historySection][state] || (historySection === "versions" ? "版本" : historySection === "applications" ? "引用" : state || "记录");
     const tone = ["error","cancelled","empty_response"].includes(state) ? "error" : ["running","waiting"].includes(state) ? "pending" : ["success","admitted","send_hook"].includes(state) ? "success" : "";
     const title = historySection === "learning" ? row.message || "正在分析本批素材…" : historySection === "participation" ? row.reason : historySection === "replies" ? `${row.target_sender || row.details?.target_sender || "当前成员"} · ${({at:"@ 唤醒",quote:"引用唤醒",name:"名称唤醒",autonomous:"自主参与",native:"原生回复"})[row.route || row.details?.route] || "回复记录"}` : historySection === "versions" ? actions[row.action] || row.action : `引用 ${row.trait_count ?? row.trait_ids?.length ?? 0} 条习惯`;
     const inline = row.review || row.details || row.trait_ids || historySection === "participation" || historySection === "versions" ? row : historyDetails.get(historyDetailKey(row))?.data;
     const open = Number(row.id) === historyOpenId || expanded.has(String(row.id));
-    return `<details class="history-record" data-history-id="${row.id}" ${historySection === "learning" ? `data-review-run="${row.id}"` : ""} ${open ? "open" : ""}><summary><time>${date(row.started || row.created)}</time><span class="badge ${tone}">${escape(label)}</span><span class="history-record-title">${escape(title)}${historySection === "learning" && row.flagged ? `<small>${row.flagged} 条自检存疑</small>` : ""}</span></summary><div class="history-record-detail">${inline ? historyDetail(historySection, inline) : '<p class="muted">展开后读取详情。</p>'}</div></details>`;
+    return `<details class="history-record" data-history-id="${row.id}" ${historySection === "learning" ? `data-review-run="${row.id}"` : ""} ${open ? "open" : ""}><summary><time>${date(row.started || row.created)}</time><span class="badge ${tone}">${escape(label)}</span><span class="history-record-title">${escape(title)}<small>${escape(row.label || "共用空间")}${row.persona ? ` / ${escape(row.persona)}` : ""}</small>${historySection === "learning" && row.flagged ? `<small>${row.flagged} 条自检存疑</small>` : ""}</span></summary><div class="history-record-detail">${inline ? historyDetail(historySection, inline) : '<p class="muted">展开后读取详情。</p>'}</div></details>`;
   }).join("") : empty(historyQuery ? "未找到匹配记录" : "没有符合条件的记录", historyQuery ? "换关键词，或清空搜索后再试。" : "切换类型或状态，或等待下一次学习与回复。")}</div><footer class="history-pagination"><span class="muted">${total ? `${offset + 1}–${Math.min(offset + 10,total)} / ${total} 条` : "0 条记录"}</span><div class="actions"><button id="history-prev" ${offset ? "" : "disabled"}>上一页</button><button id="history-next" ${offset + 10 < total ? "" : "disabled"}>下一页</button></div></footer></section>`;
   const runHistorySearch = async value => {
     const next = value.trim();
@@ -534,6 +520,7 @@ function renderHistory() {
     historySection = button.dataset.historySection; historyStatus = "all"; historyQuery = historySearchDraft = ""; historyOffset = historyAnchor = 0; historyOpenId = null;
     await readView(() => load());
   };
+  $("#history-scope").onchange = async event => { historyScope = event.target.value; historyOffset = historyAnchor = 0; historyOpenId = null; await readView(() => load()); };
   $("#history-status").onchange = async event => {
     historyStatus = event.target.value; historyOffset = historyAnchor = 0; historyOpenId = null;
     await readView(() => load());
@@ -548,14 +535,14 @@ function renderHistory() {
     historyOpenId = id; loadVersion++;
     for (const other of document.querySelectorAll("details[data-history-id]")) if (other !== node) other.open = false;
     const item = items.find(row => row.id === id), key = historyDetailKey(item);
-    const scope = selectedScope, section = historySection;
+    const scope = item.scope, filterScope = historyScope, section = historySection;
     const body = node.querySelector(".history-record-detail");
     const cached = historyDetails.get(key);
     if (cached && Date.now() - cached.at < 30000) { body.innerHTML = historyDetail(section,cached.data); bindHistoryRestore(body); return; }
     body.innerHTML = '<p class="muted" role="status">正在读取这条记录…</p>';
     try {
       const result = await api("history/detail", undefined, {scope, section, id});
-      if (tab !== "history" || scope !== selectedScope || section !== historySection || !node.isConnected) return;
+      if (tab !== "history" || filterScope !== historyScope || section !== historySection || !node.isConnected) return;
       historyDetails.set(key,{data:result,at:Date.now()});
       while (historyDetails.size > 12) historyDetails.delete(historyDetails.keys().next().value);
       body.innerHTML = historyDetail(section,result); bindHistoryRestore(body);
@@ -597,7 +584,7 @@ function bindSettingsTabs(active, memoryPage) {
 
 function renderMemory() {
   window.OvenHeartMemory.render({
-    root: $("#content"), data, api, escape, notify, confirmAction,
+    root: $("#content"), data, api, escape, notify, confirmAction, scopeOptions, personaOptions,
     renderSettings: () => renderSettings("#memory-body"),
     isDirty: () => dirty, editVersion: () => editVersion,
     clearDirty: () => { dirty = false; },
@@ -709,7 +696,7 @@ function renderSettings(target = "#content") {
 </div>
 <div class="settings-panel settings-grid" id="settings-panel-maintenance" role="tabpanel" aria-labelledby="settings-tab-maintenance" data-settings-panel="maintenance">
 <section class="settings-group debug-settings"><h2>调试日志</h2><p>在 AstrBot 日志中搜索「OvenHeart debug」查看本插件的处理过程。</p>${switchField("debug_enabled", "启用 Debug 模式", "完整输出实际注入内容、学习请求与响应、自检和检索筛选结果。包含聊天、人格和记忆摘录；仅在调试时开启。不会输出模型配置密钥或 HTTP 鉴权头。", s.debug_enabled)}</section>
-<section class="settings-group"><h2>素材维护</h2><p>仅清理当前会话的原始聊天素材，保留人格、学习条目与证据摘录。</p>${data.scope && data.scope.id !== data.shared_scope?.id ? '<button type="button" id="clear-messages" class="danger">清除当前会话的原始素材</button><p class="muted">清除后无法恢复原始素材。</p>' : '<p class="muted">选择具体会话后可清理原始素材。</p>'}</section>
+<section class="settings-group"><h2>素材维护</h2><p>选择要清理的会话，保留人格、学习条目与证据摘录。</p><label for="clear-scope">清理目标</label><select id="clear-scope"><option value="">选择具体会话</option>${data.scopes.map(row => `<option value="${escape(row.id)}">${escape(scopeOptionLabel(row))}</option>`).join("")}</select><button type="button" id="clear-messages" class="danger" disabled>清除该会话的原始素材</button><p class="muted">清除后无法恢复原始素材。</p></section>
 </div>`}
     <div class="form-end"><button class="primary" type="submit">${memoryPage ? "保存记忆设置" : "保存设置"}</button><span class="muted">保存本页所有标签中的修改，立即生效并同步到 AstrBot 插件配置。</span></div></form>`;
   bindSettingsTabs(active, memoryPage);
@@ -736,7 +723,8 @@ function renderSettings(target = "#content") {
     Object.assign(patch, tools);
     mutate("settings", patch, selectedScope, settingsRevision);
   };
-  if ($("#clear-messages")) $("#clear-messages").onclick = async () => { if (await confirmAction("永久清除当前会话所有原始聊天素材？学习条目及其证据摘录会保留。")) mutate("clear_messages"); };
+  if ($("#clear-scope")) $("#clear-scope").onchange = event => { $("#clear-messages").disabled = !event.target.value; };
+  if ($("#clear-messages")) $("#clear-messages").onclick = async () => { const scope = $("#clear-scope").value, owner = data.scopes.find(row => row.id === scope); if (owner && await confirmAction(`永久清除“${scopeOptionLabel(owner)}”的原始聊天素材？学习条目及其证据摘录会保留。`)) mutate("clear_messages", {}, scope); };
 }
 
 function renderAutonomousTools(settings) {
@@ -887,14 +875,8 @@ async function mutate(action, payload = {}, scope = selectedScope, settingsRevis
 }
 
 function markDirty(event) {
-  if (event.target.id !== "tool-search" && event.target.closest("form") && !["preview-form", "memory-search", "library-search", "history-search", "prompt-search"].includes(event.target.closest("form").id)) { dirty = true; editVersion++; }
+  if (!["tool-search", "clear-scope"].includes(event.target.id) && event.target.closest("form") && !["preview-form", "memory-search", "library-search", "history-search", "emoji-search", "prompt-search"].includes(event.target.closest("form").id)) { dirty = true; editVersion++; }
 }
-$("#scope-filter").oninput = event => {
-  scopeFilter = event.target.value;
-  fillScopeOptions();
-};
-$("#content").addEventListener("input", markDirty);
-$("#content").addEventListener("change", markDirty);
 async function navigateView() {
   rememberLibraryPosition();
   const page = tab, scope = selectedScope;
@@ -910,14 +892,12 @@ async function navigateView() {
 async function changeScope(event) {
   const next = event.target.value; event.target.value = selectedScope;
   if (dirty && !await confirmAction("切换会话会放弃未保存的编辑，继续？")) return;
-  selectedScope = next; selectedTrait = null; historyOpenId = null; historyAnchor = historyOffset = 0; dirty = false; await navigateView();
+  selectedScope = next === "all" ? "" : next; dirty = false; await navigateView();
 }
-$("#scope").onchange = changeScope;
 $("#refresh").onclick = async () => {
   if (dirty && !await confirmAction("刷新会放弃未保存的编辑，继续？")) return;
   dirty = false; invalidateViews();
   if (tab === "history") { historyOpenId = null; historyOffset = historyAnchor = 0; historyDetails.clear(); }
-  scopeFilter = "";
   try { await load(); } catch (error) { notify(error.message, true); }
 };
 for (const button of document.querySelectorAll("[data-tab]")) button.onclick = async () => {
@@ -946,7 +926,6 @@ async function start() {
   bridge = window.AstrBotPluginView || window.AstrBotPluginPage;
   if (!bridge) {
     notify("未连接 AstrBot Panel。请安装并启用插件，从 Panel 的插件页面打开「人格工坊」。", true);
-    $("#scope").innerHTML = '<option value="">请从 AstrBot Panel 打开</option>';
     $("#content").innerHTML = empty("需要从 AstrBot Panel 打开", "此页面使用 AstrBot 的登录与权限，不需要单独启动网页服务。");
     return;
   }

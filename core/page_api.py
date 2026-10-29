@@ -180,6 +180,7 @@ class PageAPI:
         if view == "full":
             state["tools"] = self.tool_inventory()
         if view in {"full", "profile"}:
+            state["self_portraits"] = await self.plugin.store.read("self_portraits")
             selected = state.get("scope") or {}
             state["self_portrait"] = await self.plugin.store.read("self_portrait", selected["persona"]) if selected.get("id") not in {None, SHARED_SCOPE} else None
         if view in {"full", "settings"}:
@@ -213,7 +214,7 @@ class PageAPI:
             return {"status": "error", "message": "人格工坊正在初始化，请稍后刷新。"}
         try:
             scope, section = (
-                request.query.get("scope"),
+                request.query.get("scope", "all"),
                 request.query.get("section", "learning"),
             )
             shared = not self.plugin.settings["session_isolation"]
@@ -361,7 +362,7 @@ class PageAPI:
                 "library",
                 request.query.get("scope", "all"),
                 request.query.get("kind", "all"),
-                request.query.get("status", "pending"),
+                request.query.get("status", "all"),
                 int(request.query.get("offset", "0")),
                 request.query.get("review", "all"),
                 request.query.get("query", ""),

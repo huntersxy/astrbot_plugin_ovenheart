@@ -36,7 +36,7 @@ class SelfPortrait:
     async def persona(self, scope):
         if not scope or scope == SHARED_SCOPE:
             raise ValueError(
-                "请先在顶部选择具体会话，确定要设置自画像的 AstrBot 人格。"
+                "请选择要编辑的人格自画像。"
             )
         row = await self.plugin.store.read("scope_profile", scope)
         if row is None:

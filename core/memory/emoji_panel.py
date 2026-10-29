@@ -14,7 +14,7 @@ from astrbot.api import logger
 from astrbot.api.web import request
 
 from ..settings import SHARED_SCOPE
-from .memory_panel import MemoryPanel, read_console
+from .memory_panel import MemoryPanel, read_visible_console, storage_sources
 
 FIELDS = {
     "emoji_upload": {
@@ -101,6 +101,13 @@ class EmojiPanel(MemoryPanel):
     async def scope(self, value):
         return SHARED_SCOPE if value == "library" else await super().scope(value)
 
+    async def sources(self, value="all", persona=""):
+        library = {"id": SHARED_SCOPE, "label": "公共图库", "persona": ""}
+        if value == "library":
+            return [library]
+        rows = await super().sources(value, persona)
+        return ([library] if value == "all" and not persona else []) + rows
+
     @property
     def packs(self):
         return self.plugin.store.path.parent.parent / "meme_manager/packs"
@@ -118,14 +125,16 @@ class EmojiPanel(MemoryPanel):
                     "message": "meme_manager 图库元数据无法读取，请检查来源是否完整。",
                 }
         try:
-            scope = await self.scope(request.query.get("scope", "library"))
+            scope = request.query.get("scope", "all")
+            owners = storage_sources(await self.sources(scope, request.query.get("persona", "")))
             query = request.query.get("query", "").strip()
             offset = int(request.query.get("offset", 0))
             if len(query) > 500 or not 0 <= offset <= 100000:
                 raise ValueError("请缩短关键词或重置页码。")
             result = await asyncio.to_thread(
-                read_console,
-                self.plugin.room_memory.directory / await self.plugin.room_memory.storage_scope(scope),
+                read_visible_console,
+                self.plugin.room_memory.directory,
+                list(owners),
                 "emojis",
                 "image",
                 query,
@@ -134,6 +143,8 @@ class EmojiPanel(MemoryPanel):
                 "",
                 None,
                 None,
+                visible_scope=scope if scope not in {"all", "library"} else None,
+                sources=owners,
             )
             return {"status": "ok", "data": result}
         except (ValueError, OSError) as exc:

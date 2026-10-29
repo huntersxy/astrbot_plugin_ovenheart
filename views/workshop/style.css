@@ -139,17 +139,7 @@ input[type="checkbox"]:disabled { opacity: .5; cursor: not-allowed; }
 #review-count:not(:empty) { min-width: 20px; margin-left: auto; padding: 0 5px; border-radius: 6px; background: var(--tint-strong); color: var(--accent-ink); text-align: center; font-size: 11px; font-variant-numeric: tabular-nums; line-height: 20px; }
 #review-count:empty { display: none; }
 .sidebar-note { margin: 34px 12px 0; padding-top: 20px; border-top: 1px solid var(--line); color: var(--muted); font-size: 11px; line-height: 1.9; }
-.workshop-main { min-width: 0; padding: 0 32px 32px; }
-.workshop-main:has(> .session-bar[hidden]) { padding-top: 28px; }
-.session-bar { display: grid; grid-template-columns: minmax(240px, 1.4fr) minmax(0, 1fr); align-items: end; gap: 12px 28px; margin-bottom: 28px; padding: 20px 0; border-bottom: 1px solid var(--line); }
-.scope-field { min-width: 0; }
-.scope-field label { margin-bottom: 7px; color: var(--muted); font-size: 11px; }
-.scope-combo { display: grid; gap: 8px; }
-.scope-combo input[type="search"] { min-height: 36px; background-color: var(--surface-2); border-color: transparent; }
-.scope-combo input[type="search"]:focus { border-color: var(--accent); }
-.scope-field select { background-color: var(--surface-2); border-color: transparent; }
-.scope-field select:focus { border-color: var(--accent); }
-.session-bar > p { margin: 0 0 10px; color: var(--muted); font-size: 12px; line-height: 1.6; }
+.workshop-main { min-width: 0; padding: 28px 32px 32px; }
 .field-help { margin-top: 6px; }
 .field-help > summary { width: fit-content; padding: 2px 0; color: var(--muted); font-size: 12px; font-weight: 500; }
 .field-help small { display: block; margin-top: 6px; }
@@ -472,8 +462,7 @@ footer { display: flex; justify-content: space-between; gap: 20px; padding: 18px
   .tabs button { flex: 0 0 auto; min-height: 40px; padding: 8px 12px; font-size: 12px; }
   #review-count:not(:empty) { margin-left: 3px; }
   .sidebar-note { display: none; }
-  .workshop-main { padding: 0 24px 24px; }
-  .session-bar { gap: 10px 22px; margin-bottom: 26px; align-items: start; }
+  .workshop-main { padding: 24px; }
   .two-col { grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); gap: 24px; }
   .settings-group .two-col { grid-template-columns: 1fr; }
   .library, .prompts { grid-template-columns: minmax(0, .9fr) minmax(0, 1.3fr); }
@@ -487,13 +476,10 @@ footer { display: flex; justify-content: space-between; gap: 20px; padding: 18px
   h1 { font-size: 23px; }
   .head-actions { margin-left: auto; }
   .head-actions button { min-height: 40px; }
-  .workshop-main { padding: 0 18px 22px; }
+  .workshop-main { padding: 22px 18px; }
   .workshop-sidebar { padding: 8px; }
   .tabs button { min-height: 42px; padding: 9px 10px; }
   .tabs button::before { width: 15px; height: 15px; }
-  .session-bar { grid-template-columns: minmax(0, 1fr); gap: 8px; padding: 18px 0; margin-bottom: 24px; }
-  .scope-field { margin-bottom: 5px; }
-  .scope-combo input[type="search"], .scope-field select { min-height: 42px; }
   .library-search button[type="submit"], .history-search button[type="submit"] { flex: 1; }
   .two-col, .library, .prompts { grid-template-columns: minmax(0, 1fr); gap: 28px; }
   .preview { padding: 18px; }
@@ -633,4 +619,47 @@ footer { display: flex; justify-content: space-between; gap: 20px; padding: 18px
   .portrait-layout { grid-template-columns:1fr; gap:24px; }
   .portrait-reference { padding:0 0 24px; border-right:0; border-bottom:1px solid var(--line); }
   .portrait-reference img { max-height:240px; }
+}
+
+/* Each workspace owns its filters; record sources stay beside their content. */
+.local-filters { display: flex; flex-wrap: wrap; align-items: end; gap: 12px; margin: 18px 0 24px; }
+.local-filters > label { display: grid; gap: 6px; min-width: 180px; max-width: 100%; margin: 0; }
+.local-filters > select, .local-filters label select { max-width: 100%; }
+.overview-list { display: grid; gap: 0; }
+.overview-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; width: 100%; padding: 20px 0; border-bottom: 1px solid var(--line); border-radius: 0; background: transparent; color: var(--ink); text-align: left; }
+.overview-row > div { min-width: 0; flex: 1; }
+.overview-row strong { font-size: 15px; }
+.overview-row p, .overview-row > span { max-width: 72ch; margin: 8px 0; font-size: 13px; font-weight: 400; white-space: pre-wrap; overflow-wrap: anywhere; }
+.overview-row small, .emoji-source { display: block; color: var(--muted); font-size: 12px; font-weight: 400; }
+.overview-row > button { flex-shrink: 0; }
+button.overview-row { flex-wrap: wrap; justify-content: flex-start; }
+button.overview-row > span { flex: 1 1 60%; }
+button.overview-row:hover { background: var(--surface-2); }
+#portrait-back { margin-bottom: 16px; }
+.memory-search #memory-query { min-width: 0; }
+.memory-search .field { flex: 1 1 180px; max-width: 100%; }
+.memory-search .field + .field { flex: 1 1 160px; }
+.memory-search select { max-width: 100%; }
+.history-search .history-status-field { min-width: 0; }
+.history-search .history-status-field select { max-width: 300px; }
+.emoji-source { margin: 10px 0; }
+@media (max-width: 680px) {
+  .local-filters > label { flex: 1 1 100%; min-width: 0; }
+  .local-filters > select { width: 100%; }
+  .overview-row { align-items: flex-start; flex-wrap: wrap; }
+  .memory-search .field, .memory-search .field + .field { flex: 1 1 100%; }
+  .history-search .history-status-field { width: 100%; }
+  .history-search .history-status-field select { max-width: 70%; }
+}
+
+.local-filter-panel { position: relative; }
+.local-filter-panel > summary { min-height: 40px; padding: 10px 12px; border-radius: 8px; background: var(--surface-2); font-size: 12px; font-weight: 500; cursor: pointer; }
+.local-filter-panel[open] { flex: 1 1 100%; order: 5; }
+.local-filter-panel[open] > summary { width: fit-content; margin-bottom: 12px; }
+.local-filter-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); align-items: end; gap: 12px; padding: 16px; border-radius: 10px; background: var(--surface-2); }
+.local-filter-grid > .field { min-width: 0; }
+.local-filter-grid > button { justify-self: start; }
+@media (max-width: 680px) {
+  .local-filter-grid { grid-template-columns: 1fr; }
+  .local-filter-grid .memory-dates { display: grid; gap: 10px; }
 }

@@ -18,7 +18,9 @@ import jsonschema
 from astrbot.api import logger
 from astrbot.api.web import request
 
+from ..settings import SHARED_SCOPE
 from .memory_visibility import scoped_metadata, visible_clause
+from .persona_store import persona_key
 
 SPECS = {
     "paragraph": ("paragraphs", "hash", ("content", "source"), "created_at"),
@@ -177,6 +179,7 @@ def read_console(
     people=None,
     page_limit=30,
     visible_scope=None,
+    source_scopes=(),
 ):
     """Read-only views do not create an SDK runtime or call an embedding model."""
     path = directory / ("metadata.db" if people is not None else "metadata/metadata.db")
@@ -262,8 +265,9 @@ def read_console(
                     clauses.append("status='active'")
                     if view == "emojis":
                         clauses.append(
-                            "EXISTS(SELECT 1 FROM image_occurrences o JOIN image_observations v ON v.occurrence_id=o.occurrence_id WHERE o.asset_id=image_assets.asset_id AND o.status='active' AND v.superseded_by='' AND json_extract(v.evidence_json,'$.is_emoji')=1)"
+                            "EXISTS(SELECT 1 FROM image_occurrences o JOIN image_observations v ON v.occurrence_id=o.occurrence_id WHERE o.asset_id=image_assets.asset_id AND o.status='active' AND v.superseded_by='' AND json_extract(v.evidence_json,'$.is_emoji')=1 AND (?='' OR o.chat_id=?))"
                         )
+                        params.extend((visible_scope or "", visible_scope or ""))
             if selected == "profile":
                 clauses.append(
                     "profile_version=(SELECT MAX(p.profile_version) FROM person_profile_snapshots p WHERE p.person_id=person_profile_snapshots.person_id)"
@@ -375,7 +379,7 @@ def read_console(
                     item["observations"] = [
                         dict(row)
                         for row in db.execute(
-                            "SELECT o.occurrence_id,o.message_id,o.occurred_at,o.status AS occurrence_status,b.observation_id,b.text,b.confirm_status FROM image_occurrences o LEFT JOIN image_observations b ON b.occurrence_id=o.occurrence_id AND b.superseded_by='' WHERE o.asset_id=? AND (?='' OR o.chat_id=?) ORDER BY o.occurred_at DESC LIMIT 20",
+                            "SELECT o.occurrence_id,o.chat_id,o.message_id,o.occurred_at,o.status AS occurrence_status,b.observation_id,b.text,b.confirm_status FROM image_occurrences o LEFT JOIN image_observations b ON b.occurrence_id=o.occurrence_id AND b.superseded_by='' WHERE o.asset_id=? AND (?='' OR o.chat_id=?) ORDER BY o.occurred_at DESC LIMIT 20",
                             (item["id"], visible_scope or "", visible_scope or ""),
                         )
                     ]
@@ -395,11 +399,38 @@ def read_console(
                         (identity,),
                     )
                 ]
+        for item in result["items"]:
+            owners = []
+            selected = item.get("kind", "paragraph")
+            for owner in source_scopes:
+                if selected in {"fact", "profile"}:
+                    matches = (item["scope_id"] if selected == "fact" else item["id"]) in owner["people"]
+                else:
+                    clause, values = visible_clause(selected, owner["id"])
+                    table, column = SPECS[selected][:2]
+                    identity_field = column if "kind" in item else "source"
+                    identity_value = item["id"] if "kind" in item else item["source"]
+                    matches = db.execute(
+                        f'SELECT 1 FROM "{table}" WHERE "{identity_field}"=? AND ({clause}) LIMIT 1',
+                        (identity_value, *values),
+                    ).fetchone()
+                if matches:
+                    owners.append(owner)
+            if owners:
+                item.update(scope=owners[0]["id"], scope_label="、".join(owner["label"] for owner in owners), persona=owners[0]["persona"])
         return result
 
 
+def storage_sources(sources):
+    result = {}
+    for source in sources:
+        key = SHARED_SCOPE if source["id"] == SHARED_SCOPE else persona_key(source["persona"])
+        result.setdefault(key, []).append(source)
+    return result
+
+
 def read_visible_console(
-    directory, keys, view, kind, query, offset, inactive, identity, since, until, visible_scope=None
+    directory, keys, view, kind, query, offset, inactive, identity, since, until, visible_scope=None, sources=None
 ):
     limit = 100 if view == "graph" else 30
     outputs = [
@@ -415,6 +446,7 @@ def read_visible_console(
             until,
             page_limit=offset + limit,
             visible_scope=visible_scope,
+            source_scopes=(sources or {}).get(key, ()),
         )
         | {"storage_scope": key}
         for key in keys
@@ -457,9 +489,18 @@ class MemoryPanel:
             raise ValueError("当前会话不存在，请刷新会话列表。")
         return value
 
+    async def sources(self, value="all", persona=""):
+        if not isinstance(persona, str) or len(persona) > 128:
+            raise ValueError("人格筛选无效，请重新选择。")
+        if value != "all":
+            await self.scope(value)
+        rows = await self.plugin.store.read("memory_scopes")
+        return [row for row in rows if (value == "all" or row["id"] == value) and (not persona or row["persona"] == persona)]
+
     async def read(self):
         try:
-            scope = await self.scope(request.query.get("scope"))
+            scope = request.query.get("scope", "all")
+            sources = await self.sources(scope, request.query.get("persona", ""))
             view = request.query.get("view", "records")
             if view == "livingmemory":
                 from .livingmemory_import import read_source
@@ -497,19 +538,21 @@ class MemoryPanel:
                 for value in bounds
             ):
                 raise ValueError("时间范围无效，请重新选择起止时间。")
-            keys = await self.plugin.room_memory.scope_keys(scope)
+            owners = storage_sources(sources)
+            keys = list(owners)
             storage = request.query.get("storage_scope")
             if storage:
                 if storage not in keys:
                     raise ValueError("这条记忆不属于当前可见范围。")
                 keys = [storage]
-            people = None
-            if view == "profiles" or kind in {"fact", "profile"}:
-                from .person_panel import person_ids
+                sources = owners[storage]
+            from .person_panel import person_ids
 
-                people = await person_ids(
-                    self.plugin, scope, self.plugin.settings["memory_isolation"]
-                )
+            people_groups = await asyncio.gather(*(person_ids(self.plugin, row["id"], True) for row in sources))
+            people_sources = [row | {"people": people} for row, people in zip(sources, people_groups, strict=True)]
+            people = list(dict.fromkeys(person for group in people_groups for person in group))
+            owners = storage_sources(people_sources)
+            if view == "profiles" or (view == "records" and kind in {"fact", "profile"}):
                 result = await asyncio.to_thread(
                     read_console,
                     self.plugin.person_memory.path,
@@ -521,6 +564,7 @@ class MemoryPanel:
                     identity,
                     *bounds,
                     people,
+                    source_scopes=people_sources,
                 )
             else:
                 result = await asyncio.to_thread(
@@ -534,12 +578,8 @@ class MemoryPanel:
                     request.query.get("inactive") == "true",
                     identity,
                     *bounds,
-                    visible_scope=scope if self.plugin.settings["memory_isolation"] else None,
-                )
-                from .person_panel import person_ids
-
-                people = await person_ids(
-                    self.plugin, scope, self.plugin.settings["memory_isolation"]
+                    visible_scope=scope if scope != "all" else None,
+                    sources=owners,
                 )
                 ledger = await asyncio.to_thread(
                     read_console, self.plugin.person_memory.path, "records", "fact",
@@ -565,14 +605,17 @@ class MemoryPanel:
 
     async def image(self):
         try:
-            scope = await self.scope(request.query.get("scope"))
+            scope = request.query.get("scope", "all")
+            sources = await self.sources(scope, request.query.get("persona", ""))
             identity = request.query.get("id", "")
             if not identity or len(identity) > 128:
                 raise ValueError("请选择有效的图片记忆。")
-            keys = await self.plugin.room_memory.scope_keys(scope)
+            keys = list(storage_sources(sources))
             owner = request.query.get("storage_scope")
             if owner is not None and owner not in keys:
                 raise ValueError("这张图片不属于当前可见范围。")
+            if not keys:
+                raise ValueError("没有可读取的图片来源。")
             owner = owner or keys[0]
             directory = self.plugin.room_memory.directory / owner
 
@@ -586,8 +629,8 @@ class MemoryPanel:
                     )
                 ) as db:
                     row = db.execute(
-                        "SELECT storage_key FROM image_assets WHERE asset_id=? AND status='active' AND (" + visible_clause("image", scope if self.plugin.settings["memory_isolation"] else None)[0] + ")",
-                        (identity, *visible_clause("image", scope if self.plugin.settings["memory_isolation"] else None)[1]),
+                        "SELECT storage_key FROM image_assets WHERE asset_id=? AND status='active' AND (" + visible_clause("image", scope if scope not in {"all", "library"} else None)[0] + ")",
+                        (identity, *visible_clause("image", scope if scope not in {"all", "library"} else None)[1]),
                     ).fetchone()
                 if not row:
                     raise ValueError("图片记忆不存在或已删除。")
