@@ -11,6 +11,7 @@ OvenHeart contributors made the following adaptations:
 - Every runtime module that logs imports `logger` directly with `from astrbot.api import logger`; upstream logger factories and host re-exports are removed.
 - Package initializers defer heavy imports. `embedding/__init__.py` points to `memory/memory_embedding.py`; providers and credentials remain owned by AstrBot.
 - Runtime lifecycle disk work uses the retained cancellation-aware `run_sync_work` boundary. Sparse warmup and vector loading run outside the host message event loop.
+- Vector replay counts exclude tombstones, matching the replay filter, so retained deleted rows do not produce a false missing-vector warning.
 - Summary import propagates native request `TimeoutError` to the host scheduler without converting it into a generic import failure; original parsing and persistence are retained.
 - `memory/native_memory_kernel.py` supplies effective-version filtering, native episode evidence, bounded SQLite caches and transaction ownership around correction/graph persistence.
 - `utils/async_work.py` comes from MaiBot `src/common/async_work.py` under GPL-3.0; its license is retained in the parent MaiBot directory. Other A_memorix files retain AGPL-3.0.

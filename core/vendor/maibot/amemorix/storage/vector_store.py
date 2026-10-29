@@ -1701,13 +1701,14 @@ class VectorStore:
         logger.info("Replaying data from disk to populate index...")
         try:
             replay_count = self._replay_vectors_to_index()
-            # 只有当 replay 成功且数据量一致时，才释放回退索引
-            if self._index.ntotal >= self._bin_count:
-                logger.info(f"Replay successful ({replay_count}/{self._bin_count}). Releasing fallback index.")
+            # 回放会过滤墓碑；磁盘物理行数包含已删除向量，不能直接用来判缺失。
+            expected_count = self._bin_count - len(self._deleted_ids)
+            if self._index.ntotal >= expected_count:
+                logger.info(f"Replay successful ({replay_count}/{expected_count}). Releasing fallback index.")
                 self._fallback_index.reset()
             else:
                 logger.warning(
-                    f"Replay count mismatch: {self._index.ntotal} vs {self._bin_count}. Keeping fallback index."
+                    f"Replay count mismatch: {self._index.ntotal} vs {expected_count}. Keeping fallback index."
                 )
         except Exception as e:
             logger.error(f"Replay failed: {e}. Keeping fallback index as backup.")

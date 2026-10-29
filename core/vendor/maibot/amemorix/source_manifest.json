@@ -134,7 +134,7 @@
     "storage/vector_store.py": {
       "source": "src/A_memorix/core/storage/vector_store.py",
       "upstream_sha256": "1885e86a398049248e7d909501bab75ab055d5be539b0862314ac61e02fe67f4",
-      "ported_sha256": "b1d1400c02dc60bdb28840df545a9c3231a32eece9924ad62f846835e5d620fc"
+      "ported_sha256": "0608bd22847abf9ca9b2832650edec768f90e335eef72c84dbb74dc2ee724760"
     },
     "utils/quantization.py": {
       "source": "src/A_memorix/core/utils/quantization.py",
