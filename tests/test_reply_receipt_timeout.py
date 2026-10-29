@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from core.auxiliary import AuxiliaryUsage
 from core.chat.planner import PlannerSession
 from core.settings import DEFAULTS
 
@@ -157,13 +158,16 @@ async def test_planner_tool_budget_allows_both_reply_windows(timeout):
     planner.recall = AsyncMock(return_value={})
     planner.check_current = AsyncMock()
     tool_loop = AsyncMock(return_value=SimpleNamespace(role="assistant"))
+    context = SimpleNamespace(
+        persona_manager=SimpleNamespace(get_persona_v3_by_id=lambda _: None),
+        get_config=lambda _: {},
+    )
+    auxiliary = AuxiliaryUsage(context, None)
+    auxiliary.tool_loop = tool_loop
     planner.plugin = SimpleNamespace(
-        context=SimpleNamespace(
-            persona_manager=SimpleNamespace(get_persona_v3_by_id=lambda _: None),
-            get_config=lambda _: {},
-        ),
+        context=context,
         emoji_actions=SimpleNamespace(proactive=AsyncMock(return_value={})),
-        auxiliary=SimpleNamespace(tool_loop=tool_loop),
+        auxiliary=auxiliary,
     )
 
     await planner.run({})

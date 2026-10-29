@@ -724,12 +724,8 @@ class PersonMemory:
                 "claims_many",
                 await self.scope_ids(event, scope, persona, event.get_sender_id()),
             )
-            provider = (
-                self.plugin.settings["person_memory_provider_id"]
-                or self.plugin.settings["provider_id"]
-                or await self.plugin.context.get_current_chat_provider_id(
-                    event.unified_msg_origin
-                )
+            provider = await self.plugin.auxiliary.resolve_provider_id(
+                self.plugin.settings, "person_memory_provider_id", event.unified_msg_origin
             )
             inputs = {
                 "person": event.get_sender_name(),

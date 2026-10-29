@@ -184,6 +184,10 @@ class PageAPI:
             selected = state.get("scope") or {}
             state["self_portrait"] = await self.plugin.store.read("self_portrait", selected["persona"]) if selected.get("id") not in {None, SHARED_SCOPE} else None
         if view in {"full", "settings"}:
+            state["model_providers"] = [
+                {"id": provider.meta().id, "model": provider.get_model()}
+                for provider in self.plugin.context.get_all_providers()
+            ]
             state["memory_review"] = await self.plugin.store.read("memory_review_status")
             state["memory_review"]["busy"] = self.plugin.memory_review.busy
         if view in {"full", "history"}:
@@ -682,7 +686,9 @@ class PageAPI:
                     state["traits"],
                     query,
                     settings,
-                    provider_id=settings["provider_id"] or provider_id,
+                    provider_id=await self.plugin.auxiliary.resolve_provider_id(
+                        settings, "selector_provider_id", umo
+                    ),
                     identity=json.dumps(
                         {
                             "host": host_prompt[:4000],

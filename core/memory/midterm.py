@@ -146,12 +146,8 @@ class MidTermMemory:
                 datetime.fromtimestamp(t, timezone.utc).isoformat()
                 for t in (batch[0]["time"], batch[-1]["time"])
             )
-            provider = (
-                settings["memory_summary_provider_id"]
-                or settings["provider_id"]
-                or await self.plugin.context.get_current_chat_provider_id(
-                    event.unified_msg_origin
-                )
+            provider = await self.plugin.auxiliary.resolve_provider_id(
+                settings, "memory_summary_provider_id", event.unified_msg_origin
             )
             response = await self.plugin.auxiliary.generate(
                 "midterm_summary",

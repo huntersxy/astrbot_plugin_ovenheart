@@ -36,7 +36,7 @@
     "description": "学习结果入库自检",
     "type": "bool",
     "default": true,
-    "hint": "提取后用同一学习模型核对原文与情境。未通过的新候选转待审，未通过的合并不修改旧条目；自检失败保留整批素材。模型阶段共用360秒预算，提取最多240秒，为自检预留120秒。"
+    "hint": "提取后用独立自检模型核对原文与情境，可通过「学习入库自检模型」选择。未通过的新候选转待审，未通过的合并不修改旧条目；自检失败保留整批素材。模型阶段共用360秒预算，提取最多240秒，为自检预留120秒。"
   },
   "guidance_delivery": {
     "description": "如何让模型使用人格与习惯",
@@ -95,10 +95,25 @@
     "default": 600
   },
   "provider_id": {
-    "description": "学习模型提供商 ID",
+    "description": "表达与习惯学习模型",
     "type": "string",
     "default": "",
-    "hint": "留空使用该会话当前模型；填写 AstrBot 已配置的提供商 ID。"
+    "hint": "只用于提取表达、性格与行为习惯；留空沿用 AstrBot 当前会话模型。",
+    "_special": "select_provider"
+  },
+  "learning_review_provider_id": {
+    "description": "学习入库自检模型",
+    "type": "string",
+    "default": "",
+    "_special": "select_provider",
+    "hint": "独立核对学习候选与原文证据；留空直接沿用 AstrBot 当前会话模型。"
+  },
+  "selector_provider_id": {
+    "description": "表达情境筛选模型",
+    "type": "string",
+    "default": "",
+    "_special": "select_provider",
+    "hint": "用于独立的表达情境筛选；持续 Planner 已选定表达时不额外调用。留空沿用 AstrBot 当前会话模型。"
   },
   "native_memory_enabled": {
     "description": "A_memorix 通用记忆",
@@ -160,9 +175,10 @@
   },
   "reply_split_provider_id": {
     "type": "string",
-    "description": "语义断句模型 ID",
+    "description": "语义断句模型",
     "default": "",
-    "hint": "留空使用Planner模型或当前会话模型；推荐填写已有快速模型，调用计入reply_split用量。"
+    "hint": "仅选择模型语义断句时调用；留空沿用 AstrBot 当前会话模型，不影响正文生成模型。",
+    "_special": "select_provider"
   },
   "reply_split_max_messages": {
     "type": "int",
@@ -177,9 +193,10 @@
   },
   "emoji_provider_id": {
     "type": "string",
-    "description": "独立表情选择模型 ID",
+    "description": "表情视觉选择模型",
     "default": "",
-    "hint": "应使用支持图片的模型。留空优先使用已启用视觉的Planner模型，否则使用宿主图片描述模型；子代理调用计入emoji_select用量。"
+    "hint": "可选，需支持图片输入；留空使用 AstrBot 图片描述模型，不借用 Planner 模型。",
+    "_special": "select_provider"
   },
   "planner_visual_enabled": {
     "type": "bool",
@@ -191,7 +208,8 @@
     "type": "string",
     "description": "图片嵌入模型 ID",
     "default": "",
-    "hint": "使用 AstrBot 的 DashScope 多模态嵌入，或硅基流动 OpenAI 嵌入提供商的 Qwen/Qwen3-VL-Embedding-8B。留空仍支持同图记忆。"
+    "hint": "使用 AstrBot 的 DashScope 多模态嵌入，或硅基流动 OpenAI 嵌入提供商的 Qwen/Qwen3-VL-Embedding-8B。留空仍支持同图记忆。",
+    "_special": "select_provider:embedding"
   },
   "person_memory_enabled": {
     "description": "人物记忆与画像",
@@ -220,10 +238,11 @@
     }
   },
   "person_memory_provider_id": {
-    "description": "人物记忆提取模型 ID",
+    "description": "人物事实与画像模型",
     "type": "string",
     "default": "",
-    "hint": "留空使用学习模型或当前会话模型。更新在后台运行，不阻塞回复。"
+    "hint": "用于从本人原文提取人物事实；留空沿用 AstrBot 当前会话模型。",
+    "_special": "select_provider"
   },
   "target_senders": {
     "description": "只向这些用户学习",
@@ -317,7 +336,8 @@
     "description": "表达检索向量模型 ID",
     "type": "string",
     "default": "",
-    "hint": "用于回复、参与判断和学习对照。已生效习惯会有界预热，后台轮询每分钟最多补一批 64 条文档，可能提前产生向量调用；忙时跳过。填写 AstrBot 的 embedding 提供商 ID；留空回退文字相关性。"
+    "hint": "用于回复、参与判断和学习对照。已生效习惯会有界预热，后台轮询每分钟最多补一批 64 条文档，可能提前产生向量调用；忙时跳过。填写 AstrBot 的 embedding 提供商 ID；留空回退文字相关性。",
+    "_special": "select_provider:embedding"
   },
   "retrieval_timeout": {
     "description": "记忆与向量检索等待上限（秒）",
@@ -356,7 +376,8 @@
     "description": "习惯重排序提供商 ID",
     "type": "string",
     "default": "",
-    "hint": "用于回复、参与判断和学习对照。填写 AstrBot 已配置的 rerank 提供商 ID；留空跳过。模型相关性不能代替情境适用判断。"
+    "hint": "用于回复、参与判断和学习对照。填写 AstrBot 已配置的 rerank 提供商 ID；留空跳过。模型相关性不能代替情境适用判断。",
+    "_special": "select_provider:rerank"
   },
   "semantic_threshold": {
     "description": "语义相关性门槛",
@@ -451,10 +472,11 @@
     "hint": "持续工具规划支持查询、回复、等待和结束；单次判读用于独立的一次参与决策。"
   },
   "planner_provider_id": {
-    "description": "参与决策模型 ID",
+    "description": "聊天规划模型（Planner）",
     "type": "string",
     "default": "",
-    "hint": "留空使用学习模型或当前会话模型。"
+    "hint": "独立决定回复对象、记忆查询、等待和结束，需支持工具调用；留空沿用 AstrBot 当前会话模型。最终回复由 AstrBot 原生模型生成。",
+    "_special": "select_provider"
   },
   "planner_timeout": {
     "description": "参与决策请求超时（秒）",
@@ -635,10 +657,11 @@
     "hint": "范围0–86400；同会话摘要与情景整理的最短尝试间隔。"
   },
   "memory_summary_provider_id": {
-    "description": "群聊记忆整理模型 ID",
+    "description": "记忆整理模型",
     "type": "string",
     "default": "",
-    "hint": "留空使用学习模型或当前会话模型；同时用于摘要与情景切分。"
+    "hint": "用于聊天回想压缩、增量摘要、情景整理与反馈维护；留空沿用 AstrBot 当前会话模型。",
+    "_special": "select_provider"
   },
   "memory_feedback_enabled": {
     "description": "根据后续反馈维护记忆",
@@ -663,5 +686,12 @@
     "type": "int",
     "default": 3600,
     "hint": "全插件共用尝试间隔，单位秒，推荐 3600。各记忆库轮流复核，每轮最多检查两条，后台调用计入辅助用量。"
+  },
+  "memory_review_provider_id": {
+    "description": "记忆主动复核模型",
+    "type": "string",
+    "default": "",
+    "_special": "select_provider",
+    "hint": "独立复核记忆与更新证据，生成修正建议；留空沿用 AstrBot 当前会话模型。"
   }
 }

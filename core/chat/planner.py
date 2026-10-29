@@ -705,12 +705,8 @@ class PlannerSession:
         finally:
             self.running_tools -= 1
             self.tool_changed.set()
-        provider = (
-            self.settings["planner_provider_id"]
-            or self.settings["provider_id"]
-            or await self.plugin.context.get_current_chat_provider_id(
-                self.event.unified_msg_origin
-            )
+        provider = await self.plugin.auxiliary.resolve_provider_id(
+            self.settings, "planner_provider_id", self.event.unified_msg_origin
         )
         tools = []
         for name, schema in ACTION_SCHEMAS.items():

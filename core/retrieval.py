@@ -294,7 +294,7 @@ class HabitRetriever:
             query: Current input plus bounded recent conversation context.
             settings: Effective retrieval configuration.
             semantic: Whether model calls are permitted (false for free previews).
-            provider_id: Effective native chat provider for contextual selection.
+            provider_id: Independent chat provider for contextual selection.
             identity: Host persona and manual profile; never learned autobiographies.
             literal_query: Actual reply-target text and its inbound quote, up to
                 2,400 characters, excluding unrelated history and planner goals.
@@ -781,7 +781,7 @@ class HabitRetriever:
             pool: Bounded recalled and optionally reranked candidates.
             query: Current message and recent role-labelled context.
             settings: Timeout and maximum application count.
-            provider_id: Native learning or current chat provider.
+            provider_id: Independently selected expression-selection provider.
             identity: Host and manually authored persona anchor.
             recent_expression_ids: Scope-local send-stage exposure IDs, used only
                 as a soft variety hint, never as evidence or a rejection list.

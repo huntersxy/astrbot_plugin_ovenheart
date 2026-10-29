@@ -132,12 +132,8 @@ class MemoryConsolidation:
             if not await self.permitted(event, scope, persona):
                 return
             await self.plugin.room_memory.call(scope, "summary_attempt")
-            provider_id = (
-                self.plugin.settings["memory_summary_provider_id"]
-                or self.plugin.settings["provider_id"]
-                or await self.plugin.context.get_current_chat_provider_id(
-                    event.unified_msg_origin
-                )
+            provider_id = await self.plugin.auxiliary.resolve_provider_id(
+                self.plugin.settings, "memory_summary_provider_id", event.unified_msg_origin
             )
             provider = self.plugin.context.get_provider_by_id(provider_id)
             model = provider.get_model() if provider else provider_id

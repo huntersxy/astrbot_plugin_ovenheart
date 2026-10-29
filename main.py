@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import copy
 import hashlib
 import json
 import re
@@ -75,6 +74,7 @@ from .core.memory.self_portrait import SelfPortrait
 from .core.message_source import own_message_text
 from .core.retrieval import HabitRetriever
 from .core.settings import (
+    CHAT_MODEL_SETTINGS,
     DEFAULTS,
     KINDS,
     LEARNING_REVIEW_RESERVE_SECONDS,
@@ -717,6 +717,16 @@ class PersonaPlugin(Star):
                     "配置已在另一页面修改，请刷新后重新编辑，旧表单未保存。"
                 )
             patch = validate_settings(payload)
+            changed_models = {
+                value
+                for key, value in patch.items()
+                if key in CHAT_MODEL_SETTINGS and value and value != self.settings[key]
+            }
+            if changed_models:
+                available = {provider.meta().id for provider in self.context.get_all_providers()}
+                for value in changed_models:
+                    if value not in available:
+                        raise ValueError(f"所选模型“{value}”不在 AstrBot 已启用的聊天模型中，请先启用或重新选择。")
             merged = self.settings | patch
             if merged["min_messages"] > merged["batch_size"]:
                 raise ValueError("自动学习的素材门槛不能大于每批素材数量。")
@@ -2705,10 +2715,8 @@ class PersonaPlugin(Star):
                 },
                 ensure_ascii=False,
             )
-            provider_id = settings[
-                "provider_id"
-            ] or await self.context.get_current_chat_provider_id(
-                event.unified_msg_origin
+            provider_id = await self.auxiliary.resolve_provider_id(
+                settings, "selector_provider_id", event.unified_msg_origin
             )
         selection, people, native_memories, recalls = await self.prepare_reply_context(
             event,
@@ -4141,9 +4149,9 @@ class PersonaPlugin(Star):
                 },
                 ensure_ascii=False,
             )
-            provider_id = settings[
-                "provider_id"
-            ] or await self.context.get_current_chat_provider_id(selected["umo"])
+            provider_id = await self.auxiliary.resolve_provider_id(
+                settings, "provider_id", selected["umo"]
+            )
             deadline = time.monotonic() + LEARNING_TIMEOUT_SECONDS
             review_reserve = (
                 min(LEARNING_REVIEW_RESERVE_SECONDS, LEARNING_TIMEOUT_SECONDS / 3)
@@ -4291,8 +4299,11 @@ class PersonaPlugin(Star):
             if settings["learning_review_enabled"] and traits:
                 phase, phase_started = "review", time.monotonic()
                 review_budget = max(0, deadline - phase_started)
+                review_provider_id = await self.auxiliary.resolve_provider_id(
+                    settings, "learning_review_provider_id", selected["umo"]
+                )
                 traits, review = await self._review_learning(
-                    traits, base, provider_id, deadline
+                    traits, base, review_provider_id, deadline
                 )
             else:
                 review = {

@@ -182,12 +182,8 @@ class ReplyRhythm:
         if settings["reply_split_mode"] == "llm" and (len(segments) > 1 or not protected):
 
             async def generate(prompt):
-                provider = (
-                    settings["reply_split_provider_id"]
-                    or settings["planner_provider_id"]
-                    or await self.plugin.context.get_current_chat_provider_id(
-                        event.unified_msg_origin
-                    )
+                provider = await self.plugin.auxiliary.resolve_provider_id(
+                    settings, "reply_split_provider_id", event.unified_msg_origin
                 )
                 response = await self.plugin.auxiliary.generate(
                     "reply_split", chat_provider_id=provider, prompt=prompt

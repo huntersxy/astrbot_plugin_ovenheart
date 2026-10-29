@@ -1418,13 +1418,6 @@ class RoomMemory:
             scope
         ) or not await self.permitted(event, scope, persona, learning=True):
             raise ValueError("当前记忆来源或学习权限已撤销。")
-        provider = (
-            self.plugin.settings["memory_summary_provider_id"]
-            or self.plugin.settings["provider_id"]
-            or await self.plugin.context.get_current_chat_provider_id(
-                event.unified_msg_origin
-            )
-        )
         stage = (
             "memory_feedback"
             if "feedback" in request.request_type.lower()
@@ -1433,6 +1426,11 @@ class RoomMemory:
             else "memory_review"
             if state.operation == "review"
             else "memory_maintenance"
+        )
+        provider = await self.plugin.auxiliary.resolve_provider_id(
+            self.plugin.settings,
+            "memory_review_provider_id" if stage == "memory_review" else "memory_summary_provider_id",
+            event.unified_msg_origin,
         )
         try:
             response = await self.plugin.auxiliary.generate(

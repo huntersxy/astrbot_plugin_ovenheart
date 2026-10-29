@@ -220,17 +220,11 @@ class EmojiActions:
         ):
             return {"success": False, "error": "当前表情选择未启用或无权访问。"}
         provider = self.plugin.settings["emoji_provider_id"]
-        if not provider and self.plugin.settings["planner_visual_enabled"]:
-            provider = self.plugin.settings[
-                "planner_provider_id"
-            ] or await self.plugin.context.get_current_chat_provider_id(
-                session.event.unified_msg_origin
-            )
         if not provider:
+            config = self.plugin.context.get_config(session.event.unified_msg_origin)
             provider = (
-                self.plugin.context.get_config(session.event.unified_msg_origin)
-                .get("provider_ltm_settings", {})
-                .get("image_caption_provider_id", "")
+                config.get("provider_settings", {}).get("default_image_caption_provider_id")
+                or config.get("provider_ltm_settings", {}).get("image_caption_provider_id", "")
             )
         if not provider:
             return {

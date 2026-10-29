@@ -22,11 +22,14 @@ DEFAULTS = {
     "min_messages": 12,
     "interval_seconds": 600,
     "provider_id": "",
+    "learning_review_provider_id": "",
+    "selector_provider_id": "",
     "memory_enabled": True,
     "native_memory_enabled": True,
     "memory_isolation": True,
     "memory_review_enabled": True,
     "memory_review_interval": 3600,
+    "memory_review_provider_id": "",
     "image_memory_enabled": True,
     "emoji_enabled": True,
     "emoji_static_to_gif": False,
@@ -104,6 +107,17 @@ DEFAULTS = {
     "autonomous_tool_denylist": [],
 }
 KINDS = ("personality", "expression", "jargon", "behavior")
+CHAT_MODEL_SETTINGS = (
+    "planner_provider_id",
+    "provider_id",
+    "learning_review_provider_id",
+    "selector_provider_id",
+    "memory_summary_provider_id",
+    "memory_review_provider_id",
+    "person_memory_provider_id",
+    "emoji_provider_id",
+    "reply_split_provider_id",
+)
 PROFILE_DEFAULTS = {
     "identity": "",
     "reply_style": "",

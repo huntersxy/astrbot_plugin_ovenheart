@@ -6,7 +6,7 @@ const actions = {review_batch:"批量审核", profile:"修改人格底稿", trai
 const date = value => new Date(value * 1000).toLocaleString("zh-CN", {month:"2-digit", day:"2-digit", hour:"2-digit", minute:"2-digit"});
 const reviewGroups = {passed:"自检通过", flagged:"自检存疑", unknown:"无匹配自检"};
 const reviewIssues = {learning_target:"学习对象混淆", evidence:"证据不足", scope:"适用范围或前提", identity:"身份或个人事实", merge:"合并不相容", delivery:"投递或工具要求", other:"其他问题"};
-let settingsSection = "learning", memorySection = "core";
+let settingsSection = "models", memorySection = "core";
 let libraryScope = "all", libraryOffset = 0, reviewFilter = "all", libraryQuery = "", librarySearchDraft = "";
 const librarySelection = new Map();
 const libraryPositions = new Map(), historyDetails = new Map();
@@ -591,15 +591,21 @@ function renderMemory() {
   });
 }
 
+function modelField(name, label, help, inherited = "沿用 AstrBot 当前会话模型") {
+  const value = data.settings[name] || "", choices = data.model_providers || [];
+  const unavailable = value && !choices.some(choice => choice.id === value);
+  return `<div class="field"><label for="field-${name}">${label}</label><select id="field-${name}" name="${name}" aria-describedby="help-${name}"><option value="">${inherited}</option>${unavailable ? `<option value="${escape(value)}" selected>${escape(value)}（当前不可用）</option>` : ""}${choices.map(choice => `<option value="${escape(choice.id)}" ${choice.id === value ? "selected" : ""}>${escape(choice.id)}${choice.model && choice.model !== choice.id ? ` · ${escape(choice.model)}` : ""}</option>`).join("")}</select><small id="help-${name}">${help}</small></div>`;
+}
+
 function renderSettings(target = "#content") {
   const s = data.settings;
   const settingsRevision = data.settings_revision;
   const memoryPage = tab === "memory";
-  const tabs = memoryPage ? {core:"通用与图片", background:"经历与人物"} : {learning:"学习与生效", participation:"群聊参与", expression:"表达与检索", maintenance:"调试与维护"};
+  const tabs = memoryPage ? {core:"通用与图片", background:"经历与人物"} : {models:"模型分工", learning:"学习与生效", participation:"群聊参与", expression:"表达与检索", maintenance:"调试与维护"};
   const active = memoryPage ? memorySection : settingsSection;
   const review = Object.values(data.memory_review?.rooms || {}).sort((a,b) => b.attempted-a.attempted)[0];
   const reviewStatus = {kept:"无需修改，原记录保留",corrected:"已按新证据修正，可在修正历史回滚",needs_confirmation:"有复核建议待确认，请查看修正历史",up_to_date:"已检查，没有需要复核的新内容",paused:"设置已变化，本次未自动执行",failed:"复核未完成，原记录保留，将按间隔重试",running:"正在复核"}[review?.status] || "等待检查";
-  $(target).innerHTML = `<div class="settings-heading"><h2>${memoryPage ? "记忆设置" : "设置"}</h2><p>${memoryPage ? "范围、图片与后台整理；人格之间始终分开。" : "按任务调整。未保存修改可在页内换标签。"}</p></div>
+  $(target).innerHTML = `<div class="settings-heading"><h2>${memoryPage ? "记忆设置" : "设置"}</h2><p>${memoryPage ? "范围、图片与后台整理；模型可在「设置 → 模型分工」独立选择。" : "按任务调整。未保存修改可在页内换标签。"}</p></div>
     <form id="settings-form"><div class="settings-tabs" role="tablist" aria-label="${memoryPage ? "记忆分类" : "设置分类"}">${Object.entries(tabs).map(([key,label]) => `<button type="button" id="settings-tab-${key}" role="tab" aria-controls="settings-panel-${key}" aria-selected="${key === active}" tabindex="${key === active ? 0 : -1}" data-settings-tab="${key}">${label}</button>`).join("")}</div>
     ${memoryPage ? `<div class="settings-panel settings-grid" id="settings-panel-core" role="tabpanel" aria-labelledby="settings-tab-core" data-settings-panel="core">
 <section class="settings-group"><h2>通用与图片记忆</h2><p>选择记忆的使用范围，管理通用记忆与图片。</p>
@@ -626,25 +632,32 @@ function renderSettings(target = "#content") {
       ${switchField("midterm_memory_enabled", "聊天回想", "把离开短期上下文的发言压缩成近期回想，在话题相关时想起来。原生模式复用宿主消息历史；暂停学习后停止更新。", s.midterm_memory_enabled)}
       ${field("midterm_memory_limit", "聊天回想保留数", s.midterm_memory_limit ?? 10, "当前原生会话参与语义匹配的近期摘要数", {type:"number",min:1,max:50})}
       <div class="number-fields">${field("memory_summary_min_messages", "群聊摘要最少新发言", s.memory_summary_min_messages ?? 12, "条；每批最多50条", {type:"number",min:1,max:50})}${field("memory_summary_interval", "群聊记忆整理间隔", s.memory_summary_interval ?? 600, "秒；摘要与情景整理共用尝试间隔", {type:"number",min:0,max:86400})}</div>
-      ${field("memory_summary_provider_id", "群聊记忆整理模型 ID", s.memory_summary_provider_id ?? "", "留空使用学习模型或当前会话模型；后台调用计入辅助用量。", {type:"text"})}
+
       ${switchField("person_memory_enabled", "人物记忆与画像", "按真实账号保存有原文来源的事实，遵循所选记忆范围；冲突保留待更正，不确定信息不当作稳定了解。暂停学习时停止更新。", s.person_memory_enabled)}
       <div class="number-fields">${field("person_memory_min_messages", "人物记忆最少新发言", s.person_memory_min_messages ?? 6, "条；同一成员的新素材达到门槛后后台提取", {type:"number",min:1,max:30})}${field("person_memory_interval", "人物记忆更新间隔", s.person_memory_interval ?? 600, "秒；每位成员的自动提取间隔", {type:"number",min:0,max:86400})}</div>
-      ${field("person_memory_provider_id", "人物记忆提取模型 ID", s.person_memory_provider_id ?? "", "留空使用学习模型或当前会话模型。", {type:"text"})}
+
 </section>
 </div>
 <div class="settings-panel settings-grid" id="settings-panel-legacy" role="tabpanel" aria-labelledby="settings-tab-legacy" data-settings-panel="legacy">
 
-</div>` : `<div class="settings-panel settings-grid" id="settings-panel-learning" role="tabpanel" aria-labelledby="settings-tab-learning" data-settings-panel="learning">
+</div>` : `<div class="settings-panel settings-grid" id="settings-panel-models" role="tabpanel" aria-labelledby="settings-tab-models" data-settings-panel="models">
+<section class="settings-group"><h2>最终回复 · Replyer</h2><p>使用 AstrBot 当前会话的聊天模型与生成设置。请在 AstrBot 中调整，烤箱之心不另选正文模型。</p><p class="muted">下面各项独立选择。聊天模型留空沿用当前会话模型，表情视觉选择留空沿用图片描述模型。新增或启用模型后，刷新工坊即可选用。</p></section>
+<section class="settings-group"><h2>聊天规划 · Planner</h2>${modelField("planner_provider_id", "Planner 模型", "决定回复谁、查询哪些记忆、等待或结束；需支持工具调用。最终正文仍交给 AstrBot。")}</section>
+<section class="settings-group"><h2>学习与表达</h2>${modelField("provider_id", "表达与习惯学习", "从真实聊天中提取表达、人格倾向、词汇与行为习惯。")}${modelField("learning_review_provider_id", "学习入库自检", "核对候选与原文证据，和提取模型分别配置。")}${modelField("selector_provider_id", "表达情境筛选", "用于独立的情境筛选。持续 Planner 已选定表达时沿用该选择，不额外调用。")}</section>
+<section class="settings-group"><h2>记忆与人物</h2>${modelField("memory_summary_provider_id", "记忆整理", "聊天回想压缩、群聊增量摘要、情景记忆与反馈维护。")}${modelField("person_memory_provider_id", "人物事实与画像", "从本人原文提取人物事实与更正。")}${modelField("memory_review_provider_id", "记忆主动复核", "根据更新原文检查旧记忆，生成有依据的修正建议。")}</section>
+<section class="settings-group"><h2>表达辅助</h2>${modelField("reply_split_provider_id", "语义断句", "仅启用模型语义断句时调用；本地规则模式无需模型。")}${modelField("emoji_provider_id", "表情视觉选择", "可选，需要图片输入能力；按描述选择表情的普通路径无需额外模型。", "沿用 AstrBot 图片描述模型")}</section>
+</div>
+<div class="settings-panel settings-grid" id="settings-panel-learning" role="tabpanel" aria-labelledby="settings-tab-learning" data-settings-panel="learning">
 <section class="settings-group"><h2>学习与生效</h2><p>默认让通过自检且置信度足够的新结果自动生效，也可以改为逐条审核。</p>
       ${switchField("enabled", "启用人格工坊", "关闭后停止采集、学习和应用", s.enabled)}${switchField("learning_enabled", "启用素材采集与后台学习", "关闭后继续保留并应用已生效的习惯", s.learning_enabled)}${switchField("apply_enabled", "应用人格与学习结果", "可先积累，准备好后再启用", s.apply_enabled)}
       <div class="field"><label for="activation_mode">新结果的生效方式</label><select id="activation_mode" name="activation_mode"><option value="review" ${s.activation_mode === "review" ? "selected" : ""}>先审核后生效</option><option value="auto" ${s.activation_mode === "auto" ? "selected" : ""}>高置信度自动生效</option></select><small>影响新结果与尚未人工决定的条目；人工审核、拒绝和停用状态保持不变。</small></div>
-      ${switchField("learning_review_enabled", "学习结果入库自检", "用学习模型核对原文与使用条件。未通过的新候选转待审，未通过的更新不改旧条目；自检失败保留整批素材。模型阶段合计最多 360 秒，提取最多 240 秒，为自检预留 120 秒。", s.learning_review_enabled)}
+      ${switchField("learning_review_enabled", "学习结果入库自检", "用独立自检模型核对原文与使用条件，可在「模型分工」选择。未通过的新候选转待审，未通过的更新不改旧条目；自检失败保留整批素材。模型阶段合计最多 360 秒，提取最多 240 秒，为自检预留 120 秒。", s.learning_review_enabled)}
       <div class="number-fields">${field("auto_confidence", "自动生效置信度", s.auto_confidence, "由模型评估，不等同于统计概率。", {type:"number", min:.5, max:1, step:.01})}${field("min_evidence", "每条最少证据数", s.min_evidence, "不足时不保存学习条目。", {type:"number", min:1, max:10})}</div>
       ${Object.entries(kinds).map(([key, label]) => switchField(`learn_${key}`, `学习${label}`, "", s[`learn_${key}`])).join("")}
     </section>
 <section class="settings-group"><h2>素材与节奏</h2><p>只采集收到的文字消息，跳过机器人自己和命令。采集本身不会触发回复；是否自主参与由参与设置决定。</p>
       <div class="number-fields">${field("min_messages", "自动学习素材门槛", s.min_messages, "条消息", {type:"number", min:4, max:100})}${field("batch_size", "每批最多素材", s.batch_size, "条消息", {type:"number", min:4, max:100})}${field("interval_seconds", "每会话学习间隔", s.interval_seconds, "秒；同时作为失败重试冷却", {type:"number", min:30, max:86400})}${field("retention_days", "原始素材保留时间", s.retention_days, "天；含明确引用，证据摘录随条目保留", {type:"number", min:1, max:90})}${field("max_messages_per_scope", "每会话素材上限", s.max_messages_per_scope, "条；超出后淘汰最旧素材", {type:"number", min:100, max:1000})}</div>
-      ${field("provider_id", "学习模型 ID", s.provider_id, "留空使用该会话的当前模型。填写 AstrBot 中已配置的模型提供商 ID。", {type:"text"})}
+
     </section>
 <section class="settings-group"><h2>学习范围</h2><p>默认所有会话共用人格底稿、人格、表达与行为习惯。群聊词汇始终按来源会话与人格隔离；素材与真实聊天上下文也保留来源边界。AstrBot 的会话开关、插件开关与白名单始终有效。</p>${switchField("session_isolation", "启用会话隔离", "开启后，人格底稿和其他三类学习也按会话与人格分别设置、学习和应用。群聊词汇始终隔离。切换保留数据，进行中的旧学习不会跨模式提交。", s.session_isolation)}
       ${field("target_senders", "只向这些用户学习", s.target_senders.join("\n"), "每行一个用户 ID。留空学习所有人；指定后，旁人的邻近发言仅短暂用于理解语境，不入素材库或证据。", {maxlength:16000})}
@@ -663,7 +676,7 @@ function renderSettings(target = "#content") {
       <div class="field"><label for="participation_rhythm">参与节奏</label><select id="participation_rhythm" name="participation_rhythm"><option value="maibot" ${s.participation_rhythm === "maibot" ? "selected" : ""}>MaiBot 动态节奏</option><option value="fixed" ${s.participation_rhythm === "fixed" ? "selected" : ""}>固定门槛与冷却</option></select><small>动态模式使用 MaiBot 原版评分与频率反馈，不叠加固定消息数、判断间隔和冷却；权限与每小时上限继续生效。</small></div>
       ${field("participation_frequency", "动态回复频率", s.participation_frequency ?? .5, "0停止普通自主参与，1允许每批进入规划；不是随机回复概率。仅动态节奏生效。", {type:"number",min:0,max:1,step:.05})}
       ${switchField("participation_followup", "允许连续接话", "刚回复的成员在 120 秒内继续说话时，允许一次跳过新消息门槛与冷却；中间夹有其他成员发言也能衔接。续接收集窗口最多 2 秒，仍判断是否需要回应，保留每小时限额。", s.participation_followup)}
-      </div><div><details><summary>决策模型与工具</summary><p>持续规划使用这里的模型 ID 和超时；仅原判断方式下，Jev 主动参与会接管判断。</p>${field("planner_provider_id","参与决策模型 ID",s.planner_provider_id,"留空使用学习模型或当前会话模型。",{type:"text"})}<div class="number-fields">${field("planner_interval_seconds","普通群聊判断间隔",s.planner_interval_seconds ?? 60,"秒；减少重复旁观判断，静默窗口内集中处理新消息",{type:"number",min:5,max:300})}${field("planner_timeout","决策请求超时",s.planner_timeout,"秒；异常时保持旁观",{type:"number",min:3,max:90})}${field("planner_reply_timeout","原生回复等待上限",s.planner_reply_timeout ?? 120,"秒；超时取消该轮，不自动重发；长任务可调高",{type:"number",min:30,max:600})}${field("planner_reply_threshold","最低参与把握",s.planner_reply_threshold,"由模型评估，不等同于统计概率",{type:"number",min:.5,max:1,step:.01})}${field("planner_max_wait","单次最长等待",s.planner_max_wait,"秒；持续规划在超时或新输入后继续判断",{type:"number",min:1,max:120})}</div></details><div id="autonomous-tool-picker"></div></div></div>
+      </div><div><details><summary>规划时机与工具</summary><p>模型在「模型分工」选择；这里调整规划节奏、等待和工具范围。Jev 单次判读仍使用 Jev 连接配置。</p><div class="number-fields">${field("planner_interval_seconds","普通群聊判断间隔",s.planner_interval_seconds ?? 60,"秒；减少重复旁观判断，静默窗口内集中处理新消息",{type:"number",min:5,max:300})}${field("planner_timeout","决策请求超时",s.planner_timeout,"秒；异常时保持旁观",{type:"number",min:3,max:90})}${field("planner_reply_timeout","原生回复等待上限",s.planner_reply_timeout ?? 120,"秒；超时取消该轮，不自动重发；长任务可调高",{type:"number",min:30,max:600})}${field("planner_reply_threshold","最低参与把握",s.planner_reply_threshold,"由模型评估，不等同于统计概率",{type:"number",min:.5,max:1,step:.01})}${field("planner_max_wait","单次最长等待",s.planner_max_wait,"秒；持续规划在超时或新输入后继续判断",{type:"number",min:1,max:120})}</div></details><div id="autonomous-tool-picker"></div></div></div>
     </section>
 <section class="settings-group"><h2>Jev 决策与学习核验</h2><p>接口地址、模型名和 API Key 在 AstrBot 原生插件配置的「Jev / TypeSafe 连接」填写。烤箱之心独占主动回复；意图与情绪由 Oven Multi 的独立开关管理。</p>
       <p class="muted">${data.jev?.configured ? "已配置原生连接。" : "尚未填写 API Key；启用 Jev 参与后将暂时旁观，学习核验沿用原流程。"}</p>
@@ -680,7 +693,7 @@ function renderSettings(target = "#content") {
       ${switchField("reply_rhythm_enabled", "分段回复与发送节奏", "首段直接发送，后续段落再模拟打字；支持普通模型回复与Planner正文。宿主开启分段时完全沿用宿主。", s.reply_rhythm_enabled)}
       <div class="field"><label for="reply_split_mode">断句方式</label><select id="reply_split_mode" name="reply_split_mode"><option value="rule" ${s.reply_split_mode !== "llm" ? "selected" : ""}>本地规则（推荐，无额外模型调用）</option><option value="llm" ${s.reply_split_mode === "llm" ? "selected" : ""}>模型语义（额外调用，最多等待设定秒数）</option></select><small>初次安装保持本地规则即可：按 AstrBot 分段词与换行切分，保留原文标点。代码块与列表整条发送，颜文字和括号内部不切分、外部正常分段；流式与图文混排沿用原发送方式。</small></div>
       <div class="number-fields">${field("reply_split_max_messages", "每次正文最多分段数", s.reply_split_max_messages ?? 3, "超过时按原版规则合并", {type:"number",min:1,max:10})}${field("reply_typing_speed", "模拟打字时间倍率", s.reply_typing_speed ?? 0.25, "0关闭等待；首段不等待，后续每段最多5秒", {type:"number",min:0,max:3,step:0.05})}</div>
-      <div class="number-fields">${field("reply_split_provider_id", "语义断句模型 ID", s.reply_split_provider_id ?? "", "仅模型语义模式使用；推荐填写 AstrBot 已配置的快速模型 ID。留空使用Planner或当前模型，计入语义断句用量。", {type:"text"})}${field("reply_split_timeout", "语义断句等待上限", s.reply_split_timeout ?? 3, "秒；独立于Planner，失败或超时使用本地规则结果。", {type:"number",min:1,max:10})}</div>
+      <div class="number-fields">${field("reply_split_timeout", "语义断句等待上限", s.reply_split_timeout ?? 3, "秒；独立于Planner，失败或超时使用本地规则结果。", {type:"number",min:1,max:10})}</div>
 </section>
 <section class="settings-group"><h2>习惯检索与上下文</h2><p>控制每轮选用的习惯、群聊参考窗口与补充提示。</p>
       <div class="number-fields">${field("max_traits", "每次最多应用习惯", s.max_traits, "条；所有检索模式统一上限，可少选或不选", {type:"number", min:1, max:24})}${field("prompt_budget", "补充内容字数上限", s.prompt_budget, "字符；包含人工底稿", {type:"number", min:500, max:8000})}</div>
@@ -704,7 +717,6 @@ function renderSettings(target = "#content") {
   const updateSplitControls = () => {
     if (!$("#reply_split_mode")) return;
     const semantic = $("#reply_split_mode").value === "llm";
-    $("#field-reply_split_provider_id").disabled = !semantic;
     $("#field-reply_split_timeout").disabled = !semantic;
   };
   if ($("#reply_split_mode")) $("#reply_split_mode").onchange = updateSplitControls;

@@ -1275,12 +1275,8 @@ class ParticipationController:
                 else None,
             },
         )
-        provider_id = (
-            settings["planner_provider_id"]
-            or settings["provider_id"]
-            or await plugin.context.get_current_chat_provider_id(
-                event.unified_msg_origin
-            )
+        provider_id = await plugin.auxiliary.resolve_provider_id(
+            settings, "planner_provider_id", event.unified_msg_origin
         )
         plugin.debug(
             "planner_request",

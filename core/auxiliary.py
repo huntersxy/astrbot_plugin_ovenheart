@@ -29,6 +29,10 @@ class AuxiliaryUsage:
         self.native_bound = 0
         self.native_unavailable = 0
 
+    async def resolve_provider_id(self, settings, key, umo):
+        """Each task has one override; empty selections follow its native chat."""
+        return settings[key] or await self.context.get_current_chat_provider_id(umo)
+
     async def generate(self, stage, **kwargs):
         return await self.measure(
             stage,
