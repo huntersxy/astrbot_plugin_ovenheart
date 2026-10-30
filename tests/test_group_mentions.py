@@ -143,6 +143,42 @@ async def test_streamed_command_mentions_once_even_with_a_split_address(text):
     assert event.get_extra("ovenheart_reply_mentions") == []
 
 
+@pytest.mark.parametrize(
+    "chunks",
+    [
+        ["放心", "啦", "，没事的。"],
+        ["谢谢鱼", "鱼。"],
+        ["认领", "的这一套。"],
+        ["第一段\n", "\n第二段", "。"],
+    ],
+)
+async def test_native_onebot_collects_stream_chunks_without_inserting_newlines(
+    monkeypatch, chunks
+):
+    class NativeEvent(Event, AiocqhttpMessageEvent):
+        send_streaming = AiocqhttpMessageEvent.send_streaming
+
+    event, owner = NativeEvent(), plugin()
+    event.platform_meta = SimpleNamespace(name="aiocqhttp")
+    monkeypatch.setattr(
+        "astrbot.core.platform.astr_message_event.Metric.upload", AsyncMock()
+    )
+    group_mentions.bind_mentions(event)
+
+    async def source():
+        for text in chunks:
+            yield MessageChain(chain=[Plain(text)])
+
+    await event.send_streaming(
+        owner.direct_reply_stream(event, source()), use_fallback=False
+    )
+
+    assert len(event.sent_messages) == 1
+    wire = await AiocqhttpMessageEvent._parse_onebot_json(event.sent_messages[0])
+    text = "".join(item["data"]["text"] for item in wire if item["type"] == "text")
+    assert text == "".join(chunks)
+
+
 async def test_ambiguous_members_and_unknown_ids_do_not_choose_or_send_anyone():
     event = Event()
     event.bot.call_action.return_value.append(

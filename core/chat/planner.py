@@ -428,17 +428,6 @@ class PlannerSession:
                 for identifier in requested
                 if identifier in self.expressions
             ]
-            invalid = [
-                identifier
-                for identifier in requested
-                if identifier not in self.expressions
-            ]
-            if invalid and not expression_ids and requested:
-                return (
-                    "错误：expression_ids 只能选 expression_candidates 实际提供的 ID "
-                    f"{sorted(self.expressions) or '[]'}；没有合适表达请填空数组。"
-                    f"收到无效 ID：{invalid}"
-                )
             plan = parse_plan(
                 json.dumps(
                     {

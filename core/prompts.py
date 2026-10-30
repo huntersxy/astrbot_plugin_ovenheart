@@ -102,13 +102,20 @@ STRUCTURED_CONTEXT_RULE = (
     "media.status=pending 表示确有媒体但描述未完成；描述不足时可按能力查看真实 image_refs，不否认图片存在、不编造画面。"
     "restored 或 replyable=false 仅作背景，不冒充原事件调用工具或重新投递；与宿主历史重合的是同一事实。\n"
 )
+REPLY_TEXT_FORMAT_RULE = (
+    "\n[OvenHeart reply text format]\n"
+    "普通聊天的短句应按完整语义连续书写。短促、口语化、省略主语不等于逐词换行，"
+    "不要把一个词拆成多行，也不要在逗号、句号等标点之前断行。"
+    "确需分段时在完整句子或自然段边界换行；正常段落、列表、代码及用户明确要求的排版照常保留。"
+    "历史消息里将词或标点拆开的意外换行不是本轮说话风格，不要照着延续。\n"
+)
 REPLY_FOCUS_RULE = (
     "\n[OvenHeart reply focus]\n"
     "reply_focus 是数据：target 为本轮目标，same_sender_before 为该成员前文，recent_self 为你自己的近话。"
     "ref=reply_message 指向本轮目标；ref=messages 按消息与成员ID引用窗口中的同一条记录，不另起事实，找不到时不猜。"
     "追问、纠正或‘你刚才’先对照引用和自己的原话，不误认成昵称变化或别人的话；指代不明才澄清，无关话题不替换目标。"
     "明确任务优先完成，短句偏好不能缩成附和；多步任务落实可执行的一步，受限时说明所缺，不只答应或虚称完成。权限仍由宿主决定。\n"
-) + CONVERSATION_STYLE_RULE
+) + CONVERSATION_STYLE_RULE + REPLY_TEXT_FORMAT_RULE
 
 SPECS = {
     "planner": {

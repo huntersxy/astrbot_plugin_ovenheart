@@ -72,15 +72,8 @@ def test_resolve_msg_id_accepts_sequence_and_unique_platform_id():
     assert session.resolve_msg_id("bot") is None
 
 
-@pytest.mark.parametrize(
-    "invalid",
-    [
-        {"expression_style": "简短表达"},
-        {"attachment": "959"},
-        {"reply_style": "brief"},
-    ],
-)
-async def test_invalid_reply_returns_correction_then_accepts_repaired_action(invalid):
+@pytest.fixture
+def reply_tool():
     session = PlannerSession.__new__(PlannerSession)
     session.id = "test-planner"
     session.scope = "test-room"
@@ -101,6 +94,21 @@ async def test_invalid_reply_returns_correction_then_accepts_repaired_action(inv
         name="reply", description="Reply", parameters=ACTION_SCHEMAS["reply"]
     )
     tool.session = session
+    return tool
+
+
+@pytest.mark.parametrize(
+    "invalid",
+    [
+        {"expression_style": "简短表达"},
+        {"attachment": "959"},
+        {"reply_style": "brief"},
+    ],
+)
+async def test_invalid_reply_returns_correction_then_accepts_repaired_action(
+    reply_tool, invalid
+):
+    tool, session = reply_tool, reply_tool.session
     arguments = {
         "msg_id": "7",
         "reply_reference": "回应当前约定，简短确认。",
@@ -137,6 +145,27 @@ async def test_invalid_reply_returns_correction_then_accepts_repaired_action(inv
         assert json.loads(await task) == {"send_hook": True}
         assert session.running_tools == 0
         assert session.actions.empty()
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+
+@pytest.mark.parametrize("ids,expected", [([999], []), ([11, 999], [11])])
+async def test_reply_ignores_unoffered_expression_ids_without_a_model_retry(
+    reply_tool, ids, expected
+):
+    session = reply_tool.session
+    session.expressions = {11: {"id": 11}}
+    task = asyncio.create_task(
+        reply_tool.call(
+            None, msg_id="7", reply_reference="回应当前真实请求。", expression_ids=ids
+        )
+    )
+    try:
+        plan = await asyncio.wait_for(session.actions.get(), 1)
+        assert [row["id"] for row in plan["selected_expressions"]] == expected
+        session.pending.set_result({"send_hook": True})
+        assert json.loads(await task) == {"send_hook": True}
     finally:
         task.cancel()
         await asyncio.gather(task, return_exceptions=True)

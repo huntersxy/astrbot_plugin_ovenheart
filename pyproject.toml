@@ -1,6 +1,6 @@
 [project]
 name = "astrbot-plugin-ovenheart"
-version = "0.71.30"
+version = "0.71.31"
 description = "Evidence-based personality learning, conversation planning and native memory for AstrBot"
 requires-python = ">=3.10"
 dependencies = ["json-repair>=0.60.1,<0.61", "faiss-cpu>=1.11.0", "numpy>=2.2.6", "scipy>=1.7.0", "jieba>=0.42.1"]
