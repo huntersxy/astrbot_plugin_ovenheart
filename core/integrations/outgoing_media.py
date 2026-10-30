@@ -197,6 +197,10 @@ class OutgoingMediaBridge:
                 if text:
                     await failed()
                 return result
+            if text and event.get_extra("oven_multi_segmented"):
+                sent = event.get_extra("ovenheart_actual_text_segments", [])
+                sent.append("".join(part.text for part in message.chain if isinstance(part, Plain)))
+                event.set_extra("ovenheart_actual_text_segments", sent)
             if text and event.get_extra("ovenheart_first_text_send_seconds") is None:
                 event.set_extra("ovenheart_first_text_send_seconds", round(max(0, time.time() - event.created_at), 3))
             images = [

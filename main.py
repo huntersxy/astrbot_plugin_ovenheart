@@ -3157,7 +3157,7 @@ class PersonaPlugin(Star):
                 event_source(event),
             )
 
-    @filter.after_message_sent()
+    @filter.after_message_sent(priority=-100000)
     async def record_delivery(self, event: AstrMessageEvent):
         """Record exposure and volatile self context at a native completion boundary.
 
@@ -3169,6 +3169,8 @@ class PersonaPlugin(Star):
             event: Native message event after the send pipeline.
         """
         await self.outgoing_media.capture_result(event)
+        if event.get_extra("oven_multi_segment_incomplete"):
+            event.set_extra("ovenheart_text_delivery_incomplete", True)
         if event.get_extra(
             "ovenheart_text_delivery_incomplete"
         ) and not event.get_extra("ovenheart_actual_text_segments"):
@@ -3194,6 +3196,15 @@ class PersonaPlugin(Star):
                 event, status="send_failed", cancel_reason="原生分段发送未完成。"
             )
             return
+        result = event.get_result()
+        actual_segments = event.get_extra("ovenheart_actual_text_segments")
+        reply_text = (
+            "\n".join(actual_segments)
+            if actual_segments is not None
+            else result.get_plain_text()
+            if result
+            else ""
+        )
         event.set_extra("ovenheart_direct_sent", True)
         if (
             event.get_extra("_clean_group_context_session")
@@ -3214,10 +3225,9 @@ class PersonaPlugin(Star):
             and await self.permitted(event)
         ):
             scope, _, _ = await self.resolve_scope(event)
-            result = event.get_result()
-            if result and result.get_plain_text().strip():
+            if reply_text.strip():
                 await self.conversation.delivered(
-                    event, scope, None, result.get_plain_text(), True
+                    event, scope, None, reply_text, True
                 )
         application = event.get_extra("ovenheart_application")
         learning_source = event.get_extra("ovenheart_learning_source")
@@ -3240,8 +3250,7 @@ class PersonaPlugin(Star):
                 ),
                 None,
             )
-            result = event.get_result()
-            text = result.get_plain_text().strip()[:1200] if result else ""
+            text = reply_text.strip()[:1200]
             if (
                 anchor is not None
                 and text
@@ -3321,14 +3330,7 @@ class PersonaPlugin(Star):
                             {"scope": scope, "source": room["source"]},
                         )
             window = self.participation.windows.get(scope)
-            result = event.get_result()
-            text = (
-                "\n".join(event.get_extra("ovenheart_actual_text_segments"))[:1200]
-                if event.get_extra("ovenheart_actual_text_segments") is not None
-                else result.get_plain_text()[:1200]
-                if result
-                else ""
-            )
+            text = reply_text[:1200]
             if plan and plan.get("planner_session"):
                 receipt = event.get_extra("ovenheart_planner_receipt", {})
                 event.set_extra(
