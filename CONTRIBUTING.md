@@ -45,6 +45,8 @@ node --test tests/test_frontend.mjs tests/test_panel_loading.mjs
 
 完整 Python 检查入口是 `uv run --no-sync pytest`。测试中的本地包直接来自当前工作区，不安装第二份插件代码。
 
+持续 Planner 的动作参数在 `PlannerTool.call` 按实际工具 schema 校验。校验失败返回包含合法字段与重试说明的结构化结果，本次不执行动作，也不把异常堆栈交给模型。`reply_style` 控制篇幅，`expression_intent` 描述回应动作与语气，`attach_emoji` 使用真实候选的整数序号；`expression_style` 和 `attachment` 不作为别名接收。
+
 ## 发布
 
 发布源码归档时，使用 Git 的归档功能；`.gitattributes` 排除了测试、开发文档和本地工作资料。运行数据和密钥不得加入发布包。

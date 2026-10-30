@@ -42,7 +42,7 @@ wheels = [
 
 [[package]]
 name = "astrbot-plugin-ovenheart"
-version = "0.71.27"
+version = "0.71.28"
 source = { virtual = "." }
 dependencies = [
     { name = "faiss-cpu" },

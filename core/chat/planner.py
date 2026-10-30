@@ -26,6 +26,13 @@ from .native_context import native_time
 from .participation import event_source, offered_messages, parse_plan, planner_message
 from .preparation import context_reads
 
+REPLY_ARGUMENT_RULE = (
+    "reply 的参数名和类型以当前工具 schema 为准。"
+    "篇幅使用 reply_style，只能选简短表达、正常回复、长回复；"
+    "回应动作与语气约束放在 expression_intent 对象中。"
+    "随文表情使用 attach_emoji，填写本轮真实候选的整数序号；不配图时省略此字段。"
+    "expression_style 和 attachment 不是合法字段，不得使用。"
+)
 PLANNER_SYSTEM = (
     """你正在以当前人格参加真实聊天。你负责持续规划，正文由 reply 工具的回复器生成。
 根据真实消息、身份、习惯和已获准访问的记忆判断自己为什么要说话，而非每句都答。
@@ -59,11 +66,14 @@ correct_memory 更正已查到的本插件通用段落，forget_memory 从召回
 undo_memory_change 撤销当前请求作者在当前会话、人格中的一次更正或遗忘；change_id 不填则撤销此作者最近一条可撤销操作。它不能恢复其他人的操作，也不改变用户提供的聊天原文。
 若恢复返回 metadata_restored=true、success=false，文字记录已恢复但派生索引仍待完成；先 search_memory 核对当前召回，再按实际结果说明。不能把索引待完成等同于完全查不到，也不声称已全部恢复。
 """
+    + "\n"
+    + REPLY_ARGUMENT_RULE
     + CONVERSATION_STYLE_RULE
 )
 
 EXPRESSION_SCHEMA = {
     "type": "object",
+    "description": "本轮回应动作与表达约束，按对象字段填写，不是风格字符串。",
     "properties": {
         key: {"type": "string", "maxLength": 80}
         for key in ("focus", "reply_act", "scene", "tone", "prefer", "avoid")
@@ -104,8 +114,13 @@ ACTION_SCHEMAS = {
             "reply_style": {
                 "type": "string",
                 "enum": ["简短表达", "正常回复", "长回复"],
+                "description": "本轮回复篇幅；省略时为正常回复。不要改名为 expression_style。",
             },
-            "attach_emoji": {"type": "integer", "minimum": 1},
+            "attach_emoji": {
+                "type": "integer",
+                "minimum": 1,
+                "description": "随正文发送的真实表情候选 index，必须为整数；不配图时省略，不使用 attachment。",
+            },
             "expression_intent": EXPRESSION_SCHEMA,
             "expression_ids": {
                 "type": "array",
@@ -159,7 +174,21 @@ class PlannerTool(FunctionTool):
     session: PlannerSession
 
     async def call(self, context, **kwargs):
-        jsonschema.validate(kwargs, self.parameters)
+        try:
+            jsonschema.validate(kwargs, self.parameters)
+        except jsonschema.ValidationError as exc:
+            # Return a correction to the same native tool loop before any action.
+            result = {
+                "success": False,
+                "error": exc.message,
+                "argument_path": list(exc.path),
+                "allowed_parameters": list(self.parameters["properties"]),
+                "required_parameters": self.parameters.get("required", []),
+                "retry": "本次调用未执行任何动作。请按当前工具 schema 修正参数后重试，不能声称已经回复或发送。",
+            }
+            if self.name == "reply":
+                result["hint"] = REPLY_ARGUMENT_RULE
+            return json.dumps(result, ensure_ascii=False)
         self.session.running_tools += 1
         self.session.tool_changed.set()
         try:
@@ -747,6 +776,7 @@ class PlannerSession:
                         "选择真实目标并提交回复策略；等待原生回复器结果后继续规划。"
                         "msg_id 只能填 recent_messages[].msg_id（序号字符串），禁止平台原始 message_id。"
                         f"expression_ids 只能从本轮候选 {sorted(self.expressions) or '[]'} 中选，没有合适项填 []。"
+                        f"只允许这些参数：{', '.join(schema['properties'])}。"
                     ),
                     "wait": "等待消息或超时，然后继续判断；不向群里发等待说明。",
                     "stop": "结束本轮参与并休息，不自动继续规划。",
