@@ -145,6 +145,13 @@ class AuxiliaryUsage:
         return wrapped
 
     def record(self, stage, kwargs, response, status, started, provider_id=None):
+        if stage == "native_reply" and response is not None:
+            text = response.completion_text or ""
+            logger.info(
+                "Native reply boundary: chars=%s, newlines=%s",
+                len(text),
+                [i for i, char in enumerate(text) if char == "\n"],
+            )
         usage = getattr(response, "usage", None)
         raw = getattr(response, "raw_completion", None)
         model = (
