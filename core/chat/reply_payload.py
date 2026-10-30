@@ -45,6 +45,11 @@ def message_view(record):
     elif record.get("time_iso"):
         result["time_iso"] = record["time_iso"]
     quote = record.get("reply_to")
+    if result.get("media"):
+        result["media"] = [
+            {key: value for key, value in item.items() if key != "url"}
+            for item in result["media"]
+        ]
     if isinstance(quote, dict) and quote:
         result["reply_to"] = message_view(quote)
     return result
@@ -52,6 +57,8 @@ def message_view(record):
 
 def reply_messages(records, settings):
     """Bound the optional reply window by its actual compact wire representation."""
+    if settings["context_mode"] == "structured":
+        return copy.deepcopy(records)
     count, budget = settings["reply_context_messages"], settings["reply_context_budget"]
     selected = []
     if not count or not budget:
@@ -69,7 +76,7 @@ def _identity(record):
     return (identifier, record.get("sender_id"), bool(record.get("self")))
 
 
-def payload_view(payload):
+def payload_view(payload, *, history_refs=False):
     """Project reply-only data and reference identical focus excerpts once."""
     result = copy.deepcopy(payload)
     for key in ("messages", "reply_context"):
@@ -109,4 +116,14 @@ def payload_view(payload):
             if rows:
                 projected[key] = rows
         result["reply_focus"] = projected
+    if history_refs:
+        result["messages"] = [
+            {"ref": "group_history"}
+            | {
+                key: record[key]
+                for key in ("message_id", "source", "sender_id", "self")
+                if key in record
+            }
+            for record in result.get("messages", [])
+        ]
     return result

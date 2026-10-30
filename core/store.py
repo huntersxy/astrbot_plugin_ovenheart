@@ -385,7 +385,10 @@ class Store:
             (SCHEMA_VERSION,),
         )
 
-    def chat_context(self, db, scope, cid, record=None, seed=None, native_seen=None):
+    def chat_context(
+        self, db, scope, cid, record=None, seed=None, native_seen=None,
+        context_count=40, restore=False, trim=False,
+    ):
         """Restore or append the one bounded room ledger, isolated by native dialog."""
         head = db.execute(
             "SELECT * FROM context_heads WHERE scope=?", (scope,)
@@ -444,10 +447,6 @@ class Store:
             "UPDATE context_heads SET sequence=?,updated=? WHERE scope=?",
             (sequence, time.time(), scope),
         )
-        db.execute(
-            "DELETE FROM context_messages WHERE scope=? AND epoch=? AND source NOT IN (SELECT source FROM context_messages WHERE scope=? AND epoch=? ORDER BY created DESC,sequence DESC LIMIT 160)",
-            (scope, epoch, scope, epoch),
-        )
         # Bound inactive room metadata as well as each room's rows.
         db.execute(
             "DELETE FROM context_messages WHERE scope IN (SELECT scope FROM context_heads ORDER BY updated DESC LIMIT -1 OFFSET 128)"
@@ -462,6 +461,21 @@ class Store:
                 (scope, epoch),
             )
         ]
+        removed = []
+        keep = (context_count + 1) // 2 if restore else context_count
+        if restore or trim and len(messages) > context_count * 2:
+            removed, messages = messages[:-keep], messages[-keep:]
+            db.executemany(
+                "DELETE FROM context_messages WHERE scope=? AND epoch=? AND source=?",
+                [(scope, epoch, row["source"]) for row in removed],
+            )
+            if restore:
+                for row in messages:
+                    row["restored"] = True
+                db.executemany(
+                    "UPDATE context_messages SET payload=? WHERE scope=? AND epoch=? AND source=?",
+                    [(json.dumps(row, ensure_ascii=False), scope, epoch, row["source"]) for row in messages],
+                )
         return {
             "epoch": epoch,
             "cid": cid,
@@ -469,6 +483,7 @@ class Store:
             "messages": messages,
             "fresh": fresh,
             "reset": reset,
+            "removed": removed,
         }
 
     def context_media(self, db, scope, epoch, source, media):
@@ -486,14 +501,14 @@ class Store:
         )
         return value
 
-    def clear_chat_context(self, db, scope, cid):
+    def clear_chat_context(self, db, scope, cid, context_count=40):
         """Honor native /reset without allowing later bootstrap of cleared rows."""
         db.execute("DELETE FROM context_messages WHERE scope=?", (scope,))
         db.execute(
             "INSERT OR REPLACE INTO context_heads(scope,cid,epoch,sequence,updated,native_seen) VALUES (?,?,?,0,?,0)",
             (scope, cid, uuid4().hex, time.time()),
         )
-        return self.chat_context(db, scope, cid)
+        return self.chat_context(db, scope, cid, context_count=context_count)
 
     def settings(self, db, patch=None):
         """Read or patch runtime settings.

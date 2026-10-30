@@ -806,12 +806,15 @@ class PlannerSession:
             tools.append(tool)
         await self.check_current()
         try:
+            structured = self.plugin.conversation.active(self.event)
             response = await self.plugin.auxiliary.tool_loop(
                 "planner",
                 trace=lambda: self.event.trace,
                 event=self.event,
                 chat_provider_id=provider,
                 system_prompt=PLANNER_SYSTEM,
+                contexts=await self.plugin.conversation.model_messages(self.messages, planner=True)
+                if structured else None,
                 prompt=json.dumps(
                     {
                         "identity": anchor["prompt"] if anchor else "",
@@ -819,7 +822,17 @@ class PlannerSession:
                             self.plugin.context, self.event.unified_msg_origin
                         ),
                         **recalled,
-                        "recent_messages": [planner_message(m) for m in self.messages],
+                        "recent_messages": [
+                            {
+                                "msg_id": str(m["sequence"]),
+                                "sender_id": m["sender_id"],
+                                "self": bool(m.get("self")),
+                                "replyable": m.get("replyable", False),
+                                "ref": "group_history",
+                            }
+                            if structured else planner_message(m)
+                            for m in self.messages
+                        ],
                         "trigger": {
                             "chat_type": "private"
                             if self.event.is_private_chat()

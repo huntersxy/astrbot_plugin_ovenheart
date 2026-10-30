@@ -8,6 +8,7 @@ SHARED_SCOPE = "0" * 24
 
 DEFAULTS = {
     "context_mode": "native",
+    "group_context_messages": 40,
     "debug_enabled": False,
     "session_isolation": False,
     "enabled": True,
@@ -158,6 +159,7 @@ def validate_settings(values: dict) -> dict:
         "memory_review_interval": (300, 604800),
         "prompt_budget": (500, 8000),
         "max_traits": (1, 24),
+        "group_context_messages": (10, 80),
         "reply_context_messages": (0, 20),
         "reply_context_budget": (0, 24000),
         "retention_days": (1, 90),

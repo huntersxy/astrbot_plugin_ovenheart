@@ -2190,6 +2190,8 @@ class PersonaPlugin(Star):
             }
             direct["reply_capabilities"] = {"group_mentions": group_mentions.capabilities(event, req)}
             event.set_extra("ovenheart_direct_context", direct)
+            structured = self.conversation.active(event)
+            direct_view = payload_view(direct, history_refs=True) if structured else direct
             self.describe_request_tools(event, req)
             target = direct["reply_message"]
             if (
@@ -2250,7 +2252,11 @@ class PersonaPlugin(Star):
             ):
                 text = (
                     marker
-                    + "以下为本轮真实目标与有界摘录；完整正文和媒体以宿主原请求为准。只输出回复正文。\n"
+                    + (
+                        "完整群聊正文与媒体见 group_history；以下为本轮目标和回复任务。只输出回复正文。\n"
+                        if structured
+                        else "以下为本轮真实目标与有界摘录；完整正文和媒体以宿主原请求为准。只输出回复正文。\n"
+                    )
                     + self.template(
                         "participation_system",
                         goal=direct["reply_goal"],
@@ -2264,7 +2270,7 @@ class PersonaPlugin(Star):
                         "participation_user",
                         reply_goal=direct["reply_goal"],
                         target=target["sender"] or target["sender_id"],
-                        messages=direct["messages"],
+                        messages=direct_view["messages"],
                         reply_message=target,
                         reply_context=direct["reply_context"],
                         expression_intent=direct.get("expression_intent", {}),
@@ -2272,8 +2278,8 @@ class PersonaPlugin(Star):
                         scope=scope,
                     )
                     + (
-                        dump_reply_payload(payload_view(direct))
-                        if self.conversation.active(event)
+                        dump_reply_payload(direct_view)
+                        if structured
                         else json.dumps(direct, ensure_ascii=False)
                     )
                     + (
@@ -2295,6 +2301,7 @@ class PersonaPlugin(Star):
                     target=target,
                     temporary_user=text,
                 )
+            self.conversation.bind_request(event, req, direct["messages"], target)
             await self.record_turn_trace(event, req)
             return
         if not await self.check_participation(event, req):
@@ -2432,19 +2439,21 @@ class PersonaPlugin(Star):
             },
             "planned_emoji": plan.get("planned_emoji"),
         }
+        structured = self.conversation.active(event)
+        reply_view = payload_view(reply_payload, history_refs=True) if structured else reply_payload
         user_injection = self.template(
             "participation_user",
             reply_goal=plan["intent"],
             target=target_label,
-            messages=context_messages,
+            messages=reply_view["messages"],
             reply_message=target,
             reply_context=reply_context,
             expression_intent=plan.get("expression_intent", {}),
             profile=profile,
             scope=plan["scope"],
         ) + (
-            dump_reply_payload(payload_view(reply_payload))
-            if self.conversation.active(event)
+            dump_reply_payload(reply_view)
+            if structured
             else json.dumps(reply_payload, ensure_ascii=False)
         )
         if plan.get("planner_session"):
@@ -2502,6 +2511,7 @@ class PersonaPlugin(Star):
                 if getattr(tool, "active", True)
             ],
         )
+        self.conversation.bind_request(event, req, context_messages, target)
         await self.record_turn_trace(event, req)
 
     async def prepare_reply_context(
@@ -3119,6 +3129,7 @@ class PersonaPlugin(Star):
     async def meter_native_reply(self, event, run_context):
         """Attach accounting to this native runner before its first transport."""
         self.auxiliary.bind_native(event, run_context)
+        await self.conversation.begin(event, run_context)
 
     @filter.on_agent_done(priority=-100000)
     async def record_generation_outcome(self, event, run_context, response):
@@ -3131,6 +3142,7 @@ class PersonaPlugin(Star):
                 for part in last.content:
                     if isinstance(part, TextPart):
                         part.text = clean_reply(part.text)
+        self.conversation.finish_run(event, run_context)
         if not event.get_extra("ovenheart_turn_trace") or event.is_stopped():
             return
         visible = bool(

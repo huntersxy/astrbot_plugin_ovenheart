@@ -14,14 +14,16 @@ from uuid import uuid4
 
 from astrbot.api import logger
 from astrbot.api.platform import MessageType
+from astrbot.core.agent.message import Message, TextPart
 from astrbot.core.message.components import At, Image, Plain, Reply
+from astrbot.core.provider.entities import ProviderRequest
 
 from ..message_source import own_message_text
 from .native_context import conversation_metadata
 from .participation import event_source, offered_messages
+from .reply_payload import dumps, message_view
 
 CONTEXT_COUNT = 40
-CONTEXT_BUDGET = 24000
 
 
 class ConversationContext:
@@ -93,10 +95,15 @@ class ConversationContext:
             "mode": self.plugin.settings["context_mode"],
             "active_default": self.plugin.settings["context_mode"] == "structured"
             and not native,
-            "window": self.plugin.settings["reply_context_messages"],
-            "budget": self.plugin.settings["reply_context_budget"],
-            "planner_window": CONTEXT_COUNT,
-            "planner_budget": CONTEXT_BUDGET,
+            "window": self.plugin.settings["group_context_messages"] * 2
+            if self.plugin.settings["context_mode"] == "structured"
+            else self.plugin.settings["reply_context_messages"],
+            "budget": None
+            if self.plugin.settings["context_mode"] == "structured"
+            else self.plugin.settings["reply_context_budget"],
+            "base_window": self.plugin.settings["group_context_messages"],
+            "planner_window": self.plugin.settings["group_context_messages"] * 2,
+            "planner_budget": None,
             "storage": "persistent",
             "media_pending": len(self.pending),
         }
@@ -118,6 +125,8 @@ class ConversationContext:
                         "status": "pending" if isinstance(part, Image) else "available",
                     }
                 )
+                if isinstance(part, Image):
+                    media[-1]["url"] = part.url or part.file
         refs = list(dict.fromkeys(re.findall(r"(?:gimg_|img_)[0-9a-f]{24}", text)))
         return {
             "source": event_source(event),
@@ -200,8 +209,17 @@ class ConversationContext:
                         else ""
                     )
                     for p in parts
-                )
-                if not text.strip() or text.startswith("[QQ 平台事件|"):
+                )[:4000]
+                media = [
+                    {
+                        "type": "image",
+                        "status": "pending",
+                        "url": part.get("url") or part.get("file"),
+                    }
+                    for part in parts
+                    if part.get("type") == "image"
+                ]
+                if (not text.strip() and not media) or text.startswith("[QQ 平台事件|"):
                     continue
                 seed.append(
                     {
@@ -215,7 +233,7 @@ class ConversationContext:
                         "reply_to": next(
                             (p for p in parts if p.get("type") == "reply"), None
                         ),
-                        "media": [],
+                        "media": media,
                         "image_refs": [],
                         "restored": True,
                     }
@@ -253,7 +271,7 @@ class ConversationContext:
                 self.locks.pop(key, None)
             window = windows[scope] = {
                 "epoch": state["epoch"],
-                "messages": deque(maxlen=160),
+                "messages": deque(),
                 "sequence": state["sequence"],
                 "consumed": state["sequence"],
                 "changed": asyncio.Event(),
@@ -305,26 +323,30 @@ class ConversationContext:
                 else None
             )
             native_seen = native.has_history if native else None
+            base = self.plugin.settings["group_context_messages"]
             state = await self.plugin.store.call(
-                "chat_context", scope, cid, None, None, native_seen
+                "chat_context", scope, cid, None, None, native_seen, base,
+                scope not in self.plugin.participation.windows,
             )
             binding = event.get_extra("ovenheart_context_binding")
             if binding and binding[0] == scope and binding[1] != state["epoch"]:
                 return None
             if state["fresh"]:
-                seed = await self._seed(event, cid)
+                seed = await self._seed(event, cid, limit=(base + 1) // 2)
                 if seed:
                     state = await self.plugin.store.call(
-                        "chat_context", scope, cid, None, seed
+                        "chat_context", scope, cid, None, seed, None, base
                     )
-            self._publish(scope, state)
+            window = self._publish(scope, state)
             state = await self.plugin.store.call(
-                "chat_context", scope, cid, self.record(event)
+                "chat_context", scope, cid, self.record(event), None, None,
+                base, False, not window["running"],
             )
             window = self._publish(scope, state)
             event.set_extra("ovenheart_context_binding", (scope, state["epoch"]))
             await self.plugin.midterm_memory.observe(
-                event, scope, state["messages"], self.snapshot(event, scope)
+                event, scope, [*state["removed"], *state["messages"]],
+                state["messages"],
             )
             self.plugin.participation.sources[scope, event_source(event)] = event
             while len(self.plugin.participation.sources) > 128:
@@ -438,7 +460,7 @@ class ConversationContext:
                     else (m["time"], m.get("arrival_order", 0))
                     <= (event.created_at, self.order(event))
                 )
-            ][-CONTEXT_COUNT:]
+            ][-self.plugin.settings["group_context_messages"] * 2:]
         ):
             value = copy.deepcopy(record)
             value["time_iso"] = datetime.fromtimestamp(
@@ -448,8 +470,6 @@ class ConversationContext:
                 not value.get("self")
                 and (scope, value["source"]) in self.plugin.participation.sources
             )
-            if len(json.dumps([value, *result], ensure_ascii=False)) > CONTEXT_BUDGET:
-                break
             result.insert(0, value)
         return offered_messages(result, self.plugin.settings)
 
@@ -558,6 +578,116 @@ class ConversationContext:
         )
         return not window.get("cid") or window["cid"] == cid
 
+    def bind_request(self, event, req, messages, target):
+        """Bind this authorized snapshot to one native runner, not its saved history."""
+        if not self.active(event):
+            return
+        event.set_extra(
+            "ovenheart_context_request",
+            {"request": req, "messages": copy.deepcopy(messages), "target": target},
+        )
+
+    async def model_messages(self, records, *, planner=False, omit_media_source=None):
+        """Render the real IM timeline; planner/tool exchanges never enter it."""
+        result = []
+        identifiers = {str(row.get("message_id")) for row in records if row.get("message_id")}
+        for row in records:
+            view = message_view(row)
+            text = view.pop("text", "")
+            if planner:
+                view["msg_id"] = str(row.get("sequence", ""))
+            quote = view.get("reply_to")
+            if quote and str(quote.get("message_id")) in identifiers:
+                quote.pop("text", None)
+            images = [
+                media["url"]
+                for media in row.get("media", [])
+                if media.get("type") == "image" and media.get("url")
+            ] if row.get("source") != omit_media_source else []
+            message = await ProviderRequest(
+                prompt="[group_history] " + dumps(view) + "\n" + text,
+                image_urls=images if not planner or self.plugin.settings["planner_visual_enabled"] else [],
+            ).assemble_context()
+            if row.get("self") and not planner:
+                message["role"] = "assistant"
+            value = Message.model_validate(message)
+            value._no_save = True
+            result.append(value)
+        return result
+
+    async def begin(self, event, run_context):
+        binding = event.get_extra("ovenheart_context_request")
+        if not binding or not self.active(event) or binding.get("original") is not None:
+            return
+        original = list(run_context.messages)
+        req = binding["request"]
+        current = next((m for m in reversed(original) if m.role == "user"), None)
+        if current is None:
+            return
+        parts = (
+            list(current.content)
+            if isinstance(current.content, list)
+            else [TextPart(text=current.content or "")]
+        )
+        task = Message(
+            role="user",
+            content=[
+                TextPart(
+                    text=(
+                        "群聊历史以 group_history 为准。以下是本轮目标的结构化标识，"
+                        "其后的内容是目标原始输入：\n"
+                        + dumps(message_view(binding["target"]))
+                    )
+                ),
+                *parts,
+            ],
+        )
+        task._no_save = True
+        # The host already resolved the target's attachments. Reuse those bytes
+        # once, while other messages keep their own media in the timeline.
+        target_source = binding["target"].get("source")
+        history = await self.model_messages(binding["messages"], omit_media_source=target_source)
+        binding.update(original=original, run_context=run_context)
+        run_context.messages = [m for m in original if m.role == "system"] + history + [task]
+        runner = event.get_extra("ovenheart_usage_runner")
+        runner_config = getattr(runner, "request_context_manager_config", None)
+        if runner is not None and runner.run_context is run_context and runner_config:
+            runner_config.enforce_max_turns = -1
+            runner_config.max_context_tokens = 0
+            if req.conversation is not None:
+                req.conversation = copy.copy(req.conversation)
+                req.conversation.token_usage = 0
+        event.set_extra("ovenheart_context_history_count", len(history))
+
+    def finish_run(self, event, run_context):
+        binding = event.get_extra("ovenheart_context_request")
+        if not binding or binding.get("run_context") is not run_context:
+            return
+        original = binding.pop("original", None)
+        if original is None:
+            return
+        generated = [m for m in run_context.messages if not m._no_save and m.role != "system"]
+        run_context.messages = original + generated
+        binding.pop("run_context", None)
+
+    async def post_cycle(self, event, scope):
+        if not self.active(event):
+            return
+        window = self.plugin.participation.windows.get(scope)
+        if not window or len(window["messages"]) <= self.plugin.settings["group_context_messages"] * 2:
+            return
+        async with self.locks.setdefault(scope, asyncio.Lock()):
+            if not await self.valid(event, scope, window["epoch"]):
+                return
+            state = await self.plugin.store.call(
+                "chat_context", scope, window["cid"], None, None, None,
+                self.plugin.settings["group_context_messages"], False, True,
+            )
+            self._publish(scope, state)
+        await self.plugin.midterm_memory.observe(
+            event, scope, [*state["removed"], *state["messages"]], state["messages"],
+        )
+
     async def delivered(
         self,
         event,
@@ -595,7 +725,10 @@ class ConversationContext:
                 )
                 or ""
             )
-            state = await self.plugin.store.call("chat_context", scope, cid)
+            state = await self.plugin.store.call(
+                "chat_context", scope, cid, None, None, None,
+                self.plugin.settings["group_context_messages"],
+            )
             if state["epoch"] != expected:
                 self._publish(scope, state)
                 return
@@ -626,7 +759,10 @@ class ConversationContext:
                 "media": media or [],
                 "image_refs": image_refs or [],
             }
-            state = await self.plugin.store.call("chat_context", scope, cid, record)
+            state = await self.plugin.store.call(
+                "chat_context", scope, cid, record, None, None,
+                self.plugin.settings["group_context_messages"],
+            )
             if state["epoch"] != expected:
                 self._publish(scope, state)
                 return
@@ -648,5 +784,8 @@ class ConversationContext:
                 )
                 or ""
             )
-            state = await self.plugin.store.call("clear_chat_context", scope, cid)
+            state = await self.plugin.store.call(
+                "clear_chat_context", scope, cid,
+                self.plugin.settings["group_context_messages"],
+            )
             self._publish(scope, state)

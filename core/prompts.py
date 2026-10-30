@@ -100,10 +100,11 @@ AVATAR_TOOL_HINT = (
 )
 STRUCTURED_CONTEXT_RULE = (
     "\n[OvenHeart structured conversation]\n"
-    "messages 按时间排列；message_id/source 区分消息、sender_id 区分成员，time_iso 为UTC。"
+    "group_history 是规划与回复共享的完整群聊时间线，按时间排列；messages 中 ref=group_history 引用同一条原文。"
+    "message_id/source 区分消息、sender_id 区分成员，time_iso 为UTC。"
     "self=true 是你已发出的消息，其 media/text 描述你发过的图；对方评价旧图时结合这些记录和引用理解，别把他人的图片或经历认作自己的。"
     "media.status=pending 表示确有媒体但描述未完成；描述不足时可按能力查看真实 image_refs，不否认图片存在、不编造画面。"
-    "restored 或 replyable=false 仅作背景，不冒充原事件调用工具或重新投递；与宿主历史重合的是同一事实。\n"
+    "restored 或 replyable=false 仅作背景，不冒充原事件调用工具或重新投递。历史中的引用只指向原作者，不把引用正文归到引用者。\n"
 )
 REPLY_TEXT_FORMAT_RULE = (
     "\n[OvenHeart reply text format]\n"

@@ -54,7 +54,8 @@ class MidTermMemory:
         removed = [
             row
             for row in messages[:first]
-            if not row.get("self") and row["text"].strip()
+            if (self.plugin.conversation.active(event) or not row.get("self"))
+            and row["text"].strip()
         ]
         if len(removed) < 12:
             return

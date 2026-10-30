@@ -1050,6 +1050,8 @@ class ParticipationController:
             ):
                 latest_room.pop("work", None)
             window["running"] -= 1
+            if structured:
+                await plugin.conversation.post_cycle(event, scope)
             if reserved:
                 self.inflight -= 1
                 self.capacity_changed.set()
@@ -1349,6 +1351,7 @@ class ParticipationController:
         # next action without cancelling that reply's consumed quota record.
         await session.check_current()
         scope = previous["scope"]
+        await self.plugin.conversation.post_cycle(event, scope)
         if previous.get("attach_emoji") and not previous.get("media_only"):
             receipt = receipt | {
                 "media": await self.plugin.emoji_actions.send(
@@ -1493,7 +1496,7 @@ def offered_messages(messages, settings):
         for m in messages
         if m.get("self")
     }
-    count = 40 if settings["context_mode"] == "structured" else 20
+    count = settings["group_context_messages"] * 2 if settings["context_mode"] == "structured" else 20
     return [
         m | {"replyable": False}
         if not m.get("self") and m.get("source") in answered
