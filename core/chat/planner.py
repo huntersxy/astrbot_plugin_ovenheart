@@ -784,7 +784,7 @@ class PlannerSession:
                     "reply": (
                         "选择真实目标并提交回复策略；等待原生回复器结果后继续规划。"
                         "msg_id 只能填 recent_messages[].msg_id（序号字符串），禁止平台原始 message_id。"
-                        f"expression_ids 只能从本轮候选 {sorted(self.expressions) or '[]'} 中选，没有合适项填 []。"
+                        "expression_ids 只能从本轮 expression_candidates[].id 中选，没有合适项填 []。"
                         f"只允许这些参数：{', '.join(schema['properties'])}。"
                     ),
                     "wait": "等待消息或超时，然后继续判断；不向群里发等待说明。",

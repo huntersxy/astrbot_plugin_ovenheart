@@ -44,11 +44,13 @@ from .core.chat.participation import (
     event_source,
 )
 from .core.chat.preparation import context_reads
+from .core.chat.reply_boundary import clean_reply
 from .core.chat.reply_payload import dumps as dump_reply_payload
 from .core.chat.reply_payload import message_view, payload_view, reply_messages
 from .core.chat.reply_rhythm import ReplyRhythm
 from .core.integrations.jev import JevService
 from .core.integrations.jev import host_settings as read_host_settings
+from .core.integrations.native_pipeline import NativePipelineBridge
 from .core.integrations.outgoing_media import OutgoingMediaBridge
 from .core.integrations.oven_multi import JEV_RULE, OvenMultiBridge
 from .core.integrations.oven_multi import reading as jev_reading
@@ -446,6 +448,7 @@ class PersonaPlugin(Star):
         self.direct_priority = DirectPriority(self)
         self.conversation = ConversationContext(self)
         self.outgoing_media = OutgoingMediaBridge(self)
+        self.native_pipeline = NativePipelineBridge()
         self.reply_rhythm = ReplyRhythm(self)
         self.oven_multi = OvenMultiBridge(self)
         self.jev = JevService(self)
@@ -672,6 +675,7 @@ class PersonaPlugin(Star):
         self.page_api.register()
         self.group_context.install()
         self.outgoing_media.install()
+        self.native_pipeline.install()
         self.ready = True
         _active = weakref.ref(self)
         self.worker = self.track(self.poll())
@@ -1292,6 +1296,12 @@ class PersonaPlugin(Star):
                 async for request in self.participation_request(event, plan):
                     yield request
                 plan = await self.participation.after_reply(event, plan)
+        except asyncio.CancelledError:
+            if not event.get_extra("ovenheart_priority_preempted") or self.closing:
+                raise
+            # Our direct-wake preemption is an expected end of participation,
+            # not a failed model call. Other cancellation still propagates.
+            event.call_llm = True
         finally:
             self.participation.planner.finish_event(event)
 
@@ -2016,6 +2026,21 @@ class PersonaPlugin(Star):
             # Native cancellation must close its runner and release the session lock.
             if hasattr(stream, "aclose"):
                 await stream.aclose()
+
+    @filter.on_llm_response(priority=maxsize)
+    async def guard_reply_boundary(self, event: AstrMessageEvent, response):
+        """Remove echoed input before native history and reply delivery."""
+        if not event.get_extra("ovenheart_guided"):
+            return
+        text = response.completion_text or ""
+        cleaned = clean_reply(text)
+        if cleaned != text:
+            response.completion_text = cleaned
+            event.set_extra("ovenheart_internal_echo_removed", True)
+            logger.warning(
+                "已拦截回复中的内部上下文回显 (removed_chars=%s)",
+                len(text) - len(cleaned),
+            )
 
     @filter.on_decorating_result(priority=-100000)
     async def guard_participation_result(self, event: AstrMessageEvent):
@@ -3087,6 +3112,14 @@ class PersonaPlugin(Star):
     @filter.on_agent_done(priority=-100000)
     async def record_generation_outcome(self, event, run_context, response):
         """Distinguish an empty model result from a still-running native task."""
+        if event.get_extra("ovenheart_internal_echo_removed") and run_context.messages:
+            # The host copies final text into history before OnLLMResponse.
+            # Clean that same assistant entry as well as the response object.
+            last = run_context.messages[-1]
+            if last.role == "assistant":
+                for part in last.content:
+                    if isinstance(part, TextPart):
+                        part.text = clean_reply(part.text)
         if not event.get_extra("ovenheart_turn_trace") or event.is_stopped():
             return
         visible = bool(
@@ -4554,6 +4587,7 @@ class PersonaPlugin(Star):
         from .core.runtime_diagnostics import close_retired_turns, reclaim_memory
 
         await close_retired_turns()
+        self.native_pipeline.disconnect()
         self.outgoing_media.disconnect()
         self.group_context.disconnect()
         self.participation.close()

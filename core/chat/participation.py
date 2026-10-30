@@ -319,6 +319,7 @@ class ParticipationController:
             and work
             and (
                 work.get("direct")
+                or work.get("planner_session")
                 or (
                     work.get("batch_id")
                     and self.plugin.settings["planner_mode"] == "legacy"
@@ -362,6 +363,8 @@ class ParticipationController:
             return False
         work = room.get("work") or {}
         if plan.get("direct") and work.get("source") == plan["room_source"]:
+            return not room["changed"].is_set() and time.time() - work["created"] <= 300
+        if plan.get("planner_session") and work.get("id") == plan["id"]:
             return not room["changed"].is_set() and time.time() - work["created"] <= 300
         if plan.get("batch_id") and work.get("batch_id") == plan["batch_id"]:
             return not room["changed"].is_set() and time.time() - work["created"] <= 300
@@ -950,6 +953,8 @@ class ParticipationController:
                 if decision["outcome"] == "admitted":
                     admitted = True
                     attempt["id"] = decision["id"]
+                    if plan.get("planner_session"):
+                        attempt["planner_session"] = plan["planner_session"]
                     offered = offered_messages(messages, settings)
                     position = offered.index(target)
                     neighbors = []
@@ -1351,6 +1356,11 @@ class ParticipationController:
                 )
             }
             event.set_extra("ovenheart_planner_receipt", receipt)
+        work = self.rooms[previous["room"]].get("work")
+        if work:
+            # Freeze only the admitted reply, never its later wait/planning.
+            # New ordinary input must be able to resume a real planner wait.
+            work.pop("planner_session", None)
         private = event.is_private_chat()
         pending_direct = bool(
             previous.get("direct")
@@ -1431,6 +1441,7 @@ class ParticipationController:
         work = self.rooms[previous["room"]].get("work")
         if work:
             work["id"] = decision["id"]
+            work["planner_session"] = session.id
         # Clear only our per-request caches. The host, source identity and memory
         # routing remain attached to this native event throughout the cycle.
         for key in (
