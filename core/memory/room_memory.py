@@ -1313,12 +1313,18 @@ class RoomMemory:
         result, started = host.create_future(), host.create_future()
 
         def finish(task):
-            if task.cancelled():
-                result.cancel()
-            elif task.exception() is not None:
-                result.set_exception(task.exception())
-            else:
-                result.set_result(task.result())
+            # Host cancel can race the worker callback; never raise into the loop.
+            if result.done():
+                return
+            try:
+                if task.cancelled():
+                    result.cancel()
+                elif task.exception() is not None:
+                    result.set_exception(task.exception())
+                else:
+                    result.set_result(task.result())
+            except asyncio.InvalidStateError:
+                return
 
         async def run():
             from ..vendor.maibot.amemorix import host as memory_host

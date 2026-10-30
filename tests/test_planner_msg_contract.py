@@ -169,3 +169,29 @@ async def test_reply_ignores_unoffered_expression_ids_without_a_model_retry(
     finally:
         task.cancel()
         await asyncio.gather(task, return_exceptions=True)
+
+
+async def test_reply_folds_top_level_reply_act_into_expression_intent(reply_tool):
+    session = reply_tool.session
+    task = asyncio.create_task(
+        reply_tool.call(
+            None,
+            msg_id="7",
+            reply_reference="把顶层 reply_act 收进 expression_intent。",
+            expression_ids=[],
+            reply_style="简短表达",
+            reply_act="吐槽并制止刷屏",
+            expression_intent={"tone": "无奈可爱"},
+        )
+    )
+    try:
+        plan = await asyncio.wait_for(session.actions.get(), 1)
+        assert plan["expression_intent"] == {
+            "tone": "无奈可爱",
+            "reply_act": "吐槽并制止刷屏",
+        }
+        session.pending.set_result({"send_hook": True})
+        assert json.loads(await task) == {"send_hook": True}
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)

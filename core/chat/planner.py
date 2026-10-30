@@ -175,6 +175,12 @@ class PlannerTool(FunctionTool):
     session: PlannerSession
 
     async def call(self, context, **kwargs):
+        # Models often hoist reply_act next to reply_reference; fold it back so
+        # one schema miss does not burn another planner round-trip.
+        if self.name == "reply" and "reply_act" in kwargs:
+            intent = dict(kwargs.get("expression_intent") or {})
+            intent.setdefault("reply_act", str(kwargs.pop("reply_act") or "")[:80])
+            kwargs["expression_intent"] = intent
         try:
             jsonschema.validate(kwargs, self.parameters)
         except jsonschema.ValidationError as exc:
@@ -282,14 +288,27 @@ class PlannerSession:
                     "错误：msg_id 只能填 recent_messages[].msg_id（序号），"
                     "不要填平台原始 message_id。"
                 )
-            result = await self.plugin.image_memory.query(
-                self.event,
-                self.scope,
-                self.persona,
-                self.messages,
-                resolved,
-                arguments["image_index"],
-            )
+            # Planner tool budget also covers reply waits; keep image lookup short.
+            try:
+                result = await asyncio.wait_for(
+                    self.plugin.image_memory.query(
+                        self.event,
+                        self.scope,
+                        self.persona,
+                        self.messages,
+                        resolved,
+                        arguments["image_index"],
+                    ),
+                    timeout=45,
+                )
+            except asyncio.TimeoutError:
+                return json.dumps(
+                    {
+                        "success": False,
+                        "error": "图片记忆查询超时，请依据可见原文继续，勿等待同图结果。",
+                    },
+                    ensure_ascii=False,
+                )
             await self.check_current()
             return json.dumps(result, ensure_ascii=False)
         await self.check_current()
