@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import hashlib
 import json
 import time
@@ -86,7 +87,7 @@ FACTS_SCHEMA = {
                         "type": "array",
                         "maxItems": 8,
                         "items": {"type": "string"},
-                        "description": "明确更正时填写查询得到的同一人物、同一属性旧 claim_id；新属性留空。single 写新的当前值，set 撤销旧值与新增值分开提交。",
+                        "description": "必填数组；没有明确更正时也必须传 []。明确更正时填写查询得到的同一人物、同一属性旧 claim_id。single 写新的当前值，set 撤销旧值与新增值分开提交。",
                     },
                     "evidence": {
                         "type": "array",
@@ -210,9 +211,13 @@ class PersonMemory:
         self.engine = None
         self.lock = asyncio.Lock()
         self.busy = {}
+        self.context_revision = 0
 
     async def call(self, operation, *args):
         async with self.lock:
+            changes_context = operation in {"register", "write", "panel_action"}
+            if changes_context:
+                self.context_revision += 1
             task = asyncio.create_task(
                 asyncio.to_thread(self._execute, operation, args)
             )
@@ -221,6 +226,9 @@ class PersonMemory:
             except asyncio.CancelledError:
                 await task
                 raise
+            finally:
+                if changes_context:
+                    self.context_revision += 1
 
     def _execute(self, operation, args):
         if self.engine is None:
@@ -826,11 +834,30 @@ class PersonMemory:
         finally:
             self.busy.pop(person_id, None)
 
-    async def query(self, event, scope, persona, sender):
+    async def query(self, event, scope, persona, sender, *, reuse_context=False):
         if sender in self.plugin.settings[
             "blocked_senders"
         ] or not await self.permitted(event, scope, persona):
             return {}
+        if reuse_context:
+            revision = (
+                self.plugin.settings_revision,
+                self.context_revision,
+                self.plugin.room_memory.context_revision,
+            )
+            key = (scope, persona, sender)
+            cached = event.get_extra("ovenheart_person_context_cache")
+            if not cached or cached["revision"] != revision:
+                cached = {"revision": revision, "people": {}}
+                event.set_extra("ovenheart_person_context_cache", cached)
+            stats = event.get_extra("ovenheart_person_context_cache_stats")
+            if stats is None:
+                stats = {"queries": 0, "hits": 0}
+                event.set_extra("ovenheart_person_context_cache_stats", stats)
+            stats["queries"] += 1
+            if key in cached["people"]:
+                stats["hits"] += 1
+                return copy.deepcopy(cached["people"][key])
         room_context = await self.plugin.room_memory.person_context(
             event, scope, persona, sender
         )
@@ -841,6 +868,13 @@ class PersonMemory:
         )
         if not await self.permitted(event, scope, persona):
             return {}
+        if reuse_context and revision == (
+            self.plugin.settings_revision,
+            self.context_revision,
+            self.plugin.room_memory.context_revision,
+        ):
+            # Only context assembly reuses a snapshot; explicit tool queries stay live.
+            cached["people"][key] = copy.deepcopy(result)
         return result
 
     async def remember(self, event, scope, persona, message, payload):
@@ -917,7 +951,7 @@ class PersonMemory:
         )[:3]
         result = []
         for sender in senders:
-            profile = await self.query(event, scope, persona, sender)
+            profile = await self.query(event, scope, persona, sender, reuse_context=True)
             text = build_profile_injection_text(
                 profile.get("profile_text", ""), include_uncertain_fallback=False
             )

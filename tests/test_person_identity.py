@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import hashlib
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 
 from core.memory.person_memory import PersonMemory, get_person_id, person_identity
+from core.settings import DEFAULTS
 
 
 def test_get_person_id_matches_maibot_formula():
@@ -93,3 +95,97 @@ async def test_identity_uses_platform_name(person_memory):
     assert await person_memory.scope_ids(event, "scope", "persona", "42") == [
         get_person_id("aiocqhttp", "42")
     ]
+
+
+@pytest.fixture
+def context_event(person_memory):
+    extra = {}
+    event = SimpleNamespace(
+        get_extra=lambda key, default=None: extra.get(key, default),
+        set_extra=extra.__setitem__,
+        get_platform_name=lambda: "aiocqhttp",
+        get_self_id=lambda: "bot",
+        get_sender_id=lambda: "42",
+    )
+    person_memory.plugin.settings = DEFAULTS.copy()
+    person_memory.plugin.room_memory = SimpleNamespace(
+        context_revision=0,
+        person_context=AsyncMock(
+            return_value={"paragraphs": [], "relations": [], "episodes": []}
+        ),
+    )
+    person_memory.plugin.conversation = SimpleNamespace(
+        record=lambda _: {"sender_id": "42"}
+    )
+    person_memory.permitted = AsyncMock(return_value=True)
+    return event
+
+
+async def test_planner_and_reply_reuse_the_same_person_context(
+    person_memory, context_event
+):
+    await person_memory.call(
+        "register", get_person_id("aiocqhttp", "42"), "42", "Member", "aiocqhttp"
+    )
+    await person_memory.call(
+        "panel_action",
+        "profile_save",
+        {
+            "id": get_person_id("aiocqhttp", "42"),
+            "text": "Member prefers short replies",
+        },
+        [get_person_id("aiocqhttp", "42")],
+    )
+    first = await person_memory.context(context_event, "scope", "persona")
+    context_event.set_extra(
+        "ovenheart_decision", {"scope": "scope", "target": {"sender_id": "42"}}
+    )
+    second = await person_memory.context(context_event, "scope", "persona")
+    assert first[0]["profile"] == second[0]["profile"]
+    assert second[0]["role"] == "reply_target"
+    person_memory.plugin.room_memory.person_context.assert_awaited_once()
+    assert context_event.get_extra("ovenheart_person_context_cache_stats") == {
+        "queries": 2,
+        "hits": 1,
+    }
+    # Explicit planner queries still read the current ledger and source context.
+    await person_memory.query(context_event, "scope", "persona", "42")
+    assert person_memory.plugin.room_memory.person_context.await_count == 2
+
+
+@pytest.mark.parametrize("change", ["facts", "room", "settings", "scope", "blocked"])
+async def test_person_context_cache_respects_updates_and_access(
+    person_memory, context_event, change
+):
+    identity = get_person_id("aiocqhttp", "42")
+    await person_memory.call("register", identity, "42", "Member", "aiocqhttp")
+    await person_memory.query(
+        context_event, "scope", "persona", "42", reuse_context=True
+    )
+    scope = "scope"
+    if change == "facts":
+        await person_memory.call(
+            "panel_action",
+            "profile_save",
+            {"id": identity, "text": "Updated preference"},
+            [identity],
+        )
+    elif change == "room":
+        person_memory.plugin.room_memory.context_revision += 1
+    elif change == "settings":
+        person_memory.plugin.settings_revision += 1
+    elif change == "scope":
+        scope = "another-scope"
+    else:
+        person_memory.plugin.settings["blocked_senders"] = ["42"]
+    result = await person_memory.query(
+        context_event, scope, "persona", "42", reuse_context=True
+    )
+    assert context_event.get_extra("ovenheart_person_context_cache_stats")["hits"] == 0
+    if change == "blocked":
+        assert result == {}
+        person_memory.plugin.room_memory.person_context.assert_awaited_once()
+    else:
+        assert person_memory.plugin.room_memory.person_context.await_count == 2
+        if change == "facts":
+            assert "Updated preference" in result["profile_text"]

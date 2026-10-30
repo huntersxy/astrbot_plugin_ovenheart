@@ -11,6 +11,7 @@ from astrbot.api.platform import MessageType
 from astrbot.core.pipeline.scheduler import PipelineScheduler
 from astrbot.core.utils import trace as native_trace
 
+from core.auxiliary import AuxiliaryUsage
 from core.chat.participation import ParticipationController, event_source
 from core.chat.reply_boundary import clean_reply
 from core.integrations.native_pipeline import NativePipelineBridge
@@ -72,6 +73,20 @@ def trace_frames(monkeypatch):
     )
     monkeypatch.setattr(native_trace, "_get_log_broker", lambda: None)
     return frames
+
+
+async def test_model_timings_are_persisted_in_native_trace(trace_frames):
+    trace = native_trace.TraceSpan("test")
+    response = SimpleNamespace(role="assistant", completion_text="OK")
+    with native_trace.trace_execution(trace):
+        await AuxiliaryUsage(None, None).measure(
+            "planner", AsyncMock(return_value=response), {}, trace=trace
+        )
+    events = [frame["event"] for frame in trace_frames if "event" in frame]
+    event = next(item for item in events if item["name"] == "ovenheart_model_request")
+    assert event["attributes"]["astrbot.stage"] == "planner"
+    assert event["attributes"]["astrbot.first_chunk_measured"] is False
+    assert trace_frames[-1]["trace"]["has_errors"] is False
 
 
 @pytest.mark.parametrize("stop_after_yield", [False, True])

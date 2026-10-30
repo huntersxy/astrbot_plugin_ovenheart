@@ -170,9 +170,17 @@ class EmojiActions:
             event, session.scope, session.persona
         ):
             return {"sent": False, "error": "当前表情发送权限已撤销。"}
+        trace = getattr(event, "trace", None)
+        started = time.monotonic()
         selected = await self.plugin.room_memory.call(
             choice["scope"], "image_asset", choice["asset_id"], event=event
         )
+        if trace is not None:
+            trace.record(
+                "ovenheart_emoji_asset",
+                seconds=round(time.monotonic() - started, 3),
+                success=selected["success"],
+            )
         if not selected["success"]:
             return {"sent": False, "error": "选中的原始表情已删除或不可见。"}
         image = Image.fromFileSystem(selected["path"])
@@ -181,10 +189,14 @@ class EmojiActions:
         hints = event.get_extra("ovenheart_explicit_image_hints", {})
         hints[id(image)] = choice["caption"]
         event.set_extra("ovenheart_explicit_image_hints", hints)
+        started = time.monotonic()
+        status = "cancelled"
         try:
             result = await event.send(MessageChain(chain=[image]))
             if result is False:
+                status = "rejected"
                 return {"sent": False, "error": "原生适配器未接受表情发送。"}
+            status = "success"
             self.last_sent.pop(session.scope, None)
             self.last_sent[session.scope] = time.monotonic()
             if len(self.last_sent) > 128:
@@ -206,10 +218,18 @@ class EmojiActions:
         except asyncio.CancelledError:
             raise
         except Exception as exc:
+            status = "error"
             return {
                 "sent": False,
                 "error": "表情发送未完成（" + type(exc).__name__ + "）。",
             }
+        finally:
+            if trace is not None:
+                trace.record(
+                    "ovenheart_emoji_send",
+                    seconds=round(time.monotonic() - started, 3),
+                    status=status,
+                )
 
     async def select(self, session):
         """Original visual sub-agent contract: recent twelve turns and one grid."""

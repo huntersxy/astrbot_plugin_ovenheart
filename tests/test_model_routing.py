@@ -1,6 +1,7 @@
 """Internal task choices never replace AstrBot's final reply provider."""
 
 import asyncio
+import json
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -74,10 +75,12 @@ async def test_actual_planner_uses_its_role_while_native_reply_keeps_host(
         auxiliary=usage,
         emoji_actions=SimpleNamespace(proactive=AsyncMock(return_value={})),
     )
+    extra = {}
     event = SimpleNamespace(
         unified_msg_origin="qq:GroupMessage:1",
         is_private_chat=lambda: False,
         get_extra=lambda _: None,
+        set_extra=extra.__setitem__,
     )
     session = PlannerSession.__new__(PlannerSession)
     session.plugin = plugin
@@ -93,11 +96,28 @@ async def test_actual_planner_uses_its_role_while_native_reply_keeps_host(
     session.messages = []
     session.expressions = {}
     session.direct = False
-    session.recall = AsyncMock(return_value={})
+    recall_started, emoji_started = asyncio.Event(), asyncio.Event()
+
+    async def recall(_):
+        recall_started.set()
+        await emoji_started.wait()
+        return {"memory_context": ["complete evidence"]}
+
+    async def proactive(_):
+        emoji_started.set()
+        await recall_started.wait()
+        return {"candidates": [{"index": 1, "description": "real candidate"}]}
+
+    session.recall = recall
+    plugin.emoji_actions.proactive = proactive
     session.check_current = AsyncMock()
 
-    await session.run({})
+    await asyncio.wait_for(session.run({}), timeout=1)
     assert usage.tool_loop.call_args.kwargs["chat_provider_id"] == expected
+    payload = json.loads(usage.tool_loop.call_args.kwargs["prompt"])
+    assert payload["memory_context"] == ["complete evidence"]
+    assert payload["emoji_policy"]["candidates"][0]["index"] == 1
+    assert set(extra["ovenheart_planner_startup"]) == {"recall", "emoji"}
     assert context.host.provider_config == {"id": "astrbot-chat"}
 
     # Select the body provider through AstrBot's real native selection path.

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import json
 import time
 
 from astrbot.api import logger
@@ -41,7 +42,7 @@ class AuxiliaryUsage:
             timeout=BACKGROUND_MODEL_TIMEOUTS.get(stage),
         )
 
-    async def tool_loop(self, stage, **kwargs):
+    async def tool_loop(self, stage, *, trace=None, **kwargs):
         """Meter each native transport call without changing the shared provider."""
         from astrbot.core.star.context import Context
 
@@ -49,12 +50,18 @@ class AuxiliaryUsage:
 
         context = copy.copy(self.context)
         context.provider_manager = MeteredProviderManager(
-            self.context.provider_manager, self, stage, kwargs["chat_provider_id"]
+            self.context.provider_manager,
+            self,
+            stage,
+            kwargs["chat_provider_id"],
+            trace=trace or getattr(kwargs.get("event"), "trace", None),
         )
         with compact_planner_logs():
             return await Context.tool_loop_agent(context, **kwargs)
 
-    async def measure(self, stage, invoke, kwargs, *, provider_id=None, timeout=None):
+    async def measure(
+        self, stage, invoke, kwargs, *, provider_id=None, timeout=None, trace=None
+    ):
         started = time.monotonic()
         response = None
         status = "error"
@@ -70,15 +77,28 @@ class AuxiliaryUsage:
             status = "cancelled"
             raise
         finally:
-            self.record(stage, kwargs, response, status, started, provider_id)
+            self.record(
+                stage, kwargs, response, status, started, provider_id, trace=trace
+            )
 
-    async def stream(self, stage, invoke, kwargs, *, provider_id):
+    async def stream(self, stage, invoke, kwargs, *, provider_id, trace=None):
         started = time.monotonic()
+        first_chunk_seconds = None
         response = None
         status = "cancelled"
         source = invoke(**kwargs)
         try:
             async for part in source:
+                if (
+                    first_chunk_seconds is None
+                    and part is not None
+                    and (
+                        part.completion_text
+                        or part.reasoning_content
+                        or part.tools_call_name
+                    )
+                ):
+                    first_chunk_seconds = round(time.monotonic() - started, 3)
                 if part is not None and not part.is_chunk:
                     response = part
                     status = "error" if part.role == "err" else "success"
@@ -93,7 +113,17 @@ class AuxiliaryUsage:
             try:
                 await source.aclose()
             finally:
-                self.record(stage, kwargs, response, status, started, provider_id)
+                self.record(
+                    stage,
+                    kwargs,
+                    response,
+                    status,
+                    started,
+                    provider_id,
+                    trace=trace,
+                    streaming=True,
+                    first_chunk_seconds=first_chunk_seconds,
+                )
 
     def bind_native(self, event, run_context):
         """Wrap only the host runner registered for this exact native event."""
@@ -111,20 +141,25 @@ class AuxiliaryUsage:
             return
         if event.get_extra("ovenheart_usage_runner") is runner:
             return
-        runner.provider = self.native_provider(runner.provider)
+        runner.provider = self.native_provider(runner.provider, trace=event.trace)
         runner.fallback_providers = [
-            self.native_provider(provider) for provider in runner.fallback_providers
+            self.native_provider(provider, trace=event.trace)
+            for provider in runner.fallback_providers
         ]
         event.set_extra("ovenheart_usage_runner", runner)
         self.native_bound += 1
 
-    def native_provider(self, provider):
+    def native_provider(self, provider, *, trace=None):
         wrapped = copy.copy(provider)
         identifier = str(provider.provider_config["id"])
 
         async def measured(**kwargs):
             return await self.measure(
-                "native_reply", provider.text_chat, kwargs, provider_id=identifier
+                "native_reply",
+                provider.text_chat,
+                kwargs,
+                provider_id=identifier,
+                trace=trace,
             )
 
         async def streamed(**kwargs):
@@ -133,6 +168,7 @@ class AuxiliaryUsage:
                 provider.text_chat_stream,
                 kwargs,
                 provider_id=identifier,
+                trace=trace,
             )
             try:
                 async for response in source:
@@ -144,7 +180,20 @@ class AuxiliaryUsage:
         wrapped.text_chat_stream = streamed
         return wrapped
 
-    def record(self, stage, kwargs, response, status, started, provider_id=None):
+    def record(
+        self,
+        stage,
+        kwargs,
+        response,
+        status,
+        started,
+        provider_id=None,
+        *,
+        trace=None,
+        streaming=False,
+        first_chunk_seconds=None,
+    ):
+        seconds = round(time.monotonic() - started, 3)
         if stage == "native_reply" and response is not None:
             text = response.completion_text or ""
             logger.info(
@@ -159,6 +208,7 @@ class AuxiliaryUsage:
         )
         system_chars = len(kwargs.get("system_prompt") or "")
         prompt_chars = len(kwargs.get("prompt") or "")
+        history_chars = 0
         for message in kwargs.get("contexts") or []:
             content = (
                 message.content
@@ -183,6 +233,45 @@ class AuxiliaryUsage:
                 system_chars += length
             else:
                 prompt_chars += length
+                history_chars += length
+        if trace is not None:
+            toolset = kwargs.get("func_tool")
+            tools = [
+                {
+                    "name": tool.name,
+                    "description": tool.description,
+                    "parameters": tool.parameters,
+                }
+                for tool in (toolset.tools if toolset is not None else [])
+                if getattr(tool, "active", True)
+            ]
+            # Non-streaming transports expose no first chunk; do not report a fake zero.
+            timing = (
+                {"first_chunk_seconds": first_chunk_seconds}
+                if first_chunk_seconds is not None
+                else {}
+            )
+            trace.record(
+                "ovenheart_model_request",
+                stage=stage,
+                provider_id=str(provider_id or kwargs.get("chat_provider_id") or ""),
+                model=str(model or ""),
+                status=status,
+                seconds=seconds,
+                streaming=streaming,
+                first_chunk_measured=first_chunk_seconds is not None,
+                system_chars=system_chars,
+                prompt_chars=prompt_chars - history_chars,
+                history_chars=history_chars,
+                tool_count=len(tools),
+                tool_schema_chars=len(json.dumps(tools, ensure_ascii=False))
+                if tools
+                else 0,
+                input_cached=int(getattr(usage, "input_cached", 0) or 0),
+                input_other=int(getattr(usage, "input_other", 0) or 0),
+                output=int(getattr(usage, "output", 0) or 0),
+                **timing,
+            )
         self.pending.append(
             {
                 "bucket": int(time.time() // 3600) * 3600,
@@ -199,7 +288,7 @@ class AuxiliaryUsage:
                 "output": int(getattr(usage, "output", 0) or 0),
                 "system_chars": system_chars,
                 "prompt_chars": prompt_chars,
-                "seconds": round(time.monotonic() - started, 3),
+                "seconds": seconds,
             }
         )
         if len(self.pending) > 512:
@@ -238,11 +327,12 @@ class AuxiliaryUsage:
 class MeteredProviderManager:
     """A single loop's native Context delegates everything except its transport."""
 
-    def __init__(self, manager, usage, stage, provider_id):
+    def __init__(self, manager, usage, stage, provider_id, *, trace=None):
         self.manager = manager
         self.usage = usage
         self.stage = stage
         self.provider_id = provider_id
+        self.trace = trace
 
     def __getattr__(self, name):
         return getattr(self.manager, name)
@@ -262,7 +352,10 @@ class MeteredProviderManager:
 
         async def measured(**kwargs):
             return await self.usage.measure(
-                self.stage, invoke, kwargs | {"chat_provider_id": self.provider_id}
+                self.stage,
+                invoke,
+                kwargs | {"chat_provider_id": self.provider_id},
+                trace=self.trace() if callable(self.trace) else self.trace,
             )
 
         wrapped.text_chat = measured

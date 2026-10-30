@@ -3089,8 +3089,19 @@ class PersonaPlugin(Star):
             event.set_extra("ovenheart_turn_trace", previous)
         details["preparation"] = {
             "planner": event.get_extra("ovenheart_planner_preparation", {}),
+            "planner_startup": event.get_extra("ovenheart_planner_startup", {}),
             "reply": event.get_extra("ovenheart_reply_preparation", {}),
         }
+        details["people_cache"] = event.get_extra(
+            "ovenheart_person_context_cache_stats", {}
+        ).copy()
+        trace = getattr(event, "trace", None)
+        if req is not None and trace is not None:
+            trace.record(
+                "ovenheart_context_prepared",
+                preparation=details["preparation"],
+                people_cache=details["people_cache"],
+            )
         details["first_text_send_seconds"] = event.get_extra("ovenheart_first_text_send_seconds")
         try:
             await self.store.call(

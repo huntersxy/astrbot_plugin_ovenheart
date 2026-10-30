@@ -1185,6 +1185,7 @@ class RoomMemory:
         self.migrations = []
         self.available = True
         self.degraded_reason = ""
+        self.context_revision = 0
 
     def mark_degraded(self, reason):
         """Keep the plugin alive while memory stays offline until the next reload."""
@@ -1392,6 +1393,11 @@ class RoomMemory:
             task.add_done_callback(lambda done: host.call_soon_threadsafe(finish, done))
             host.call_soon_threadsafe(started.set_result, task)
 
+        changes_context = operation in {
+            "write", "change", "admin", "consolidate", "review"
+        }
+        if changes_context:
+            self.context_revision += 1
         self.loop.call_soon_threadsafe(start)
         try:
             return await asyncio.shield(result)
@@ -1400,6 +1406,9 @@ class RoomMemory:
             self.loop.call_soon_threadsafe(task.cancel)
             await asyncio.gather(result, return_exceptions=True)
             raise
+        finally:
+            if changes_context:
+                self.context_revision += 1
 
     async def generate(self, state, request):
         """Use current native permissions and accounting for SDK background models."""

@@ -736,7 +736,14 @@ class PlannerSession:
         self.tool_changed.set()
         try:
             anchor = self.plugin.context.persona_manager.get_persona_v3_by_id(self.persona)
-            recalled = await self.recall(state)
+            timings = {}
+            self.event.set_extra("ovenheart_planner_startup", timings)
+            async with context_reads(
+                timings,
+                recall=self.recall(state),
+                emoji=self.plugin.emoji_actions.proactive(self),
+            ) as pending:
+                recalled, emoji_policy = await asyncio.gather(*pending.values())
         except BaseException:
             await self.actions.put(None)
             raise
@@ -791,17 +798,17 @@ class PlannerSession:
                     "stop": "结束本轮参与并休息，不自动继续规划。",
                     "search_memory": "按当前会话和人格权限查询历史背景，结果返回后再判断。",
                     "query_person_profile": "查询目标消息真实作者的持续画像、事实 ID 和原文证据；不按昵称猜身份。",
-                    "remember_person_fact": "记录目标作者自己的明确陈述或有来源的更正；evidence.source_id 使用消息的 message_id/source，quote 必须为原文子串。",
+                    "remember_person_fact": "记录目标作者自己的明确陈述或有来源的更正；evidence.source_id 使用消息的 message_id/source，quote 必须为原文子串。每条 facts 的 corrects 为必填数组，无明确更正时传 []；更正前先查询旧 claim_id。",
                 }[name],
                 parameters=schema,
             )
             tool.session = self
             tools.append(tool)
-        emoji_policy = await self.plugin.emoji_actions.proactive(self)
         await self.check_current()
         try:
             response = await self.plugin.auxiliary.tool_loop(
                 "planner",
+                trace=lambda: self.event.trace,
                 event=self.event,
                 chat_provider_id=provider,
                 system_prompt=PLANNER_SYSTEM,
