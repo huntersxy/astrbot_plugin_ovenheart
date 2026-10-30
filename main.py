@@ -33,6 +33,7 @@ from astrbot.core.star.session_plugin_manager import SessionPluginManager
 
 from .core import prompts
 from .core.auxiliary import AuxiliaryUsage
+from .core.chat import group_mentions
 from .core.chat.conversation import ConversationContext
 from .core.chat.direct_priority import DirectPriority
 from .core.chat.group_context import GroupContextBridge
@@ -243,6 +244,9 @@ def reply_people(event: AstrMessageEvent, plan: dict | None) -> dict[str, str]:
     for component in event.message_obj.message or []:
         if isinstance(component, Reply):
             add(component.sender_nickname, component.sender_id)
+    for member in event.get_extra("ovenheart_reply_mentions") or []:
+        for name in (member["card"], member["nickname"], member["user_id"]):
+            add(name, member["user_id"])
     return people
 
 
@@ -682,6 +686,29 @@ class PersonaPlugin(Star):
             if self.room_memory.available
             else f" (memory degraded: {self.room_memory.degraded_reason})",
         )
+
+    @filter.llm_tool(name="ovenheart_find_group_members")
+    async def find_group_members(self, event: AstrMessageEvent, query: str = "", offset: int = 0):
+        """按群名片、昵称或账号查找当前群真实成员，包括机器人；只查询，不发送消息。同名时先澄清。
+
+        Args:
+            query(string): 最多80字的群名片、昵称或账号，留空列出成员。
+            offset(number): 非负整数，首次填0，后续可使用返回的next_offset；每页20位。
+        """
+        if not self.ready or not self.settings["apply_enabled"] or not await self.permitted(event):
+            return json.dumps({"success": False, "error": "当前会话未开放成员查询。"}, ensure_ascii=False)
+        return json.dumps(await group_mentions.find_members(event, query, offset), ensure_ascii=False)
+
+    @filter.llm_tool(name="ovenheart_mention_group_members")
+    async def mention_group_members(self, event: AstrMessageEvent, user_ids: list[str]):
+        """安排本轮回复的真实@，可包含其他机器人。尚未发送；随后将要和@同条发送的话直接作为最终正文输出，不再写@昵称或声称已发送。使用群成员查询返回的账号，同名不明时先澄清。
+
+        Args:
+            user_ids(array[string]): 1至20个当前群真实成员账号；不是昵称，也不是消息ID。
+        """
+        if not self.ready or not self.settings["apply_enabled"] or not await self.permitted(event):
+            return json.dumps({"success": False, "error": "当前会话未开放指定提及。"}, ensure_ascii=False)
+        return json.dumps(await group_mentions.plan_mentions(event, user_ids), ensure_ascii=False)
 
     @filter.on_plugin_loaded()
     async def refresh_integrations(self, metadata):
@@ -1815,6 +1842,11 @@ class PersonaPlugin(Star):
             or {"sender_id": event.get_sender_id(), "sender": event.get_sender_name()}
         )
         people = reply_people(event, plan)
+        if event.get_extra("ovenheart_reply_mentions"):
+            result.chain = group_mentions.with_mentions(
+                event, realize_mentions(list(result.chain), people)
+            )
+            return
         before = sum(isinstance(component, At) for component in result.chain)
         original_mentions = [str(p.qq) for p in result.chain if isinstance(p, At)]
         corrected = []
@@ -1902,6 +1934,10 @@ class PersonaPlugin(Star):
             Native chunks with at most the initial address prefix replaced.
         """
         target = event.get_extra("ovenheart_reply_target", {})
+        selected = event.get_extra("ovenheart_reply_mentions") or []
+        if selected:
+            member = selected[0]
+            target = {"sender_id": member["user_id"], "sender": member["card"] or member["nickname"]}
         sender_id = str(target.get("sender_id") or "")
         pending, template, decided = "", None, False
         mentioned = set()
@@ -2026,7 +2062,7 @@ class PersonaPlugin(Star):
             target = plan.get("target") or {}
             target_id = str(target.get("message_id") or "")
             decoration = plan.get("decoration")
-            if decoration and target:
+            if decoration and target and not event.get_extra("ovenheart_reply_mentions"):
                 self.apply_planned_decoration(event, decoration, target)
             if target_id and target_id != str(
                 getattr(event.message_obj, "message_id", "") or ""
@@ -2127,6 +2163,7 @@ class PersonaPlugin(Star):
                 if self.conversation.active(event)
                 else bound_reply_messages(direct["messages"], self.settings)
             }
+            direct["reply_capabilities"] = {"group_mentions": group_mentions.capabilities(event, req)}
             event.set_extra("ovenheart_direct_context", direct)
             self.describe_request_tools(event, req)
             target = direct["reply_message"]
@@ -2356,6 +2393,7 @@ class PersonaPlugin(Star):
             ),
             "jev_reading": plan.get("jev_reading"),
             "reply_capabilities": {
+                "group_mentions": group_mentions.capabilities(event, req),
                 "emoji": bool(plan.get("planner_session"))
                 and all(
                     self.settings[key]
@@ -2543,6 +2581,8 @@ class PersonaPlugin(Star):
             plan = None
         from .core.integrations.reply_delivery import bind_text_delivery
 
+        if event.get_group_id():
+            group_mentions.bind_mentions(event)
         bind_text_delivery(event, req)
         await self.self_portrait.apply(event, persona, req)
         if not plan and not await self.conversation.prepare(event, scope, req):
@@ -3258,6 +3298,7 @@ class PersonaPlugin(Star):
                             :4000
                         ],
                         "target_sequence": plan["target_sequence"],
+                        "mentions": [row["user_id"] for row in event.get_extra("ovenheart_reply_mentions") or []],
                         "partial_text": bool(
                             event.get_extra("ovenheart_text_delivery_incomplete")
                         ),
@@ -3322,6 +3363,7 @@ class PersonaPlugin(Star):
                         "message_id": "",
                         "self": True,
                         "text": text,
+                        "mentions": [row["user_id"] for row in event.get_extra("ovenheart_reply_mentions") or []],
                         "answered_source": (
                             target.get("source", "")
                             if not event.get_extra(

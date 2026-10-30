@@ -78,10 +78,11 @@ async def test_unsent_reply_uses_the_second_window_when_it_finishes():
     event = Event()
     native = asyncio.create_task(asyncio.sleep(30))
     event.set_extra("ovenheart_native_task", lambda: native)
-    planner = session(event)
+    # Leave both deadlines clear of Windows' coarse timer ticks.
+    planner = session(event, timeout=0.2)
 
     async def finish():
-        await asyncio.sleep(0.08)
+        await asyncio.sleep(0.3)
         planner.acknowledge({"send_hook": True, "reply_text": "后来发出"})
 
     task = asyncio.create_task(finish())

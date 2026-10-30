@@ -613,6 +613,7 @@ class ConversationContext:
                 "sender_id": event.get_self_id(),
                 "self": True,
                 "text": text[:4000],
+                "mentions": [row["user_id"] for row in event.get_extra("ovenheart_reply_mentions") or []],
                 "answered_source": target.get("source", "")
                 if text and not event.get_extra("ovenheart_text_delivery_incomplete")
                 else "",
