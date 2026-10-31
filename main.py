@@ -31,7 +31,7 @@ from astrbot.core.star.filter.regex import RegexFilter
 from astrbot.core.star.session_llm_manager import SessionServiceManager
 from astrbot.core.star.session_plugin_manager import SessionPluginManager
 
-from .core import prompts
+from .core import platform_capabilities, prompts
 from .core.auxiliary import AuxiliaryUsage
 from .core.chat import group_mentions
 from .core.chat.conversation import ConversationContext
@@ -1815,7 +1815,7 @@ class PersonaPlugin(Star):
         prefix = []
         if "quote" in decoration:
             target_id = str(target.get("message_id") or "")
-            if target_id:
+            if target_id and platform_capabilities.can_quote_target(event, target_id):
                 prefix.append(Reply(id=target_id))
         if "mention" in decoration:
             sender_id = str(target.get("sender_id") or "")
@@ -1908,7 +1908,7 @@ class PersonaPlugin(Star):
                 or getattr(event.message_obj, "message_id", "")
                 or ""
             )
-            if message_id:
+            if message_id and platform_capabilities.can_quote_target(event, message_id):
                 # A real At makes the host skip its plain-chain decorator.
                 # Preserve its enabled quote policy for this corrected reply.
                 result.chain.insert(0, Reply(id=message_id))
@@ -2089,8 +2089,12 @@ class PersonaPlugin(Star):
             decoration = plan.get("decoration")
             if decoration and target and not event.get_extra("ovenheart_reply_mentions"):
                 self.apply_planned_decoration(event, decoration, target)
-            if target_id and target_id != str(
-                getattr(event.message_obj, "message_id", "") or ""
+            if (
+                target_id
+                and target_id != str(
+                    getattr(event.message_obj, "message_id", "") or ""
+                )
+                and platform_capabilities.can_quote_target(event, target_id)
             ):
                 # The host decorator quotes event.message_obj.message_id after this
                 # hook, so binding it here makes the visible quote match the person
@@ -2188,7 +2192,10 @@ class PersonaPlugin(Star):
                 if self.conversation.active(event)
                 else bound_reply_messages(direct["messages"], self.settings)
             }
-            direct["reply_capabilities"] = {"group_mentions": group_mentions.capabilities(event, req)}
+            direct["reply_capabilities"] = {
+                "group_mentions": group_mentions.capabilities(event, req),
+                "platform": platform_capabilities.describe(event),
+            }
             event.set_extra("ovenheart_direct_context", direct)
             structured = self.conversation.active(event)
             direct_view = payload_view(direct, history_refs=True) if structured else direct
@@ -2426,6 +2433,7 @@ class PersonaPlugin(Star):
             "jev_reading": plan.get("jev_reading"),
             "reply_capabilities": {
                 "group_mentions": group_mentions.capabilities(event, req),
+                "platform": platform_capabilities.describe(event),
                 "emoji": bool(plan.get("planner_session"))
                 and all(
                     self.settings[key]
@@ -2618,6 +2626,7 @@ class PersonaPlugin(Star):
 
         if event.get_group_id():
             group_mentions.bind_mentions(event)
+            group_mentions.hide_unsupported_tools(event, req)
         bind_text_delivery(event, req)
         await self.self_portrait.apply(event, persona, req)
         if not plan and not await self.conversation.prepare(event, scope, req):

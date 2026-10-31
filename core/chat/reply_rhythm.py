@@ -9,6 +9,7 @@ import re
 from astrbot.api import logger
 from astrbot.core.message.components import At, Image, Plain, Reply
 
+from ..platform_capabilities import claim_reply_slot, reply_segment_limit
 from ..vendor.maibot.response_host import bind_response
 from ..vendor.maibot.response_segments import (
     ProcessedResponseSegment,
@@ -26,6 +27,21 @@ class ReplyRhythm:
         if event.get_extra("ovenheart_reply_rhythm_bound"):
             return
         original = event.send
+        original_streaming = event.send_streaming
+
+        async def deliver(message):
+            if not claim_reply_slot(event):
+                logger.warning("QQ 官方机器人本条消息的回复次数已达到平台上限。")
+                return False
+            return await original(message)
+
+        async def deliver_stream(stream, use_fallback=False):
+            if not claim_reply_slot(event):
+                if hasattr(stream, "aclose"):
+                    await stream.aclose()
+                logger.warning("QQ 官方机器人本条消息的回复次数已达到平台上限。")
+                return False
+            return await original_streaming(stream, use_fallback)
 
         async def send(message):
             settings = self.plugin.settings
@@ -38,9 +54,9 @@ class ReplyRhythm:
             if event.get_extra("oven_multi_segmented"):
                 if plan and not await self.plugin.check_participation(event):
                     raise asyncio.CancelledError
-                return await original(message)
+                return await deliver(message)
             if not settings["reply_rhythm_enabled"] or native.get("enable"):
-                return await original(message)
+                return await deliver(message)
             if not plan:
                 result = event.get_result()
                 if (
@@ -50,14 +66,14 @@ class ReplyRhythm:
                     or not settings["apply_enabled"]
                     or not await self.plugin.permitted(event)
                 ):
-                    return await original(message)
+                    return await deliver(message)
                 scope, _, _ = await self.plugin.resolve_scope(event)
                 profile = await self.plugin.store.read("scope_profile", scope)
                 if not profile or not profile["profile"]["apply_enabled"]:
-                    return await original(message)
+                    return await deliver(message)
             parts = message.chain
             if any(not isinstance(part, (At, Reply, Plain, Image)) for part in parts):
-                return await original(message)
+                return await deliver(message)
             texts = [part.text for part in parts if isinstance(part, Plain)]
             image_only = (
                 bool(parts)
@@ -67,7 +83,7 @@ class ReplyRhythm:
             if len(texts) != 1 or any(isinstance(part, Image) for part in parts):
                 if image_only:
                     await self.pause(event, "", True)
-                return await original(message)
+                return await deliver(message)
             sentences = await self.split(event, texts[0], native)
             result = None
             sent = event.get_extra("ovenheart_actual_text_segments", [])
@@ -88,7 +104,7 @@ class ReplyRhythm:
                     Plain(sentence),
                 ]
                 try:
-                    result = await original(chain)
+                    result = await deliver(chain)
                     if result is False:
                         event.set_extra("ovenheart_text_delivery_incomplete", True)
                         break
@@ -100,12 +116,16 @@ class ReplyRhythm:
             return result
 
         event.send = send
+        event.send_streaming = deliver_stream
         event.set_extra("ovenheart_reply_rhythm_bound", True)
 
     async def split(self, event, text, native):
         settings = self.plugin.settings
+        max_messages = reply_segment_limit(
+            event, settings["reply_split_max_messages"]
+        )
         if (
-            settings["reply_split_max_messages"] == 1
+            max_messages == 1
             or len(text.strip()) < 2
             or re.search(
                 r"```|~~~|\$\$|^[ \t]*(?:[-*+]|\d+[.)、])[ \t]+",
@@ -217,7 +237,7 @@ class ReplyRhythm:
                     "语义断句未完成，使用本地规则分段 (%s)", type(exc).__name__
                 )
         merged = _merge_processed_segments_to_max_count(
-            segments, settings["reply_split_max_messages"]
+            segments, max_messages
         )
         return [segment.text for segment in merged] or [text]
 

@@ -4,7 +4,7 @@ An AstrBot plugin for expression learning, conversation planning and source-back
 
 ## Install
 
-Requires AstrBot 4.29.1–4.x and the QQ / OneBot v11 adapter (`aiocqhttp`). Configure a chat provider in AstrBot, then install this repository from Plugin Management:
+Requires AstrBot 4.29.1–4.x and the OneBot v11 adapter (`aiocqhttp`) or QQ Official Bot (WebSocket/Webhook). Configure a chat provider in AstrBot, then install this repository from Plugin Management:
 
 ```text
 https://github.com/huntersxy/astrbot_plugin_ovenheart
@@ -26,6 +26,8 @@ Each page owns its filters. Learning, history, memory and emoji views start with
 Settings → Model roles provides independent choices for Planner, habit learning, learning review, contextual expression selection, memory consolidation, person facts, proactive memory review, semantic splitting and optional visual emoji selection. Choose from AstrBot's enabled chat providers. Empty choices use the current chat provider directly; visual emoji selection instead uses AstrBot's image-caption provider. The final reply and native tool calls always retain AstrBot's session model and generation settings. Planner-selected expressions do not trigger an additional selector call, and Jev keeps its own connection settings.
 
 Group member tools resolve current members by display card, nickname or account and arrange real mentions in the same native reply as its text or command, including mentions of other bots. Multiple members, streaming and segmented replies are supported; mentions appear once at the start. Ambiguous names require clarification, and arranged mentions remain pending until the reply is sent. Tools follow AstrBot's persona permissions and the autonomous tool policy. Sending a command does not confirm that another bot executed it.
+
+QQ Official Bot uses OpenID and does not expose OneBot's group member list API. OvenHeart automatically hides member-list-dependent mention tools there, while known senders can still be mentioned. Only the current inbound message can be quoted reliably on that platform, so older message IDs are never forced into an official quote. One generated reply is capped at three segments; other platforms keep their existing behavior.
 
 The dedicated **Emoji** tab includes a gallery, uploads/imports, and selection settings. Upload images with usage descriptions or copy existing meme_manager packs. Public library assets are shared with authorized chats; conversation candidates remain scoped. Native image storage handles content deduplication and preserves GIF originals. The planner can choose candidates by caption without another emotion-model call. Text and selected media are coordinated as one reply; image-only requests can send directly without generating filler text. Optional visual selection costs an additional model call. OvenHeart skips duplicate meme_manager selection for its own planner replies, while leaving its source and configuration intact.
 

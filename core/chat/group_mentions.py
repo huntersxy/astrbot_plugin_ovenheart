@@ -1,6 +1,13 @@
 """Resolve current group members and attach requested mentions to native replies."""
 
+import copy
+
 from astrbot.core.message.components import At, Plain
+
+from ..platform_capabilities import (
+    is_qq_official,
+    supports_group_member_lookup,
+)
 
 LOOKUP_TOOL = "ovenheart_find_group_members"
 MENTION_TOOL = "ovenheart_mention_group_members"
@@ -19,6 +26,11 @@ async def _load_members(event):
     group_id = str(event.get_group_id() or "")
     if not group_id:
         raise ValueError("当前不是群聊，无法查询或提及群成员。")
+    if is_qq_official(event):
+        raise ValueError(
+            "QQ 官方机器人使用 OpenID，平台不提供 OneBot 群成员列表查询；"
+            "可以直接 @ 当前消息中的已知发送者。"
+        )
     if event.get_platform_name() == "aiocqhttp":
         routing = {"self_id": event.get_self_id()} if event.get_self_id() else {}
         rows = await event.bot.call_action(
@@ -201,11 +213,34 @@ def capabilities(event, request):
     tools = request.func_tool
     tool = tools.get_tool(MENTION_TOOL) if tools is not None else None
     lookup = tools.get_tool(LOOKUP_TOOL) if tools is not None else None
-    available = bool(event.get_group_id() and tool is not None and tool.active)
+    available = bool(
+        supports_group_member_lookup(event)
+        and tool is not None
+        and tool.active
+    )
     return {
         "available": available,
         "lookup_tool": LOOKUP_TOOL if lookup is not None and lookup.active else None,
-        "mention_tool": MENTION_TOOL,
+        "mention_tool": MENTION_TOOL if available else None,
         "delivery": "same_native_reply",
-        "rule": MENTION_RULE if available else "当前可用工具未开放指定群成员提及。",
+        "rule": MENTION_RULE
+        if available
+        else (
+            "当前平台未提供可核验的群成员列表；不要猜测账号。"
+            if is_qq_official(event)
+            else "当前可用工具未开放指定群成员提及。"
+        ),
     }
+
+
+def hide_unsupported_tools(event, request) -> None:
+    """Remove member-directory tools from QQ Official request-local schemas."""
+    if not is_qq_official(event) or request.func_tool is None:
+        return
+    toolset = copy.copy(request.func_tool)
+    toolset.tools = [
+        tool
+        for tool in toolset.tools
+        if tool.name not in {LOOKUP_TOOL, MENTION_TOOL}
+    ]
+    request.func_tool = toolset
