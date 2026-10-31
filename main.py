@@ -105,6 +105,8 @@ NATIVE_EMPTY_MENTION_PROMPT = (
 
 def bare_direct_mention(event: AstrMessageEvent) -> bool:
     """Recognize an At to this bot with only optional whitespace beside it."""
+    if platform_capabilities.is_qq_official_at(event) and not event.get_message_str().strip():
+        return True
     parts = event.get_messages()
     return bool(
         parts
@@ -408,6 +410,9 @@ class DirectWakeFilter(ParticipationFilter):
             or event.get_sender_id() == event.get_self_id()
         ):
             return False
+        if platform_capabilities.is_qq_official_at(event):
+            event.is_at_or_wake_command = True
+            return True
         if event.is_at_or_wake_command:
             return True
         super().filter(event, cfg)

@@ -11,6 +11,7 @@ from core.platform_capabilities import (
     can_quote_target,
     claim_reply_slot,
     describe,
+    is_qq_official_at,
     reply_segment_limit,
 )
 
@@ -73,6 +74,16 @@ def test_qq_official_reply_slots_follow_the_scene_limit():
     assert [claim_reply_slot(group) for _ in range(6)] == [True] * 5 + [False]
     private = Event(private=True)
     assert [claim_reply_slot(private) for _ in range(5)] == [True] * 4 + [False]
+
+
+def test_qq_official_channel_at_is_detected_from_raw_mentions():
+    event = Event()
+    event.message_obj.raw_message = SimpleNamespace(
+        channel_id="channel-openid",
+        mentions=[SimpleNamespace(id="bot-openid")],
+        content="<@bot-openid> hello",
+    )
+    assert is_qq_official_at(event) is True
 
 
 async def test_qq_official_member_tools_are_not_advertised_or_called():

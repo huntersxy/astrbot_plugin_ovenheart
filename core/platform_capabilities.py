@@ -25,6 +25,27 @@ def is_qq_official(event_or_name: Any) -> bool:
     return platform_name(event_or_name) in QQ_OFFICIAL_PLATFORMS
 
 
+def is_qq_official_at(event: Any) -> bool:
+    """Detect a QQ Official @ event when the host parser uses a placeholder ID."""
+    if not is_qq_official(event):
+        return False
+    raw = getattr(getattr(event, "message_obj", None), "raw_message", None)
+    if raw is None:
+        return False
+    channel_id = getattr(raw, "channel_id", None)
+    group_openid = getattr(raw, "group_openid", None)
+    mentions = getattr(raw, "mentions", None) or []
+    content = str(getattr(raw, "content", "") or "")
+    if channel_id and not group_openid:
+        return bool(mentions) or "<qqbot-at-user" in content or "<@" in content
+    self_id = str(event.get_self_id() or "")
+    return any(
+        getattr(mention, "is_you", False) is True
+        or (self_id and str(getattr(mention, "id", "")) == self_id)
+        for mention in mentions
+    )
+
+
 def supports_group_member_lookup(event: Any) -> bool:
     """Whether the event can use OvenHeart's member-list lookup tool."""
     return bool(event.get_group_id()) and not is_qq_official(event)
