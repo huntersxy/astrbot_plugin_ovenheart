@@ -1089,9 +1089,16 @@ class PersonaPlugin(Star):
             quoted_text = (component.message_str or "").strip() or "".join(
                 part.text for part in component.chain or [] if isinstance(part, Plain)
             )
+            quoted_message_id = str(component.id or "").strip()
+            if platform_capabilities.is_qq_official(event) and not quoted_message_id.startswith(
+                "REFIDX_"
+            ):
+                quoted_message_id = platform_capabilities.qq_official_reference_id(
+                    event, quoted=True
+                ) or quoted_message_id
             quoted = normalize_quote(
                 {
-                    "message_id": str(component.id or ""),
+                    "message_id": quoted_message_id,
                     "sender": quoted_sender,
                     "sender_name": str(component.sender_nickname or ""),
                     "text": quoted_text,

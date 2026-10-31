@@ -12,6 +12,7 @@ from core.platform_capabilities import (
     claim_reply_slot,
     describe,
     is_qq_official_at,
+    qq_official_reference_id,
     reply_segment_limit,
 )
 
@@ -68,6 +69,22 @@ def test_qq_official_quotes_current_message_or_preserved_refidx():
         can_quote_target(Event(private=True, message_id="current"), "old-message")
         is False
     )
+
+
+def test_qq_official_reads_current_and_quoted_refidx_from_message_scene():
+    event = Event()
+    event.message_obj.raw_message = SimpleNamespace(
+        raw_data={
+            "message_scene": {
+                "ext": [
+                    "msg_idx=REFIDX_current",
+                    "ref_msg_idx=REFIDX_quoted",
+                ]
+            }
+        }
+    )
+    assert qq_official_reference_id(event) == "REFIDX_current"
+    assert qq_official_reference_id(event, quoted=True) == "REFIDX_quoted"
 
 
 def test_qq_official_reply_slots_follow_the_scene_limit():

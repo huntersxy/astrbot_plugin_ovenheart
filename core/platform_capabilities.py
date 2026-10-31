@@ -46,6 +46,29 @@ def is_qq_official_at(event: Any) -> bool:
     )
 
 
+def qq_official_reference_id(event: Any, *, quoted: bool = False) -> str:
+    """Read QQ's platform reference index from the raw message scene."""
+    if not is_qq_official(event):
+        return ""
+    raw = getattr(getattr(event, "message_obj", None), "raw_message", None)
+    raw_data = getattr(raw, "raw_data", None)
+    if not isinstance(raw_data, dict) and isinstance(raw, dict):
+        raw_data = raw
+    if not isinstance(raw_data, dict):
+        return ""
+    scene = raw_data.get("message_scene")
+    if not isinstance(scene, dict):
+        return ""
+    wanted = "ref_msg_idx=" if quoted else "msg_idx="
+    for item in scene.get("ext") or []:
+        value = str(item or "").strip()
+        if value.startswith(wanted):
+            reference = value[len(wanted) :].strip()
+            if reference:
+                return reference
+    return ""
+
+
 def supports_group_member_lookup(event: Any) -> bool:
     """Whether the event has a verified directory for mention lookup.
 
