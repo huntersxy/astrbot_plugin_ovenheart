@@ -13,7 +13,16 @@ from core import prompts
 
 
 class Event:
-    def __init__(self, message_str="", *, self_id="qq_official"):
+    def __init__(
+        self,
+        message_str="",
+        *,
+        self_id="qq_official",
+        private=False,
+        platform="qq_official",
+    ):
+        self.private = private
+        self.platform = platform
         self.message_obj = SimpleNamespace(
             message=[At(qq=self_id)],
             raw_message=SimpleNamespace(
@@ -30,13 +39,16 @@ class Event:
         self.call_llm = False
 
     def get_message_type(self):
-        return MessageType.GROUP_MESSAGE
+        return MessageType.FRIEND_MESSAGE if self.private else MessageType.GROUP_MESSAGE
 
     def get_platform_name(self):
-        return "qq_official"
+        return self.platform
 
     def get_platform_id(self):
-        return "qq_official"
+        return self.platform
+
+    def is_private_chat(self):
+        return self.private
 
     def get_self_id(self):
         return "qq_official"
@@ -218,3 +230,36 @@ async def test_direct_participation_request_fills_blank_initial_prompt():
     ]
     assert requests[0] is blank
     assert blank.prompt == prompts.EMPTY_MENTION_CONTINUATION
+
+
+async def test_private_aiocqhttp_direct_request_enables_streaming():
+    event = Event(private=True, platform="aiocqhttp")
+    conversation = SimpleNamespace(cid="cid")
+    owner = main.PersonaPlugin.__new__(main.PersonaPlugin)
+    owner.context = SimpleNamespace(
+        conversation_manager=SimpleNamespace(
+            get_curr_conversation_id=AsyncMock(return_value="cid"),
+            get_conversation=AsyncMock(return_value=conversation),
+            new_conversation=AsyncMock(return_value="cid"),
+        )
+    )
+    initial = ProviderRequest(prompt="菲比啾比", conversation=conversation)
+    event.set_extra("ovenheart_planner_initial_request", initial)
+    plan = {
+        "scope": "scope",
+        "id": "decision",
+        "room_source": "trigger",
+        "direct": True,
+        "target": {
+            "source": "trigger",
+            "text": "菲比啾比",
+            "message_id": "target",
+            "sender": "member",
+            "sender_id": "member-openid",
+        },
+    }
+
+    requests = [request async for request in owner.participation_request(event, plan)]
+
+    assert requests[0] is initial
+    assert event.get_extra("enable_streaming") is True

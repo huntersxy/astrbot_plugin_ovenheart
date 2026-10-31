@@ -750,11 +750,18 @@ class PlannerSession:
         finally:
             self.running_tools -= 1
             self.tool_changed.set()
+        fast_private = bool(
+            self.direct
+            and self.event.is_private_chat()
+            and len((self.event.get_message_str() or "").strip()) <= 12
+        )
         provider = await self.plugin.auxiliary.resolve_provider_id(
             self.settings, "planner_provider_id", self.event.unified_msg_origin
         )
         tools = []
         for name, schema in ACTION_SCHEMAS.items():
+            if name == "show_emoji_list" and fast_private:
+                continue
             if name in ("show_emoji_list", "send_emoji") and not (
                 self.settings["emoji_enabled"]
                 and self.settings["image_memory_enabled"]
@@ -807,12 +814,18 @@ class PlannerSession:
         await self.check_current()
         try:
             structured = self.plugin.conversation.active(self.event)
+            planner_system = PLANNER_SYSTEM
+            if fast_private:
+                planner_system += (
+                    "\n本轮是短私聊，优先直接调用 reply；不要为了可选表情额外查询图库。"
+                    "若 emoji_policy 已提供合适候选，可直接在 reply.attach_emoji 使用。"
+                )
             response = await self.plugin.auxiliary.tool_loop(
                 "planner",
                 trace=lambda: self.event.trace,
                 event=self.event,
                 chat_provider_id=provider,
-                system_prompt=PLANNER_SYSTEM,
+                system_prompt=planner_system,
                 contexts=await self.plugin.conversation.model_messages(self.messages, planner=True)
                 if structured else None,
                 prompt=json.dumps(

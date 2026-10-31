@@ -1468,10 +1468,17 @@ class PersonaPlugin(Star):
             logger.warning("OvenHeart could not bind a native conversation")
             return
         event.set_extra("ovenheart_decision", plan)
-        # Streaming completes after delivery, too late for pre-send guards.
+        # Private OneBot replies can stream; grouped turns remain buffered for guards.
         # Buffer autonomous turns so stale checks, real quote/At decoration
         # and the next planner's own-reply context run before/after delivery.
-        event.set_extra("enable_streaming", False)
+        event.set_extra(
+            "enable_streaming",
+            bool(
+                plan.get("direct")
+                and event.is_private_chat()
+                and event.get_platform_name() == "aiocqhttp"
+            ),
+        )
         event.call_llm = True
         if plan.get("media_only"):
             await self.send_planned_emoji(event, plan)
