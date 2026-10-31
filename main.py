@@ -1447,6 +1447,10 @@ class PersonaPlugin(Star):
             self.context,
             MainAgentBuildConfig(tool_call_timeout=120, provider_wake_prefix=prefix),
         )
+        # Bare @ wakes collect an empty host prompt; fill the same guide used
+        # for direct empty-At replies so the later native build is not rejected.
+        if request is not None and not (request.prompt or "").strip():
+            request.prompt = prompts.EMPTY_MENTION_CONTINUATION
         return request
 
     async def participation_request(self, event, plan):
@@ -1480,6 +1484,10 @@ class PersonaPlugin(Star):
             if target.get("source") == plan["room_source"]
             else target.get("text") or event.get_message_str()
         )
+        # Host build_main_agent rejects blank prompts before OnLLMRequest hooks
+        # can inject OvenHeart context, so bare @ replies must carry a guide.
+        if not (prompt or "").strip():
+            prompt = prompts.EMPTY_MENTION_CONTINUATION
         original_id = event.message_obj.message_id
         original_sender = event.message_obj.sender
         event.set_extra("ovenheart_fallback_source", event_source(event))
@@ -1498,6 +1506,8 @@ class PersonaPlugin(Star):
                         "宿主已暂停当前私聊请求。",
                     )
                     return
+                if not (request.prompt or "").strip():
+                    request.prompt = prompts.EMPTY_MENTION_CONTINUATION
                 yield request
             else:
                 yield event.request_llm(prompt=prompt, conversation=conversation)
