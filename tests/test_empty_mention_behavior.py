@@ -60,12 +60,14 @@ def test_qq_empty_mention_filter_respects_host_waiting_switch(monkeypatch):
     )
 
 
-def test_direct_wake_does_not_take_over_disabled_qq_empty_mention(monkeypatch):
+def test_direct_wake_replies_immediately_when_qq_empty_mention_waiting_is_disabled(
+    monkeypatch,
+):
     monkeypatch.setattr(main, "_active", lambda: plugin())
     event = Event()
     direct_filter = main.DirectWakeFilter(False)
 
-    assert not direct_filter.filter(
+    assert direct_filter.filter(
         event, {"platform_settings": {"empty_mention_waiting": False}}
     )
     assert direct_filter.filter(

@@ -451,10 +451,8 @@ class DirectWakeFilter(ParticipationFilter):
         ):
             return False
         if platform_capabilities.is_qq_official_at(event):
-            if bare_direct_mention(event) and not (cfg or {}).get(
-                "platform_settings", {}
-            ).get("empty_mention_waiting", True):
-                return False
+            # Waiting is owned by the host handler; disabled waiting still needs
+            # to continue through the normal direct-reply path.
             event.is_at_or_wake_command = True
             return True
         if event.is_at_or_wake_command:
@@ -1660,7 +1658,7 @@ class PersonaPlugin(Star):
 
         Args:
             event: Original group event; explicit quotes, media and text are new input.
-            req: Native request; only the known synthetic bare-At prompt is adapted.
+            req: Native request; empty bare-At prompts use the continuation guidance.
         """
         event.set_extra("ovenheart_request_started", time.monotonic())
         self.outgoing_media.bind_event(event)
@@ -1683,7 +1681,10 @@ class PersonaPlugin(Star):
             event, scope, getattr(getattr(req, "conversation", None), "cid", None)
         ):
             return
-        if bare_at and req.prompt == NATIVE_EMPTY_MENTION_PROMPT:
+        if bare_at and (
+            not (req.prompt or "").strip()
+            or req.prompt == NATIVE_EMPTY_MENTION_PROMPT
+        ):
             req.prompt = prompts.EMPTY_MENTION_CONTINUATION
         if not await self.conversation.prepare(event, scope, req):
             event.stop_event()
