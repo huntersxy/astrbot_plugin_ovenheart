@@ -46,7 +46,7 @@ def test_qq_official_capabilities_use_openid_and_passive_limits(platform):
     caps = describe(event)
     assert caps["user_id_kind"] == "OpenID"
     assert caps["group_member_lookup"] is False
-    assert caps["targeted_quote"] == "current_message_only"
+    assert caps["targeted_quote"] == "current_message_or_refidx"
     assert caps["passive_reply_window_seconds"] == 300
     assert caps["passive_reply_limit"] == 5
     assert reply_segment_limit(event, 10) == 3
@@ -59,10 +59,11 @@ def test_non_qq_platform_keeps_configured_reply_segments_and_quotes():
     assert describe(event) == {"platform": "aiocqhttp"}
 
 
-def test_qq_official_only_quotes_the_current_inbound_message():
+def test_qq_official_quotes_current_message_or_preserved_refidx():
     event = Event(message_id="current")
     assert can_quote_target(event, "current") is True
     assert can_quote_target(event, "old-message") is False
+    assert can_quote_target(event, "REFIDX_old-message") is True
     assert (
         can_quote_target(Event(private=True, message_id="current"), "old-message")
         is False
@@ -102,3 +103,14 @@ async def test_qq_official_member_tools_are_not_advertised_or_called():
     result = await group_mentions.find_members(event, "someone")
     assert result["success"] is False
     event.bot.call_action.assert_not_awaited()
+
+
+def test_qq_official_capabilities_advertise_native_proactive_send_and_observed_lookup():
+    event = Event()
+    event.extra["ovenheart_qq_observed_members"] = [
+        {"user_id": "member-1", "nickname": "成员", "card": ""}
+    ]
+    caps = describe(event)
+    assert caps["proactive_message"] is True
+    assert caps["proactive_target"] == "group_openid_or_openid"
+    assert caps["group_member_lookup"] is True

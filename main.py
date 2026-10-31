@@ -251,6 +251,9 @@ def reply_people(event: AstrMessageEvent, plan: dict | None) -> dict[str, str]:
     for member in event.get_extra("ovenheart_reply_mentions") or []:
         for name in (member["card"], member["nickname"], member["user_id"]):
             add(name, member["user_id"])
+    for member in event.get_extra("ovenheart_qq_observed_members") or []:
+        for name in (member.get("card"), member.get("nickname"), member.get("user_id")):
+            add(name, member.get("user_id"))
     return people
 
 

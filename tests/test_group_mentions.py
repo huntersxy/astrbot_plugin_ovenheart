@@ -241,6 +241,63 @@ async def test_unavailable_member_api_and_permission_errors_do_not_claim_success
     event.bot.call_action.assert_not_awaited()
 
 
+async def test_qq_official_observed_members_can_be_found_and_mentioned():
+    event = Event()
+    event.get_platform_name = lambda: "qq_official"
+    event.message_obj.raw_message = SimpleNamespace(
+        author=SimpleNamespace(member_openid="observed-1", username="对面插座"),
+        mentions=[
+            SimpleNamespace(
+                member_openid="observed-2", username="另一个插座", is_you=False
+            )
+        ],
+    )
+
+    result = await group_mentions.find_members(event, "对面插座")
+
+    assert result["success"] is True
+    assert result["members"] == [
+        {"user_id": "observed-1", "nickname": "对面插座", "card": ""}
+    ]
+    planned = await group_mentions.plan_mentions(event, ["observed-2"])
+    assert planned["success"] is True
+    chain = group_mentions.with_mentions(event, [Plain("你好")])
+    assert isinstance(chain[0], At)
+    assert str(chain[0].qq) == "observed-2"
+
+
+async def test_qq_official_observed_directory_keeps_mention_tools_visible():
+    event = Event()
+    event.get_platform_name = lambda: "qq_official"
+    event.message_obj.raw_message = SimpleNamespace(
+        author=SimpleNamespace(member_openid="observed-1", username="对面插座"),
+        mentions=[],
+    )
+    request = SimpleNamespace(
+        func_tool=ToolSet(
+            [
+                FunctionTool(
+                    name=group_mentions.LOOKUP_TOOL,
+                    description="lookup",
+                    parameters={"type": "object", "properties": {}},
+                ),
+                FunctionTool(
+                    name=group_mentions.MENTION_TOOL,
+                    description="mention",
+                    parameters={"type": "object", "properties": {}},
+                ),
+            ]
+        )
+    )
+
+    group_mentions.hide_unsupported_tools(event, request)
+
+    assert [tool.name for tool in request.func_tool.tools] == [
+        group_mentions.LOOKUP_TOOL,
+        group_mentions.MENTION_TOOL,
+    ]
+
+
 def test_mention_capability_follows_the_actual_enabled_toolset():
     event = Event()
     tool = FunctionTool(

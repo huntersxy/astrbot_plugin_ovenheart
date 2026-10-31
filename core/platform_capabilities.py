@@ -47,19 +47,33 @@ def is_qq_official_at(event: Any) -> bool:
 
 
 def supports_group_member_lookup(event: Any) -> bool:
-    """Whether the event can use OvenHeart's member-list lookup tool."""
-    return bool(event.get_group_id()) and not is_qq_official(event)
+    """Whether the event has a verified directory for mention lookup.
+
+    QQ Official does not expose the OneBot full member-list action.  The
+    plugin can still use the members observed in the current native event and
+    its frozen reply context; ``group_mentions`` stores that directory on the
+    event before this capability is advertised.
+    """
+    if not event.get_group_id():
+        return False
+    if not is_qq_official(event):
+        return True
+    observed = event.get_extra("ovenheart_qq_observed_members", [])
+    return isinstance(observed, list) and bool(observed)
 
 
 def can_quote_target(event: Any, target_id: str | None) -> bool:
     """Whether a target can be represented as an outbound quote on this platform.
 
     QQ Official's message reference requires the current inbound message's
-    platform-specific reference index. AstrBot can resolve that index for the
-    current event, but OvenHeart's stored older message IDs are not enough.
+    platform-specific reference index. AstrBot can preserve a ``REFIDX_``
+    reference from an incoming quote; ordinary stored platform message IDs
+    are still not enough to reconstruct an older quote.
     """
     target = str(target_id or "").strip()
     if not target or not is_qq_official(event):
+        return True
+    if target.startswith("REFIDX_"):
         return True
     current = str(
         getattr(getattr(event, "message_obj", None), "message_id", "") or ""
@@ -98,10 +112,17 @@ def describe(event: Any) -> dict[str, Any]:
     return {
         "platform": name,
         "user_id_kind": "OpenID",
-        "group_member_lookup": False,
-        "targeted_quote": "current_message_only",
+        "proactive_message": True,
+        "proactive_target": "group_openid_or_openid",
+        "proactive_delivery": "AstrBot native session send",
+        "group_member_lookup": supports_group_member_lookup(event),
+        "targeted_quote": "current_message_or_refidx",
         "reply_segment_limit": 3,
         "passive_reply_window_seconds": 3600 if private else 300,
         "passive_reply_limit": 4 if private else 5,
-        "note": "QQ 官方机器人没有 OneBot 群成员列表接口；已知发送者仍可直接 @。",
+        "note": (
+            "QQ 官方机器人使用 OpenID。主动消息复用 AstrBot 原生会话发送；"
+            "群成员查找只使用当前事件、提及和已冻结上下文中观察到的成员，"
+            "不能当作完整群成员目录。"
+        ),
     }
