@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import hashlib
 import json
 import re
@@ -30,6 +31,7 @@ from astrbot.core.star.filter.command_group import CommandGroupFilter
 from astrbot.core.star.filter.regex import RegexFilter
 from astrbot.core.star.session_llm_manager import SessionServiceManager
 from astrbot.core.star.session_plugin_manager import SessionPluginManager
+from astrbot.core.utils.session_waiter import SessionController, session_waiter
 
 from .core import platform_capabilities, prompts
 from .core.auxiliary import AuxiliaryUsage
@@ -101,6 +103,7 @@ NATIVE_EMPTY_MENTION_PROMPT = (
     "你友好地询问用户想要聊些什么或者需要什么帮助，回复要符合人设，不要太过机械化。"
     "请注意，你仅需要输出要回复用户的内容，不要输出其他任何东西"
 )
+QQ_OFFICIAL_EMPTY_MENTION_WAIT_SECONDS = 2
 
 
 def bare_direct_mention(event: AstrMessageEvent) -> bool:
@@ -120,6 +123,40 @@ def bare_direct_mention(event: AstrMessageEvent) -> bool:
             for part in parts
         )
     )
+
+
+class QQOfficialEmptyMentionFilter(filter.CustomFilter):
+    """Select only QQ Official group messages containing a bare bot @."""
+
+    def filter(self, event: AstrMessageEvent, cfg) -> bool:
+        plugin = _active() if _active else None
+        platform_settings = (cfg or {}).get("platform_settings", {})
+        return bool(
+            plugin
+            and plugin.ready
+            and not plugin.closing
+            and plugin.settings["enabled"]
+            and plugin.settings["apply_enabled"]
+            and platform_settings.get("empty_mention_waiting", True)
+            and event.get_message_type() == MessageType.GROUP_MESSAGE
+            and platform_capabilities.is_qq_official(event)
+            and bare_direct_mention(event)
+            and str(event.get_sender_id()) != str(event.get_self_id())
+        )
+
+
+def without_native_empty_mention_handler(handlers):
+    """Keep AstrBot's other handlers while replacing its 60-second QQ waiter."""
+    return [
+        handler
+        for handler in handlers
+        if not (
+            getattr(handler, "handler_name", "") == "handle_empty_mention"
+            and str(getattr(handler, "handler_module_path", "")).startswith(
+                "astrbot.builtin_stars.astrbot"
+            )
+        )
+    ]
 
 
 def tool_schema_mode(host_config) -> str:
@@ -414,6 +451,10 @@ class DirectWakeFilter(ParticipationFilter):
         ):
             return False
         if platform_capabilities.is_qq_official_at(event):
+            if bare_direct_mention(event) and not (cfg or {}).get(
+                "platform_settings", {}
+            ).get("empty_mention_waiting", True):
+                return False
             event.is_at_or_wake_command = True
             return True
         if event.is_at_or_wake_command:
@@ -1186,6 +1227,65 @@ class PersonaPlugin(Star):
             event: Incoming event.
         """
 
+    @filter.event_message_type(filter.EventMessageType.GROUP_MESSAGE, priority=maxsize + 1)
+    @filter.custom_filter(QQOfficialEmptyMentionFilter, False, priority=maxsize + 1)
+    async def handle_qq_official_empty_mention(self, event: AstrMessageEvent):
+        """Keep AstrBot's empty-mention flow, with a short QQ Official wait."""
+        event.set_extra("ovenheart_qq_empty_mention_handled", True)
+        event.set_extra(
+            "activated_handlers",
+            without_native_empty_mention_handler(
+                event.get_extra("activated_handlers", [])
+            ),
+        )
+        cfg = self.context.get_config(umo=event.unified_msg_origin)
+        platform_settings = cfg.get("platform_settings", {})
+        if platform_settings.get("empty_mention_waiting_need_reply", True):
+            try:
+                manager = self.context.conversation_manager
+                cid = await manager.get_curr_conversation_id(event.unified_msg_origin)
+                conversation = None
+                if cid:
+                    conversation = await manager.get_conversation(
+                        event.unified_msg_origin, cid
+                    )
+                else:
+                    cid = await manager.new_conversation(
+                        event.unified_msg_origin, platform_id=event.get_platform_id()
+                    )
+                yield event.request_llm(
+                    prompt=NATIVE_EMPTY_MENTION_PROMPT,
+                    session_id=cid,
+                    contexts=[],
+                    system_prompt="",
+                    conversation=conversation,
+                )
+            except Exception as exc:
+                logger.error("QQ 官方空 @ 回复失败：%s", exc)
+                yield event.plain_result("想要问什么呢？😄")
+
+        @session_waiter(QQ_OFFICIAL_EMPTY_MENTION_WAIT_SECONDS)
+        async def wait_for_followup(
+            controller: SessionController, followup: AstrMessageEvent
+        ) -> None:
+            if not followup.message_str or not followup.message_str.strip():
+                return
+            followup.message_obj.message.insert(
+                0, At(qq=followup.get_self_id(), name=followup.get_self_id())
+            )
+            self.context.get_event_queue().put_nowait(copy.copy(followup))
+            followup.stop_event()
+            controller.stop()
+
+        try:
+            await wait_for_followup(event)
+        except TimeoutError:
+            pass
+        except Exception as exc:
+            yield event.plain_result("发生错误，请联系管理员: " + str(exc))
+        finally:
+            event.stop_event()
+
     @filter.custom_filter(DirectWakeFilter, False, priority=maxsize)
     async def prioritize_direct(self, event: AstrMessageEvent):
         """Preempt owned autonomous work before native follow-up/lock acquisition."""
@@ -1196,6 +1296,7 @@ class PersonaPlugin(Star):
             or not await self.permitted(event)
             or event.get_extra("handlers_parsed_params")
             or event.get_extra("ovenheart_merged_direct")
+            or event.get_extra("ovenheart_qq_empty_mention_handled")
         ):
             return
         if event.get_extra("ovenheart_mention") and not await self.check_mention(event):
@@ -1265,6 +1366,7 @@ class PersonaPlugin(Star):
             or event._has_send_oper
             or event.get_result()
             or event.get_extra("provider_request")
+            or event.get_extra("ovenheart_qq_empty_mention_handled")
         ):
             return
         for handler in event.get_extra("activated_handlers", []):
