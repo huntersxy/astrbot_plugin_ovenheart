@@ -18,6 +18,15 @@ from ..vendor.maibot.response_segments import (
 from ..vendor.maibot.response_splitter import split_text_with_llm
 from ..vendor.maibot.typing_time import calculate_typing_time
 
+# One QQ bubble should not keep model/merge paragraph breaks; blank lines look
+# like a second “segment” inside the same gray box after max-count compression.
+_BUBBLE_NEWLINE = re.compile(r"[\t\x0b\x0c\r ]*\n[\t\x0b\x0c\r ]*")
+
+
+def finalize_bubble_text(text: str) -> str:
+    """Flatten newlines left inside a single outgoing rhythm bubble."""
+    return _BUBBLE_NEWLINE.sub("", text).strip()
+
 
 class ReplyRhythm:
     def __init__(self, plugin):
@@ -87,10 +96,12 @@ class ReplyRhythm:
             sentences = await self.split(event, texts[0], native)
             result = None
             sent = event.get_extra("ovenheart_actual_text_segments", [])
-            for index, sentence in enumerate(sentences):
-                if len(sentences) > 1:
-                    sentence = sentence.strip()
-                if index:
+            delivered = 0
+            for sentence in sentences:
+                sentence = finalize_bubble_text(sentence)
+                if not sentence:
+                    continue
+                if delivered:
                     await self.pause(event, sentence, False)
                 elif plan and not await self.plugin.check_participation(event):
                     raise asyncio.CancelledError
@@ -99,7 +110,7 @@ class ReplyRhythm:
                     *[
                         part
                         for part in parts
-                        if index == 0 and isinstance(part, (At, Reply))
+                        if delivered == 0 and isinstance(part, (At, Reply))
                     ],
                     Plain(sentence),
                 ]
@@ -113,6 +124,7 @@ class ReplyRhythm:
                     raise
                 sent.append(sentence)
                 event.set_extra("ovenheart_actual_text_segments", sent)
+                delivered += 1
             return result
 
         event.send = send
@@ -195,10 +207,11 @@ class ReplyRhythm:
             ),
             len(text),
         ]
-        segments = [
-            ProcessedResponseSegment(text[start:end])
-            for start, end in zip(boundaries, boundaries[1:], strict=False)
-        ]
+        segments = []
+        for start, end in zip(boundaries, boundaries[1:], strict=False):
+            piece = text[start:end].strip()
+            if piece:
+                segments.append(ProcessedResponseSegment(piece))
         if settings["reply_split_mode"] == "llm" and (len(segments) > 1 or not protected):
 
             async def generate(prompt):
@@ -239,7 +252,12 @@ class ReplyRhythm:
         merged = _merge_processed_segments_to_max_count(
             segments, max_messages
         )
-        return [segment.text for segment in merged] or [text]
+        bubbles = [
+            finalize_bubble_text(segment.text)
+            for segment in merged
+            if finalize_bubble_text(segment.text)
+        ]
+        return bubbles or [finalize_bubble_text(text) or text]
 
     async def pause(self, event, text, image):
         with bind_response(None, self.plugin.settings["reply_typing_speed"]):
