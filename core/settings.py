@@ -107,6 +107,11 @@ DEFAULTS = {
     "autonomous_tool_policy": "allowlist",
     "autonomous_tool_denylist": [],
     "group_sender_concurrency": False,
+    "lab_image_history": False,
+    "lab_tool_history": False,
+    "lab_long_reply": False,
+    "lab_deepseek_v4": False,
+    "lab_forward_retry": False,
 }
 KINDS = ("personality", "expression", "jargon", "behavior")
 CHAT_MODEL_SETTINGS = (

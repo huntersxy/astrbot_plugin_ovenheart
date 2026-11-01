@@ -191,28 +191,37 @@ function render() {
 function renderLab() {
   const s = data.settings;
   const settingsRevision = data.settings_revision;
-  $("#content").innerHTML = `<div class="settings-heading"><h2>实验性功能</h2><p>默认关闭。这些能力改动宿主会话锁、follow-up 与历史写入，请在测试群验证后再用于生产。</p></div>
+  const keys = ["group_sender_concurrency", "lab_image_history", "lab_tool_history", "lab_long_reply", "lab_deepseek_v4", "lab_forward_retry"];
+  $("#content").innerHTML = `<div class="settings-heading"><h2>实验性功能</h2><p>默认关闭。这些能力会改写宿主历史保存、发送或会话锁，请在测试群验证后再用于生产；不要与 AstrNa 等同类补丁同时开启。</p></div>
 <form id="lab-form" class="settings-grid">
 <section class="settings-group">
 <h2>群聊并发回复</h2>
-<p>让同一群里不同成员的唤醒可以并行推理；同一成员仍串行。出站发送整群排队，避免分段搅在一起；会话历史在并发写入时做保守合并，无法证明安全时回退宿主结果。</p>
-${switchField("group_sender_concurrency", "启用群聊并发（实验）", "改写 AstrBot 会话锁为「群 + 发送者」，并接管 follow-up 分桶与历史合并。与第三方同类补丁不要同时开启。Oven Multi 分段仍可工作，但本功能会关闭本轮流式输出。", s.group_sender_concurrency)}
-<ul class="muted" style="margin:12px 0 0;padding-left:1.2em;line-height:1.7">
-<li>适合多人同时 @Bot 的活跃群；私聊与定时任务不走并发。</li>
-<li>开启后请观察日志中的「群聊并发历史保存」分支，确认合并行为符合预期。</li>
-<li>可随时关闭并保存；关闭后立即卸下补丁，进行中的请求按宿主原逻辑收尾。</li>
-</ul>
+<p>同群不同成员可并行推理，同一成员仍串行；出站整群排队；历史并发写入保守合并。</p>
+${switchField("group_sender_concurrency", "启用群聊并发", "改写会话锁为群+发送者，并接管 follow-up 分桶。会关闭本轮流式输出。", s.group_sender_concurrency)}
+</section>
+<section class="settings-group">
+<h2>上下文与兼容</h2>
+<p>压缩历史里反复膨胀的图片与工具结果，并修复 DeepSeek V4 常见 400。</p>
+${switchField("lab_image_history", "图片历史占位", "请求前与落库前把历史 base64 图片换成占位符；本轮新图与引用图不受影响。", s.lab_image_history)}
+${switchField("lab_tool_history", "工具结果历史占位", "已完成工具回合的结果换成占位符；当前回合完整保留。追问旧结果时模型可能需重新调用工具。", s.lab_tool_history)}
+${switchField("lab_long_reply", "超长回复原文保留", "分段或合并转发后，尽量把本轮完整纯文本写回后续上下文。", s.lab_long_reply)}
+${switchField("lab_deepseek_v4", "DeepSeek V4 400 修复", "清理空/纯推理 assistant 历史，并为 V4 thinking 补齐 reasoning_content。", s.lab_deepseek_v4)}
+</section>
+<section class="settings-group">
+<h2>发送</h2>
+${switchField("lab_forward_retry", "合并转发拆包重试", "aiocqhttp / NapCat 合并转发发送失败时，自适应拆成更小转发包重试，最后可回退普通分段。", s.lab_forward_retry)}
 <button class="primary" type="submit" style="margin-top:20px">保存实验设置</button>
 </section>
 </form>`;
   $("#lab-form").onsubmit = async event => {
     event.preventDefault();
-    const enabled = event.currentTarget.elements.namedItem("group_sender_concurrency").checked;
-    if (enabled && !s.group_sender_concurrency) {
+    const form = event.currentTarget;
+    const patch = Object.fromEntries(keys.map(key => [key, !!form.elements.namedItem(key)?.checked]));
+    if (patch.group_sender_concurrency && !s.group_sender_concurrency) {
       const ok = await confirmAction("启用群聊并发会改写宿主会话锁与历史保存路径。确认只在测试群验证过后再用于生产？");
       if (!ok) return;
     }
-    mutate("settings", {group_sender_concurrency: enabled}, selectedScope, settingsRevision);
+    mutate("settings", patch, selectedScope, settingsRevision);
   };
 }
 

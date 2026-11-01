@@ -40,6 +40,7 @@ from .core.chat.conversation import ConversationContext
 from .core.chat.direct_priority import DirectPriority
 from .core.chat.group_concurrency import GroupConcurrencyBridge
 from .core.chat.group_context import GroupContextBridge
+from .core.chat.lab import ContextLabBridge
 from .core.chat.native_context import conversation_metadata
 from .core.chat.participation import (
     ParticipationController,
@@ -481,6 +482,7 @@ class PersonaPlugin(Star):
         self.prompts_revision = uuid4().hex
         self.group_context = GroupContextBridge(self)
         self.group_concurrency = GroupConcurrencyBridge(self)
+        self.context_lab = ContextLabBridge(self)
         self.auxiliary = AuxiliaryUsage(context, self.store)
         self.person_memory = PersonMemory(self)
         self.memory_consolidation = MemoryConsolidation(self)
@@ -723,7 +725,7 @@ class PersonaPlugin(Star):
         self.page_api = PageAPI(self)
         self.page_api.register()
         self.group_context.install()
-        self.group_concurrency.sync(self.settings["group_sender_concurrency"])
+        self.sync_experimental_patches()
         self.outgoing_media.install()
         self.native_pipeline.install()
         self.ready = True
@@ -832,10 +834,31 @@ class PersonaPlugin(Star):
             self.learning_context.clear()
             self.direct_pending.clear()
             self.participation.close()
-            if "group_sender_concurrency" in patch:
-                self.group_concurrency.sync(merged["group_sender_concurrency"])
+            if patch.keys() & {
+                "group_sender_concurrency",
+                "lab_image_history",
+                "lab_tool_history",
+                "lab_long_reply",
+                "lab_deepseek_v4",
+                "lab_forward_retry",
+            }:
+                self.sync_experimental_patches()
             if cancelled:
                 raise asyncio.CancelledError
+
+    def sync_experimental_patches(self):
+        """Install lab patches under group concurrency so both can coexist."""
+        self.group_concurrency.disconnect()
+        self.context_lab.sync(
+            {
+                "image_history": self.settings["lab_image_history"],
+                "tool_history": self.settings["lab_tool_history"],
+                "long_reply": self.settings["lab_long_reply"],
+                "deepseek_v4": self.settings["lab_deepseek_v4"],
+                "forward_retry": self.settings["lab_forward_retry"],
+            }
+        )
+        self.group_concurrency.sync(self.settings["group_sender_concurrency"])
 
     def track(self, coroutine) -> asyncio.Task:
         """Track a cancellable task and retrieve unexpected failures.
@@ -1679,6 +1702,7 @@ class PersonaPlugin(Star):
         """
         event.set_extra("ovenheart_request_started", time.monotonic())
         self.outgoing_media.bind_event(event)
+        self.context_lab.sanitize_request(event, req)
         self.group_concurrency.capture_base_snapshot(event, req)
         if (
             event.get_message_type() != MessageType.GROUP_MESSAGE
@@ -2751,6 +2775,7 @@ class PersonaPlugin(Star):
             event
         ):
             return
+        self.context_lab.sanitize_request(event, req)
         self.group_concurrency.capture_base_snapshot(event, req)
         self.outgoing_media.bind_event(event)
         self.reply_rhythm.bind(event)
@@ -4792,6 +4817,7 @@ class PersonaPlugin(Star):
         self.outgoing_media.disconnect()
         self.group_context.disconnect()
         self.group_concurrency.disconnect()
+        self.context_lab.disconnect()
         self.participation.close()
         self.direct_priority.close()
         self.ready = False
