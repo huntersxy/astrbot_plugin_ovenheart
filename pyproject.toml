@@ -6,7 +6,7 @@ requires-python = ">=3.10"
 dependencies = ["json-repair>=0.60.1,<0.61", "faiss-cpu>=1.11.0", "numpy>=2.2.6", "scipy>=1.7.0", "jieba>=0.42.1"]
 
 [dependency-groups]
-dev = ["pytest>=8", "pytest-asyncio>=0.24", "ruff>=0.15", "fastapi>=0.124", "httpx>=0.28"]
+dev = ["ruff>=0.15", "fastapi>=0.124", "httpx>=0.28"]
 
 [tool.ruff]
 extend-exclude = ["agent", "core/vendor/maibot/dynamic_gate.py", "core/vendor/maibot/reply_likelihood.py", "core/vendor/maibot/mid_term.py", "core/vendor/maibot/emoji_tiles.py", "core/vendor/maibot/response_splitter.py", "core/vendor/maibot/typing_time.py", "core/vendor/maibot/response_segments.py", "core/vendor/maibot/amemorix"]
@@ -21,6 +21,3 @@ ignore = ["E501"]
 # Preserve verbatim provider responses, including fenced Python examples.
 exclude = ["agent/evaluation/*.md"]
 
-[tool.pytest.ini_options]
-asyncio_mode = "auto"
-testpaths = ["tests"]
