@@ -47,7 +47,7 @@ const viewCache = new Map();
 const localOperations = new Set();
 let loadVersion = 0, cacheEpoch = 0, editVersion = 0, pollTimer, pollErrors = 0, toolsCache;
 const viewKey = () => JSON.stringify([selectedScope, tab, ...(tab === "library" ? [libraryScope, category, status, libraryOffset, reviewFilter, libraryQuery] : tab === "history" ? [historyScope, historySection, historyStatus, historyOffset, historyAnchor, historyQuery] : [])]);
-const viewName = () => ["memory", "emojis"].includes(tab) ? "settings" : tab === "portrait" ? "profile" : tab === "history" ? "history" : ["library", "prompts"].includes(tab) ? "summary" : tab;
+const viewName = () => ["memory", "emojis", "lab"].includes(tab) ? "settings" : tab === "portrait" ? "profile" : tab === "history" ? "history" : ["library", "prompts"].includes(tab) ? "summary" : tab;
 
 function deadline(promise, milliseconds, message) {
   let timer;
@@ -105,7 +105,7 @@ function rememberView() {
 function showView() {
   const cached = viewCache.get(viewKey());
   if (cached) data = cached.data;
-  if (cached || data && ["profile", "settings", "memory", "emojis"].includes(tab) && (!selectedScope || data.scope?.id === selectedScope)) {
+  if (cached || data && ["profile", "settings", "memory", "emojis", "lab"].includes(tab) && (!selectedScope || data.scope?.id === selectedScope)) {
     render();
     updateHeader();
   } else {
@@ -142,7 +142,7 @@ async function load(renderContent = true) {
   }
   updateHeader();
   const promptsChanged = pageAtStart === "prompts" && data.prompts?.revision !== previousPromptsRevision;
-  if (!dirty && (renderContent || (["settings", "memory", "emojis"].includes(tab) && data.settings_revision !== previousSettingsRevision) || promptsChanged)) render();
+  if (!dirty && (renderContent || (["settings", "memory", "emojis", "lab"].includes(tab) && data.settings_revision !== previousSettingsRevision) || promptsChanged)) render();
   rememberView();
 }
 
