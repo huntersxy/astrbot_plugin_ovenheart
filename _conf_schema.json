@@ -529,6 +529,12 @@
     "default": false,
     "hint": "开启后在 AstrBot INFO 日志中完整输出本插件注入内容、学习请求/响应、自检和检索结果。包含聊天、人格和记忆摘录；调试结束后建议关闭。不会读取或输出模型配置密钥、HTTP 鉴权头或原始供应商异常。"
   },
+  "group_sender_concurrency": {
+    "description": "群聊并发回复（实验）",
+    "type": "bool",
+    "default": false,
+    "hint": "实验性：同群不同成员可并行推理，同一成员仍串行；出站整群排队；历史并发写入做保守合并。默认关闭。人格工坊「实验性功能」页可开关；不要与第三方同类补丁同时开启。"
+  },
   "session_isolation": {
     "description": "启用会话隔离",
     "type": "bool",

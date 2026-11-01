@@ -13,6 +13,15 @@ class DirectPriority:
         self.plugin = plugin
         self.entries = {}
 
+    def lock_session_id(self, event):
+        """Prefer sender-scoped lock keys when experimental group concurrency is on."""
+        concurrency = getattr(self.plugin, "group_concurrency", None)
+        if concurrency is not None and concurrency.enabled:
+            scoped = concurrency.sender_lock_key(event)
+            if scoped:
+                return scoped
+        return event.unified_msg_origin
+
     def watch(self, event, *, direct):
         task = asyncio.current_task()
         if task is None:
@@ -85,7 +94,9 @@ class DirectPriority:
                 # The send hook precedes the host's history commit. Let that
                 # finish before preempting only its post-reply empty-At wait.
                 queued = True
-                async with session_lock_manager.acquire_lock(owner.unified_msg_origin):
+                async with session_lock_manager.acquire_lock(
+                    self.lock_session_id(owner)
+                ):
                     pass
         if self.plugin.closing:
             raise asyncio.CancelledError

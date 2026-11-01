@@ -106,6 +106,7 @@ DEFAULTS = {
     "autonomous_tools": [],
     "autonomous_tool_policy": "allowlist",
     "autonomous_tool_denylist": [],
+    "group_sender_concurrency": False,
 }
 KINDS = ("personality", "expression", "jargon", "behavior")
 CHAT_MODEL_SETTINGS = (

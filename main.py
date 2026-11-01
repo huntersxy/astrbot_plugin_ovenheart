@@ -38,6 +38,7 @@ from .core.auxiliary import AuxiliaryUsage
 from .core.chat import group_mentions
 from .core.chat.conversation import ConversationContext
 from .core.chat.direct_priority import DirectPriority
+from .core.chat.group_concurrency import GroupConcurrencyBridge
 from .core.chat.group_context import GroupContextBridge
 from .core.chat.native_context import conversation_metadata
 from .core.chat.participation import (
@@ -479,6 +480,7 @@ class PersonaPlugin(Star):
         self.prompts = prompts.merge({})
         self.prompts_revision = uuid4().hex
         self.group_context = GroupContextBridge(self)
+        self.group_concurrency = GroupConcurrencyBridge(self)
         self.auxiliary = AuxiliaryUsage(context, self.store)
         self.person_memory = PersonMemory(self)
         self.memory_consolidation = MemoryConsolidation(self)
@@ -721,6 +723,7 @@ class PersonaPlugin(Star):
         self.page_api = PageAPI(self)
         self.page_api.register()
         self.group_context.install()
+        self.group_concurrency.sync(self.settings["group_sender_concurrency"])
         self.outgoing_media.install()
         self.native_pipeline.install()
         self.ready = True
@@ -829,6 +832,8 @@ class PersonaPlugin(Star):
             self.learning_context.clear()
             self.direct_pending.clear()
             self.participation.close()
+            if "group_sender_concurrency" in patch:
+                self.group_concurrency.sync(merged["group_sender_concurrency"])
             if cancelled:
                 raise asyncio.CancelledError
 
@@ -1674,6 +1679,7 @@ class PersonaPlugin(Star):
         """
         event.set_extra("ovenheart_request_started", time.monotonic())
         self.outgoing_media.bind_event(event)
+        self.group_concurrency.capture_base_snapshot(event, req)
         if (
             event.get_message_type() != MessageType.GROUP_MESSAGE
             or event.get_extra("ovenheart_decision")
@@ -2745,6 +2751,7 @@ class PersonaPlugin(Star):
             event
         ):
             return
+        self.group_concurrency.capture_base_snapshot(event, req)
         self.outgoing_media.bind_event(event)
         self.reply_rhythm.bind(event)
         if not event.get_extra("ovenheart_observed", False):
@@ -4784,6 +4791,7 @@ class PersonaPlugin(Star):
         self.native_pipeline.disconnect()
         self.outgoing_media.disconnect()
         self.group_context.disconnect()
+        self.group_concurrency.disconnect()
         self.participation.close()
         self.direct_priority.close()
         self.ready = False

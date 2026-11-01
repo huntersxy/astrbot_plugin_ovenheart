@@ -136,6 +136,7 @@ input[type="checkbox"]:disabled { opacity: .5; cursor: not-allowed; }
 .tabs [data-tab="history"] { --icon: var(--i-history); }
 .tabs [data-tab="settings"] { --icon: var(--i-sliders); }
 .tabs [data-tab="prompts"] { --icon: var(--i-terminal); }
+.tabs [data-tab="lab"] { --icon: var(--i-spark); }
 #review-count:not(:empty) { min-width: 20px; margin-left: auto; padding: 0 5px; border-radius: 6px; background: var(--tint-strong); color: var(--accent-ink); text-align: center; font-size: 11px; font-variant-numeric: tabular-nums; line-height: 20px; }
 #review-count:empty { display: none; }
 .sidebar-note { margin: 34px 12px 0; padding-top: 20px; border-top: 1px solid var(--line); color: var(--muted); font-size: 11px; line-height: 1.9; }

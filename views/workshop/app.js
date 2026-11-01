@@ -184,7 +184,36 @@ function render() {
   else if (tab === "memory") renderMemory();
   else if (tab === "emojis") window.OvenHeartEmojis.render({root:$("#content"),data,api,escape,notify,confirmAction,scopeOptions,personaOptions,isDirty:()=>dirty,clearDirty:()=>{dirty=false;},saveSettings:(payload)=>mutate("settings",payload,selectedScope,data.settings_revision)});
   else if (tab === "prompts") renderPrompts();
+  else if (tab === "lab") renderLab();
   else renderSettings();
+}
+
+function renderLab() {
+  const s = data.settings;
+  const settingsRevision = data.settings_revision;
+  $("#content").innerHTML = `<div class="settings-heading"><h2>实验性功能</h2><p>默认关闭。这些能力改动宿主会话锁、follow-up 与历史写入，请在测试群验证后再用于生产。</p></div>
+<form id="lab-form" class="settings-grid">
+<section class="settings-group">
+<h2>群聊并发回复</h2>
+<p>让同一群里不同成员的唤醒可以并行推理；同一成员仍串行。出站发送整群排队，避免分段搅在一起；会话历史在并发写入时做保守合并，无法证明安全时回退宿主结果。</p>
+${switchField("group_sender_concurrency", "启用群聊并发（实验）", "改写 AstrBot 会话锁为「群 + 发送者」，并接管 follow-up 分桶与历史合并。与第三方同类补丁不要同时开启。Oven Multi 分段仍可工作，但本功能会关闭本轮流式输出。", s.group_sender_concurrency)}
+<ul class="muted" style="margin:12px 0 0;padding-left:1.2em;line-height:1.7">
+<li>适合多人同时 @Bot 的活跃群；私聊与定时任务不走并发。</li>
+<li>开启后请观察日志中的「群聊并发历史保存」分支，确认合并行为符合预期。</li>
+<li>可随时关闭并保存；关闭后立即卸下补丁，进行中的请求按宿主原逻辑收尾。</li>
+</ul>
+<button class="primary" type="submit" style="margin-top:20px">保存实验设置</button>
+</section>
+</form>`;
+  $("#lab-form").onsubmit = async event => {
+    event.preventDefault();
+    const enabled = event.currentTarget.elements.namedItem("group_sender_concurrency").checked;
+    if (enabled && !s.group_sender_concurrency) {
+      const ok = await confirmAction("启用群聊并发会改写宿主会话锁与历史保存路径。确认只在测试群验证过后再用于生产？");
+      if (!ok) return;
+    }
+    mutate("settings", {group_sender_concurrency: enabled}, selectedScope, settingsRevision);
+  };
 }
 
 function renderProfile() {
