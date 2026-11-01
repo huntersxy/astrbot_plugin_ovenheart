@@ -599,14 +599,26 @@ class ConversationContext:
             quote = view.get("reply_to")
             if quote and str(quote.get("message_id")) in identifiers:
                 quote.pop("text", None)
-            images = [
-                media["url"]
-                for media in row.get("media", [])
-                if media.get("type") == "image" and media.get("url")
-            ] if row.get("source") != omit_media_source else []
+            images = []
+            if row.get("source") != omit_media_source:
+                for media in row.get("media", []):
+                    if media.get("type") != "image":
+                        continue
+                    caption = str(media.get("text") or "").strip()
+                    if media.get("status") == "ready" and caption:
+                        text += f"\n[图片描述] {caption[:300]}"
+                    url = str(media.get("url") or "").strip()
+                    # Never re-hit remote QQ hosts on the reply path; host already
+                    # resolved the current target, and remote downloads can stall
+                    # for minutes. Keep only already-local paths when visuals matter.
+                    if url and not url.startswith(("http://", "https://")):
+                        images.append(url)
+            use_images = bool(images) and (
+                not planner or self.plugin.settings["planner_visual_enabled"]
+            )
             message = await ProviderRequest(
                 prompt="[group_history] " + dumps(view) + "\n" + text,
-                image_urls=images if not planner or self.plugin.settings["planner_visual_enabled"] else [],
+                image_urls=images if use_images else [],
             ).assemble_context()
             if row.get("self") and not planner:
                 message["role"] = "assistant"

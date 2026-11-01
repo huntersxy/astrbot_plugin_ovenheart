@@ -1389,24 +1389,19 @@ class PersonaPlugin(Star):
             )
             event.is_at_or_wake_command = True
         if direct:
-            if (
-                self.settings["planner_mode"] != "maibot"
-                or not self.settings["apply_enabled"]
-                or not await self.permitted(event)
-            ):
+            # Explicit @ / wake goes straight to the native agent. Full MaiBot
+            # planning was stacking recall + planner_timeout before the same
+            # fallback path under load, turning one reply into minutes.
+            if not self.settings["apply_enabled"] or not await self.permitted(event):
                 return
-            initial = await self.collect_planner_request(event)
-            if initial is None:
-                return
-            event.set_extra("ovenheart_planner_initial_request", initial)
-            direct_scope, _, _ = await self.resolve_scope(event, initial)
-            self.register_direct_request(event, direct_scope, initial)
-        self.direct_priority.watch(event, direct=direct)
+            if self.settings["planner_mode"] == "maibot":
+                scope, _, _ = await self.resolve_scope(event)
+                self.register_direct_request(event, scope)
+                self.direct_priority.watch(event, direct=True)
+            return
+        self.direct_priority.watch(event, direct=False)
         try:
-            plan = await self.participation.consider(event, direct=direct)
-            if direct and event.get_extra("ovenheart_planner_handled"):
-                # stop/wait completion must not fall through to a second agent.
-                event.call_llm = True
+            plan = await self.participation.consider(event, direct=False)
             while plan:
                 async for request in self.participation_request(event, plan):
                     yield request
@@ -2710,8 +2705,31 @@ class PersonaPlugin(Star):
                 round(time.monotonic() - selection_started, 3),
             )
             waiting = time.monotonic()
-            people, native_memories, recalls = await asyncio.gather(*pending.values())
-            timings["after_selection"] = round(time.monotonic() - waiting, 3)
+            remaining = timeout - (time.monotonic() - started)
+            if remaining <= 0.05:
+                for task in pending.values():
+                    if not task.done():
+                        task.cancel()
+                await asyncio.gather(*pending.values(), return_exceptions=True)
+                people, native_memories, recalls = [], [], []
+                timings["after_selection"] = 0.0
+            else:
+                try:
+                    gathered = await asyncio.wait_for(
+                        asyncio.gather(*pending.values(), return_exceptions=True),
+                        timeout=max(0.05, remaining),
+                    )
+                except asyncio.TimeoutError:
+                    for task in pending.values():
+                        if not task.done():
+                            task.cancel()
+                    gathered = await asyncio.gather(
+                        *pending.values(), return_exceptions=True
+                    )
+                people, native_memories, recalls = [
+                    [] if isinstance(item, BaseException) else item for item in gathered
+                ]
+                timings["after_selection"] = round(time.monotonic() - waiting, 3)
         timings["total"] = round(time.monotonic() - started, 3)
         return selection, people, native_memories, recalls
 
@@ -2937,6 +2955,15 @@ class PersonaPlugin(Star):
             provider_id = await self.auxiliary.resolve_provider_id(
                 settings, "selector_provider_id", event.unified_msg_origin
             )
+        if contextual_judge:
+            reply_budget = retrieval_settings["retrieval_timeout"] + 4.5
+        elif direct and not plan:
+            # Explicit @ already skipped MaiBot planning; keep habit lookup short.
+            reply_budget = min(
+                6.0, settings["retrieval_timeout"] + settings["selector_timeout"]
+            )
+        else:
+            reply_budget = settings["retrieval_timeout"] + settings["selector_timeout"]
         selection, people, native_memories, recalls = await self.prepare_reply_context(
             event,
             scope,
@@ -2956,9 +2983,7 @@ class PersonaPlugin(Star):
                 contextual_judge=contextual_judge,
                 planned_expressions=planned_expressions,
             ),
-            (retrieval_settings["retrieval_timeout"] + 4.5)
-            if contextual_judge
-            else settings["retrieval_timeout"] + settings["selector_timeout"],
+            reply_budget,
         )
         self.debug(
             "retrieval",

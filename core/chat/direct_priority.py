@@ -61,12 +61,13 @@ class DirectPriority:
         return None
 
     async def wait(self, event):
-        """Keep the native event alive until earlier direct work has finished."""
+        """Mark earlier direct work without holding this event for its full run.
+
+        Agent runs are already serialized by the host session lock. Awaiting a
+        previous direct here only inflated dashboard wall-clock before the lock.
+        """
         self.watch(event, direct=True)
-        queued = False
-        while previous := self.predecessor(event):
-            queued = True
-            await previous["released"].wait()
+        queued = self.predecessor(event) is not None
         room = self.plugin.participation.room_key(event)
         for entry in list(self.entries.values()):
             owner, task = entry["event"](), entry["task"]()

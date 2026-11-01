@@ -732,24 +732,33 @@ class PlannerSession:
         }
 
     async def run(self, state):
-        self.running_tools += 1
-        self.tool_changed.set()
+        # Recall is preparation, not a native tool. Bumping running_tools here
+        # disabled planner_timeout and let memory waits run unbounded.
         try:
             anchor = self.plugin.context.persona_manager.get_persona_v3_by_id(self.persona)
             timings = {}
             self.event.set_extra("ovenheart_planner_startup", timings)
+            budget = max(float(self.settings.get("retrieval_timeout") or 30), 1.0)
             async with context_reads(
                 timings,
                 recall=self.recall(state),
                 emoji=self.plugin.emoji_actions.proactive(self),
             ) as pending:
-                recalled, emoji_policy = await asyncio.gather(*pending.values())
+                try:
+                    recalled, emoji_policy = await asyncio.wait_for(
+                        asyncio.gather(*pending.values()), timeout=budget
+                    )
+                except asyncio.TimeoutError:
+                    for task in pending.values():
+                        if not task.done():
+                            task.cancel()
+                    await asyncio.gather(*pending.values(), return_exceptions=True)
+                    raise TimeoutError(
+                        "Planner recall exceeded its retrieval budget"
+                    ) from None
         except BaseException:
             await self.actions.put(None)
             raise
-        finally:
-            self.running_tools -= 1
-            self.tool_changed.set()
         fast_private = bool(
             self.direct
             and self.event.is_private_chat()
