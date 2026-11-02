@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import copy
 import hashlib
 import json
@@ -1417,19 +1418,64 @@ class PersonaPlugin(Star):
             )
             event.is_at_or_wake_command = True
         if direct:
-            # Explicit @ / wake goes straight to the native agent. Full MaiBot
-            # planning was stacking recall + planner_timeout before the same
-            # fallback path under load, turning one reply into minutes.
             if not self.settings["apply_enabled"] or not await self.permitted(event):
                 return
-            if self.settings["planner_mode"] == "maibot":
-                scope, _, _ = await self.resolve_scope(event)
-                self.register_direct_request(event, scope)
-                self.direct_priority.watch(event, direct=True)
-            return
-        self.direct_priority.watch(event, direct=False)
+            # legacy keeps the host wake path; only maibot owns direct planning.
+            if self.settings["planner_mode"] != "maibot":
+                return
+            scope, _, _ = await self.resolve_scope(event)
+            self.register_direct_request(event, scope)
+            self.direct_priority.watch(event, direct=True)
+        else:
+            self.direct_priority.watch(event, direct=False)
+        collect_task = (
+            asyncio.create_task(self.collect_planner_request(event))
+            if direct
+            else None
+        )
         try:
-            plan = await self.participation.consider(event, direct=False)
+            if direct:
+                recall_budget = min(
+                    float(self.settings.get("retrieval_timeout") or 30), 8.0
+                )
+                first_budget = float(
+                    self.settings.get("planner_direct_first_timeout")
+                    or self.settings["planner_timeout"]
+                )
+                try:
+                    plan = await asyncio.wait_for(
+                        self.participation.consider(event, direct=True),
+                        timeout=recall_budget + first_budget + 5.0,
+                    )
+                except asyncio.TimeoutError:
+                    logger.warning(
+                        "OvenHeart direct planner exceeded its first-turn budget"
+                    )
+                    plan = None
+                    self.participation.planner.finish_event(event)
+            else:
+                plan = await self.participation.consider(event, direct=False)
+            if collect_task is not None:
+                try:
+                    collected = await collect_task
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning(
+                        "OvenHeart direct request collect failed (%s)",
+                        type(exc).__name__,
+                    )
+                    collected = None
+                collect_task = None
+                if collected is not None:
+                    event.set_extra("ovenheart_planner_initial_request", collected)
+            if direct and (not plan or plan.get("action") != "reply"):
+                # Timeout / observe / error: one native reply, never double-send.
+                self.participation.planner.finish_event(event)
+                request = event.get_extra("ovenheart_planner_initial_request")
+                if request is not None:
+                    event.call_llm = True
+                    event.set_extra("ovenheart_decision", None)
+                    yield request
+                return
             while plan:
                 async for request in self.participation_request(event, plan):
                     yield request
@@ -1441,6 +1487,10 @@ class PersonaPlugin(Star):
             # not a failed model call. Other cancellation still propagates.
             event.call_llm = True
         finally:
+            if collect_task is not None and not collect_task.done():
+                collect_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError, Exception):
+                    await collect_task
             self.participation.planner.finish_event(event)
 
     async def collect_planner_request(self, event):

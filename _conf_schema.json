@@ -489,6 +489,12 @@
     "type": "int",
     "default": 20
   },
+  "planner_direct_first_timeout": {
+    "description": "直达首轮决策超时（秒）",
+    "type": "int",
+    "default": 12,
+    "hint": "@／唤醒／提及名／私聊直达的首轮规划限时。超时或未提交回复时回退到预采集的原生请求，避免长时间无响应。续轮仍用「参与决策请求超时」。范围 3–60。"
+  },
   "planner_reply_timeout": {
     "description": "原生回复回执等待上限（秒）",
     "type": "int",

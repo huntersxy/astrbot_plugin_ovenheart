@@ -739,6 +739,10 @@ class PlannerSession:
             timings = {}
             self.event.set_extra("ovenheart_planner_startup", timings)
             budget = max(float(self.settings.get("retrieval_timeout") or 30), 1.0)
+            # Direct wakes keep a tighter recall ceiling so planning cannot
+            # sit on memory I/O before the first reply action.
+            if self.direct:
+                budget = min(budget, 8.0)
             async with context_reads(
                 timings,
                 recall=self.recall(state),
@@ -894,9 +898,18 @@ class PlannerSession:
             while True:
                 self.tool_changed.clear()
                 changed = asyncio.create_task(self.tool_changed.wait())
+                if self.running_tools:
+                    wait_budget = None
+                elif self.direct and not self.replied:
+                    wait_budget = float(
+                        self.settings.get("planner_direct_first_timeout")
+                        or self.settings["planner_timeout"]
+                    )
+                else:
+                    wait_budget = float(self.settings["planner_timeout"])
                 done, _ = await asyncio.wait(
                     [action, changed],
-                    timeout=None if self.running_tools else self.settings["planner_timeout"],
+                    timeout=wait_budget,
                     return_when=asyncio.FIRST_COMPLETED,
                 )
                 if action in done:
