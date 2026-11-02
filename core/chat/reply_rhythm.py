@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import random
 import re
 
 from astrbot.api import logger
@@ -21,6 +22,34 @@ from ..vendor.maibot.typing_time import calculate_typing_time
 # One QQ bubble should not keep model/merge paragraph breaks; blank lines look
 # like a second “segment” inside the same gray box after max-count compression.
 _BUBBLE_NEWLINE = re.compile(r"[\t\x0b\x0c\r ]*\n[\t\x0b\x0c\r ]*")
+
+
+# NapCat drops packets that leave within the same second; the bubble pace keeps
+# this floor even when the persona typing simulation is switched off.
+_BUBBLE_MIN_INTERVAL = 0.8
+_BUBBLE_JITTER = 0.4
+# Transient platform failures worth another attempt. Anything else (bad
+# payload, permission) would fail again and only delay the error log.
+_SEND_RETRY_DELAYS = (1.0, 2.0)
+_RETRYABLE_SEND_ERRORS = frozenset(
+    {
+        "ActionFailed",
+        "ApiNotAvailable",
+        "ConnectionError",
+        "NetworkError",
+        "OSError",
+        "ReadTimeout",
+        "TimeoutError",
+        "WriteTimeout",
+    }
+)
+
+
+def retryable_send_error(exc: BaseException) -> bool:
+    """Whether a failed send is worth retrying."""
+    if isinstance(exc, (asyncio.TimeoutError, OSError)):
+        return True
+    return type(exc).__name__ in _RETRYABLE_SEND_ERRORS
 
 
 def finalize_bubble_text(text: str) -> str:
@@ -42,7 +71,7 @@ class ReplyRhythm:
             if not claim_reply_slot(event):
                 logger.warning("QQ 官方机器人本条消息的回复次数已达到平台上限。")
                 return False
-            return await original(message)
+            return await self.deliver_with_retry(event, original, message)
 
         async def deliver_stream(stream, use_fallback=False):
             if not claim_reply_slot(event):
@@ -130,6 +159,41 @@ class ReplyRhythm:
         event.send = send
         event.send_streaming = deliver_stream
         event.set_extra("ovenheart_reply_rhythm_bound", True)
+
+    async def deliver_with_retry(self, event, sender, message):
+        """Send one bubble, retrying failures the platform may recover from.
+
+        NapCat answers ActionFailed (retcode 1200) when its kernel drops
+        sendMsg; the bubble never reaches the group, so retrying shortly after
+        is the only way to keep the reply.  Non-transient errors are logged and
+        swallowed here: the caller only needs to know that the send failed, and
+        the flag lets the remaining bubbles be skipped.
+        """
+        attempts = len(_SEND_RETRY_DELAYS) + 1
+        for attempt in range(1, attempts + 1):
+            try:
+                return await sender(message)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # noqa: BLE001
+                if attempt < attempts and retryable_send_error(exc):
+                    delay = _SEND_RETRY_DELAYS[attempt - 1]
+                    logger.warning(
+                        "发送失败，%.1fs 后重试（%s，umo=%s）",
+                        delay,
+                        type(exc).__name__,
+                        event.unified_msg_origin,
+                    )
+                    await asyncio.sleep(delay)
+                    continue
+                event.set_extra("ovenheart_text_delivery_incomplete", True)
+                logger.error(
+                    "发送失败，放弃本条消息（%s，umo=%s）",
+                    type(exc).__name__,
+                    event.unified_msg_origin,
+                )
+                return False
+        return False
 
     async def split(self, event, text, native):
         settings = self.plugin.settings
@@ -266,8 +330,10 @@ class ReplyRhythm:
                 if self.plugin.settings["reply_typing_speed"] > 0
                 else 0
             )
-        if delay > 0:
-            await asyncio.sleep(delay)
+        # The floor is a platform limit rather than a persona setting: a
+        # burst of bubbles within one second is what NapCat rejects.
+        delay = max(delay, _BUBBLE_MIN_INTERVAL + random.uniform(0, _BUBBLE_JITTER))
+        await asyncio.sleep(delay)
         if event.is_stopped() or (
             event.get_extra("ovenheart_decision")
             and not await self.plugin.check_participation(event)
