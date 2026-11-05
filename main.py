@@ -1342,7 +1342,7 @@ class PersonaPlugin(Star):
     @filter.custom_filter(PrivateInputFilter, False, priority=maxsize + 2)
     async def guard_private_input(self, event: AstrMessageEvent):
         """Admit private input before any planner or native session-lock wait."""
-        if await self.permitted(event):
+        if not event.get_extra("handlers_parsed_params") and await self.permitted(event):
             await self.private_replies.admit(event)
 
     @filter.custom_filter(DirectWakeFilter, False, priority=maxsize)
