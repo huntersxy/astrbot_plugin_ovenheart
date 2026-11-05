@@ -50,28 +50,10 @@ class PrivateReplyGuard:
             event.clear_result()
             return
         room = event.unified_msg_origin
-        text = own_message_text(event).strip().strip("。.!！?？~～，,、 ").lower()
-        stopping = text in {
-            "停",
-            "停止",
-            "别说了",
-            "不要说了",
-            "不要再说了",
-            "停止回复",
-            "别回复了",
-            "别再回复了",
-            "闭嘴",
-            "stop",
-        }
         entries, lock = self.rooms.get(room, ({}, asyncio.Lock()))
         for entry in list(entries.values()):
-            if stopping or not entry["active"]:
+            if not entry["active"]:
                 self.cancel(entry)
-        if stopping:
-            event.stop_event()
-            event.clear_result()
-            logger.info("私聊停止指令已取消在途和排队回复")
-            return
         self.rooms[room] = entries, lock
         task = asyncio.current_task()
         event.set_extra("ovenheart_native_task", weakref.ref(task))
