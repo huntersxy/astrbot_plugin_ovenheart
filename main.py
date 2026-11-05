@@ -49,7 +49,8 @@ from .core.chat.participation import (
     event_source,
 )
 from .core.chat.preparation import context_reads
-from .core.chat.reply_boundary import clean_reply
+from .core.chat.private_reply import PrivateReplyGuard, empty_private_input
+from .core.chat.reply_boundary import DSML_START, clean_reply
 from .core.chat.reply_payload import dumps as dump_reply_payload
 from .core.chat.reply_payload import message_view, payload_view, reply_messages
 from .core.chat.reply_rhythm import ReplyRhythm
@@ -370,7 +371,13 @@ class ObservationFilter(filter.CustomFilter):
             False, including when capture has been scheduled.
         """
         plugin = _active() if _active else None
-        if plugin and not plugin.closing and plugin.ready and len(plugin.tasks) < 64:
+        if (
+            plugin
+            and not plugin.closing
+            and plugin.ready
+            and len(plugin.tasks) < 64
+            and not empty_private_input(event)
+        ):
             task = asyncio.current_task()
             if task is not None:
                 event.set_extra("ovenheart_native_task", weakref.ref(task))
@@ -398,6 +405,7 @@ class ParticipationFilter(filter.CustomFilter):
             or not plugin.ready
             or plugin.closing
             or not plugin.settings["enabled"]
+            or empty_private_input(event)
         ):
             return False
         if (
@@ -464,6 +472,19 @@ class DirectWakeFilter(ParticipationFilter):
         return bool(event.get_extra("ovenheart_mention"))
 
 
+class PrivateInputFilter(filter.CustomFilter):
+    def filter(self, event, cfg):
+        plugin = _active() if _active else None
+        return bool(
+            plugin
+            and plugin.ready
+            and not plugin.closing
+            and plugin.settings["enabled"]
+            and event.is_private_chat()
+            and (event.is_at_or_wake_command or empty_private_input(event))
+        )
+
+
 class PersonaPlugin(Star):
     """Learn conversation habits and add approved guidance to native requests."""
 
@@ -483,6 +504,7 @@ class PersonaPlugin(Star):
         self.prompts_revision = uuid4().hex
         self.group_context = GroupContextBridge(self)
         self.group_concurrency = GroupConcurrencyBridge(self)
+        self.private_replies = PrivateReplyGuard()
         self.context_lab = ContextLabBridge(self)
         self.auxiliary = AuxiliaryUsage(context, self.store)
         self.person_memory = PersonMemory(self)
@@ -729,6 +751,10 @@ class PersonaPlugin(Star):
         self.sync_experimental_patches()
         self.outgoing_media.install()
         self.native_pipeline.install()
+        from .core.runtime_diagnostics import close_retired_turns
+
+        retired = await close_retired_turns(private=True)
+        logger.info("热重载旧回复清理: %s", retired)
         self.ready = True
         _active = weakref.ref(self)
         self.worker = self.track(self.poll())
@@ -1312,6 +1338,12 @@ class PersonaPlugin(Star):
             yield event.plain_result("发生错误，请联系管理员: " + str(exc))
         finally:
             event.stop_event()
+
+    @filter.custom_filter(PrivateInputFilter, False, priority=maxsize + 2)
+    async def guard_private_input(self, event: AstrMessageEvent):
+        """Admit private input before any planner or native session-lock wait."""
+        if await self.permitted(event):
+            await self.private_replies.admit(event)
 
     @filter.custom_filter(DirectWakeFilter, False, priority=maxsize)
     async def prioritize_direct(self, event: AstrMessageEvent):
@@ -2240,7 +2272,9 @@ class PersonaPlugin(Star):
     @filter.on_llm_response(priority=maxsize)
     async def guard_reply_boundary(self, event: AstrMessageEvent, response):
         """Remove echoed input before native history and reply delivery."""
-        if not event.get_extra("ovenheart_guided"):
+        if not event.get_extra("ovenheart_guided") and not DSML_START.search(
+            response.completion_text or ""
+        ):
             return
         text = response.completion_text or ""
         cleaned = clean_reply(text)
@@ -4862,6 +4896,7 @@ class PersonaPlugin(Star):
         self.closing = True
         from .core.runtime_diagnostics import close_retired_turns, reclaim_memory
 
+        await self.private_replies.close()
         await close_retired_turns()
         self.native_pipeline.disconnect()
         self.outgoing_media.disconnect()

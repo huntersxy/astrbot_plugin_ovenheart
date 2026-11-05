@@ -18,6 +18,7 @@ from ..vendor.maibot.response_segments import (
 )
 from ..vendor.maibot.response_splitter import split_text_with_llm
 from ..vendor.maibot.typing_time import calculate_typing_time
+from .reply_boundary import DSML_START, clean_reply, clean_reply_stream
 
 # One QQ bubble should not keep model/merge paragraph breaks; blank lines look
 # like a second “segment” inside the same gray box after max-count compression.
@@ -79,9 +80,33 @@ class ReplyRhythm:
                     await stream.aclose()
                 logger.warning("QQ 官方机器人本条消息的回复次数已达到平台上限。")
                 return False
-            return await original_streaming(stream, use_fallback)
+            guarded = clean_reply_stream(stream)
+            try:
+                return await original_streaming(guarded, use_fallback)
+            finally:
+                await guarded.aclose()
 
         async def send(message):
+            if message is not None and any(
+                isinstance(part, Plain) and DSML_START.search(part.text)
+                for part in message.chain
+            ):
+                chain, blocked = [], False
+                for part in message.chain:
+                    if isinstance(part, Plain):
+                        if blocked:
+                            continue
+                        blocked = bool(DSML_START.search(part.text))
+                        text = clean_reply(part.text)
+                        if text:
+                            chain.append(Plain(text))
+                    else:
+                        chain.append(part)
+                if message.chain and not any(
+                    not isinstance(part, (At, Reply)) for part in chain
+                ):
+                    return False
+                message.chain = chain
             settings = self.plugin.settings
             plan = event.get_extra("ovenheart_decision")
             native = (

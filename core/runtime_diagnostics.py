@@ -49,11 +49,28 @@ async def runtime_paths():
     ]
 
 
-async def close_retired_turns():
-    """Release only pipelines owned by an already-closing OvenHeart instance."""
+async def close_retired_turns(*, private=False):
+    """Release retired OvenHeart pipelines, including private backlog on reload."""
     filename = str(Path(__file__).parent.parent / "main.py").replace("\\", "/")
     current = asyncio.current_task()
     events, tasks = {}, set()
+    if private:
+        from astrbot.core.utils.active_event_registry import active_event_registry
+
+        # A hot reload must also retire native private turns waiting outside
+        # participate(), otherwise the incident backlog survives new admission.
+        for room in list(active_event_registry._events.values()):
+            for event in list(room):
+                reference = event.get_extra("ovenheart_native_task")
+                task = reference() if callable(reference) else None
+                if not event.is_private_chat() or task is None or task is current:
+                    continue
+                event.set_extra("agent_stop_requested", True)
+                event.stop_event()
+                event.clear_result()
+                events[id(event)] = event
+                if not task.done():
+                    tasks.add(task)
     for item in gc.get_objects():
         if not isinstance(item, AsyncGeneratorType) or item.ag_frame is None:
             continue
