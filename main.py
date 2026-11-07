@@ -110,6 +110,25 @@ NATIVE_EMPTY_MENTION_PROMPT = (
 QQ_OFFICIAL_EMPTY_MENTION_WAIT_SECONDS = 2
 
 
+def command_handler_claimed(event) -> bool:
+    """Whether a command, command group, or regex handler already owns this event.
+
+    The host wake prefix is often ``/``, so a plugin slash command is also
+    ``is_at_or_wake_command``. Participation already leaves those events to the
+    owning plugin. Direct admission uses the same handler list. A truthy
+    ``handlers_parsed_params`` map misses regex handlers and any command whose
+    params were not copied onto the event.
+    """
+    for handler in event.get_extra("activated_handlers") or []:
+        filters = getattr(handler, "event_filters", ()) or ()
+        if any(
+            isinstance(item, (CommandFilter, CommandGroupFilter, RegexFilter))
+            for item in filters
+        ):
+            return True
+    return False
+
+
 def bare_direct_mention(event: AstrMessageEvent) -> bool:
     """Recognize an At to this bot with only optional whitespace beside it."""
     if platform_capabilities.is_qq_official_at(event) and not event.get_message_str().strip():
@@ -459,6 +478,7 @@ class DirectWakeFilter(ParticipationFilter):
             or event.get_message_type()
             not in (MessageType.GROUP_MESSAGE, MessageType.FRIEND_MESSAGE)
             or event.get_sender_id() == event.get_self_id()
+            or command_handler_claimed(event)
         ):
             return False
         if platform_capabilities.is_qq_official_at(event):
@@ -1348,12 +1368,15 @@ class PersonaPlugin(Star):
     @filter.custom_filter(DirectWakeFilter, False, priority=maxsize)
     async def prioritize_direct(self, event: AstrMessageEvent):
         """Preempt owned autonomous work before native follow-up/lock acquisition."""
+        # Before any await. A slash command shares the wake prefix. The
+        # activated command handler is the same signal participate() trusts.
+        if command_handler_claimed(event) or event.get_extra("handlers_parsed_params"):
+            return
         if (
             event.get_message_type()
             not in (MessageType.GROUP_MESSAGE, MessageType.FRIEND_MESSAGE)
             or not (event.is_at_or_wake_command or event.get_extra("ovenheart_mention"))
             or not await self.permitted(event)
-            or event.get_extra("handlers_parsed_params")
             or event.get_extra("ovenheart_merged_direct")
             or event.get_extra("ovenheart_qq_empty_mention_handled")
         ):
@@ -1428,12 +1451,8 @@ class PersonaPlugin(Star):
             or event.get_extra("ovenheart_qq_empty_mention_handled")
         ):
             return
-        for handler in event.get_extra("activated_handlers", []):
-            if any(
-                isinstance(f, (CommandFilter, CommandGroupFilter, RegexFilter))
-                for f in handler.event_filters
-            ):
-                return
+        if command_handler_claimed(event):
+            return
         direct = bool(
             event.is_at_or_wake_command or event.get_extra("ovenheart_mention")
         )
@@ -1718,7 +1737,7 @@ class PersonaPlugin(Star):
             scope: Effective native session/persona key, never shared learning scope.
             req: Prepared native request when available, binding its conversation ID.
         """
-        if event.get_extra("handlers_parsed_params"):
+        if event.get_extra("handlers_parsed_params") or command_handler_claimed(event):
             return
         parts = event.get_messages()
         text = (
